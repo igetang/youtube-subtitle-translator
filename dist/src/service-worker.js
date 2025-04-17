@@ -1,1 +1,0 @@
-console.log("Service Worker started.");chrome.runtime.onInstalled.addListener(()=>{console.log("Extension installed."),chrome.storage.sync.set({featureEnabled:!0})});chrome.runtime.onMessage.addListener((e,s,t)=>{if(console.log("Message received:",e),e.action==="getData")return chrome.storage.sync.get(["featureEnabled"],r=>{t({status:"success",data:r})}),!0});
