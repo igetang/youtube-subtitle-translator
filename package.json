@@ -1,0 +1,20 @@
+{
+  "name": "4.17",
+  "version": "1.0.0",
+  "description": "## 简介",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/chrome": "^0.0.315",
+    "@types/node": "^22.14.1",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.1",
+    "vite-plugin-static-copy": "^2.3.1"
+  }
+}
