@@ -1,0 +1,107 @@
+body {
+    background-color: #1a1a1a; /* 深色背景 */
+    color: #ffffff; /* 白色文字 */
+    font-family: 'YouTube Noto', Roboto, Arial, Helvetica, sans-serif;
+    padding: 15px;
+    margin: 0;
+    height: 100vh; /* 尝试占满侧边栏高度 */
+    box-sizing: border-box;
+}
+
+h1 {
+    text-align: center;
+    font-size: 1.2em;
+    margin-top: 0;
+    margin-bottom: 20px;
+    color: #f1f1f1;
+}
+
+.setting-item {
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center; /* 垂直居中标签和控件 */
+}
+
+.setting-item label:first-child { /* 第一个标签，例如"源语言:" */
+    flex-basis: 80px; /* 固定标签宽度 */
+    margin-right: 10px;
+    font-size: 0.9em;
+    color: #aaa;
+}
+
+select {
+    flex-grow: 1; /* 让下拉菜单填充剩余空间 */
+    padding: 8px;
+    background-color: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+/* 模拟开关样式 */
+.switch-container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between; /* 让文字和开关分布两端 */
+    flex-grow: 1;
+    margin-left: 5px; /* 与标签的间距 */
+}
+
+.switch-container span {
+    font-size: 0.9em;
+    color: #aaa;
+}
+
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 44px; /* 调整宽度 */
+    height: 24px; /* 调整高度 */
+    margin: 0 10px;
+}
+
+.switch input { 
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .4s;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 18px; /* 滑块高度 */
+    width: 18px;  /* 滑块宽度 */
+    left: 3px;    /* 初始位置 */
+    bottom: 3px;
+    background-color: white;
+    transition: .4s;
+}
+
+input:checked + .slider {
+    background-color: #2196F3; /* 选中时的背景色 */
+}
+
+input:checked + .slider:before {
+    transform: translateX(20px); /* 滑块移动距离 */
+}
+
+/* Rounded sliders */
+.slider.round {
+    border-radius: 24px; /* 使背景变圆 */
+}
+
+.slider.round:before {
+    border-radius: 50%; /* 使滑块变圆 */
+} 

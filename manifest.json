@@ -16,18 +16,19 @@
     }
   },
   "background": {
-    "service_worker": "src/service-worker.js"
+    "service_worker": "src/background.js"
   },
   "permissions": [
-    "storage"
+    "storage",
+    "sidePanel",
+    "tabs"
   ],
   "content_scripts": [
     {
       "matches": ["*://*.youtube.com/*"],
-      "js": ["src/content-script.js"]
+      "js": ["src/content.js"]
     }
   ],
-  "options_page": "options/options.html",
   "web_accessible_resources": [
     {
       "resources": [

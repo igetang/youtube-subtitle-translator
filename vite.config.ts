@@ -36,20 +36,25 @@ export default defineConfig({
     outDir: 'dist', // 指定打包输出目录
     rollupOptions: {
       input: {
-        // 定义多个入口点
-        // HTML 入口会自动处理相关的 CSS 和 JS
-        popup: path.resolve(__dirname, 'popup/popup.html'),
-        options: path.resolve(__dirname, 'options/options.html'),
-        // JS/TS 入口 (例如 Service Worker, Content Scripts)
-        'service-worker': path.resolve(__dirname, 'background/service-worker.ts'),
-        'content-script': path.resolve(__dirname, 'content/content-script.ts'),
+        // 注意：这里的 key (例如 'background') 会影响输出文件名
+        // 背景脚本
+        background: path.resolve(__dirname, 'background/background.ts'),
+        // 内容脚本
+        content: path.resolve(__dirname, 'content/content-script.ts'),
+        // 侧边栏 HTML (Vite 会自动处理其引用的 JS 和 CSS)
+        sidepanel: path.resolve(__dirname, 'sidepanel/sidepanel.html'),
+        // 如果你还有 popup 或 options 页面，也在这里添加
+        // popup: path.resolve(__dirname, 'popup/popup.html'),
+        // options: path.resolve(__dirname, 'options/options.html'),
       },
       output: {
-        // 配置输出格式和文件名
-        entryFileNames: `src/[name].js`, // 输出 JS 入口文件名 (避免哈希，固定路径)
-        chunkFileNames: `chunks/[name]-[hash].js`, // 输出代码块文件名 (可以有哈希)
-        assetFileNames: `assets/[name]-[hash].[ext]`, // 输出资源文件名 (可以有哈希)
-        format: 'esm', // 输出为 ES Module 格式
+        // 配置输出文件名格式
+        // [name] 会被替换为上面 input 中的 key (例如 'background', 'content')
+        entryFileNames: `src/[name].js`, // 将 JS 输出到 dist/src/ 目录
+        chunkFileNames: `assets/[name].js`, // 代码分割产生的 chunk
+        assetFileNames: `assets/[name].[ext]`, // 其他资源 (如 CSS)
+        // 特别为 Service Worker 指定格式 (如果使用 ES Modules)
+        // format: 'esm', // 根据需要设置
       },
     },
     // 关闭 sourcemap 生成，如果需要调试可以改为 true 或 'inline'
