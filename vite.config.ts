@@ -43,6 +43,8 @@ export default defineConfig({
         content: path.resolve(__dirname, 'content/content-script.ts'),
         // 侧边栏 HTML (Vite 会自动处理其引用的 JS 和 CSS)
         sidepanel: path.resolve(__dirname, 'sidepanel/sidepanel.html'),
+        // 新增：主世界脚本入口
+        'main-world': path.resolve(__dirname, 'content/main-world.ts'),
         // 如果你还有 popup 或 options 页面，也在这里添加
         // popup: path.resolve(__dirname, 'popup/popup.html'),
         // options: path.resolve(__dirname, 'options/options.html'),

@@ -30,20 +30,56 @@
 
 ## 页面结构
 
-*   **Content Script:** 核心逻辑，注入并控制 YouTube 页面上的按钮。
-*   **Background Service Worker:** (当前仅包含示例代码，未来可能用于处理后台任务)
+*   **Content Script (`content/content-script.ts`):** 核心逻辑，注入并控制 YouTube 页面上的按钮，处理字幕显示，与 Background 和 Side Panel 通信，并注入和协调 Main World Script。
+*   **Main World Script (`content/main-world.ts`):** 注入到 YouTube 页面主环境，负责调用页面级 API (`getPlayerResponse()`) 并通过 `postMessage` 将数据传回 Content Script。
+*   **Background Service Worker (`background/background.ts`):** 管理 Side Panel 的动态启用/禁用，并响应来自 Content Script 的打开 Side Panel 请求。
+*   **Side Panel (`sidepanel/`):** 设置界面 (HTML, CSS, TS)，负责显示和保存用户设置，并与 Content Script 通信获取可用字幕轨道。
 *   **Popup:** (已创建 `popup.html` 和 `popup.ts`，功能待实现)
 *   **Options Page:** (已创建 `options.html` 和 `options.ts`，功能待实现)
 
 ## 数据流
 
-1.  **Content Script 初始化:** 从 `chrome.storage.sync` 读取 `translateActive` 状态。
-2.  **DOM 监听:** 使用 `MutationObserver` 监听 `document.body`，等待 `.ytp-left-controls` 出现。
-3.  **控件注入:** 创建按钮面板和按钮 (包含 SVG 边框和图标)，根据初始状态设置翻译按钮图标，然后将面板注入到 `.ytp-left-controls`，并设置 `marginLeft: 'auto', marginRight: '8px'`。
-4.  **翻译按钮点击:** 更新 `translateActive` 状态 -> 更新图标 `src` -> 将新状态写入 `chrome.storage.sync`。
-5.  **按钮悬停 (mouseenter):** 调用 `showTooltip` 函数，显示包含按钮文本的自定义提示框。
-6.  **按钮移出 (mouseleave):** 调用 `hideTooltip` 函数，隐藏自定义提示框。
-7.  **设置按钮点击:** (当前仅输出日志，未来可能触发消息传递或页面跳转)。
+1.  **Content Script 初始化 (`initialize`):**
+    *   从 `chrome.storage.sync` 读取 `translateActive` 状态。
+    *   注入 Main World Script (`content/main-world.js`) 到页面。
+    *   设置 `MutationObserver` 监听 DOM 变化，等待播放器控件加载。
+    *   设置 `message` 监听器以接收来自 Main World Script 的响应。
+    *   设置 `yt-navigate-finish` 监听器处理页面导航。
+2.  **控件注入 (`injectControls` - 由 `MutationObserver` 触发):**
+    *   找到播放器右侧控件 (`.ytp-right-controls`)。
+    *   创建按钮面板和按钮（翻译、设置）。
+    *   将面板注入到控件栏。
+    *   创建字幕叠加层 (`subtitleOverlayElement`)。
+3.  **获取字幕轨道信息 (首次点击按钮或 Side Panel 请求时触发 - `fetchAndProcessTracksInfo`):**
+    *   Content Script 向 Main World Script 发送 `REQUEST_CAPTION_TRACKS` 消息 (`window.postMessage`)。
+    *   Main World Script 监听到消息，调用 `getPlayerResponse()` 获取播放器数据。
+    *   Main World Script 将 `captionTracks` 数组（或错误）通过 `CAPTION_TRACKS_RESPONSE` 消息 (`window.postMessage`) 发回。
+    *   Content Script 监听到响应，解析 Promise，处理并缓存轨道信息 (`processedAvailableTracks`, `cachedCaptionTracks`)。
+4.  **Side Panel 请求可用轨道:**
+    *   Side Panel 打开时，向 Content Script 发送 `requestAvailableTracks` 消息 (`chrome.tabs.sendMessage`)。
+    *   Content Script 收到消息，调用 `fetchAndProcessTracksInfo` (如果需要获取) 或直接返回缓存的 `processedAvailableTracks`。
+    *   Side Panel 收到轨道列表并填充"源语言"下拉框。
+5.  **翻译按钮点击:**
+    *   更新 `translateActive` 状态和图标。
+    *   保存状态到 `chrome.storage.sync`。
+    *   如果开启翻译且轨道信息未获取，调用 `fetchAndProcessTracksInfo`。
+    *   (待实现) 选择目标字幕轨道，调用 `fetchSubtitleData` 获取字幕内容。
+    *   (待实现) 调用翻译 API。
+    *   (当前) 启动/停止原始字幕显示循环 (`updateSubtitleLoop`/`stopSubtitleUpdates`)。
+6.  **设置按钮点击:**
+    *   确保轨道信息已获取 (`fetchAndProcessTracksInfo`)。
+    *   向 Background Script 发送 `openSidePanel` 消息 (`chrome.runtime.sendMessage`)。
+    *   Background Script 收到消息，调用 `chrome.sidePanel.open()`。
+7.  **设置更改 (Side Panel):**
+    *   用户在 Side Panel 中更改设置。
+    *   Side Panel 将新设置保存到 `chrome.storage.sync`。
+8.  **字幕显示 (`updateSubtitleLoop` -> `handleSubtitleUpdate`):**
+    *   获取当前视频时间。
+    *   在 `processedSubtitleEvents` (待实现获取和翻译逻辑后填充) 中查找匹配的字幕文本。
+    *   更新 `subtitleOverlayElement` 的内容和可见性。
+9.  **页面导航 (`yt-navigate-finish` 触发 `handleYoutubeNavigation`):**
+    *   重置与视频相关的状态（轨道缓存、字幕数据、注入标志等）。
+    *   `MutationObserver` 会在内容加载后再次触发 `injectControls`。
 
 ## 依赖库
 

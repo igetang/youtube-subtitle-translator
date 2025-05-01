@@ -37,7 +37,8 @@
         "icons/on.svg",
         "icons/l-setting.svg",
         "icons/l-setting-active.svg",
-        "icons/normal-border.svg"
+        "icons/normal-border.svg",
+        "src/main-world.js"
        ],
       "matches": ["*://*.youtube.com/*"]
     }

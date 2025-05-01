@@ -4,7 +4,8 @@
 
 console.log('内容脚本已加载。');
 
-// 示例：与后台脚本通信
+// 移除或注释掉旧的后台通信示例
+/*
 function fetchDataFromBackground() {
   chrome.runtime.sendMessage({ action: 'getData' }, (response) => {
     if (chrome.runtime.lastError) {
@@ -24,9 +25,8 @@ function fetchDataFromBackground() {
 window.addEventListener('load', () => {
   console.log('页面已加载。正在获取数据...');
   fetchDataFromBackground();
-
-  // 可以在这里添加操作 DOM 的代码
 });
+*/
 
 /**
  * 用于向 YouTube 播放器注入控件的内容脚本
@@ -46,7 +46,18 @@ const SETTING_ICON_URL = chrome.runtime.getURL('icons/l-setting.svg');
 const SETTING_ACTIVE_ICON_URL = chrome.runtime.getURL('icons/l-setting-active.svg');
 const NORMAL_BORDER_URL = chrome.runtime.getURL('icons/normal-border.svg');
 
-/** 定义 ytInitialPlayerResponse 中我们关心的部分结构 */
+// --- 新增：用于和 Main World 通信的变量 ---
+/** Promise 的 resolve 函数，用于在收到字幕轨道时解决等待 */
+let resolveCaptionTracksPromise: ((tracks: any[] | null) => void) | null = null;
+/** Promise 的 reject 函数，用于处理错误或超时 */
+let rejectCaptionTracksPromise: ((reason?: any) => void) | null = null;
+/** 标记是否已向主世界发送过请求 */
+let captionTracksRequestSent = false;
+/** Main World 脚本是否已准备就绪 */
+let mainWorldReady = false;
+// --- 结束新增 ---
+
+/** 定义 ytInitialPlayerResponse 中我们关心的部分结构 (保持，虽然获取方式变了) */
 interface YtPlayerCaptionsRenderer {
   captionTracks?: any[]; // 实际字幕轨道数组
 }
@@ -75,10 +86,20 @@ let hideTooltipTimeout: number | null = null;
 let subtitleOverlayElement: HTMLDivElement | null = null;
 /** 全局变量，用于存储处理后的字幕事件 */
 let processedSubtitleEvents: { start: number; end: number; text: string }[] = [];
-/** 全局变量，用于存储 video 元素的引用 */
+/** 全局变量，用于引用 video 元素的引用 */
 let videoElement: HTMLVideoElement | null = null;
 /** 全局变量，用于存储 requestAnimationFrame 的 ID，方便取消 */
 let animationFrameId: number | null = null;
+/** 缓存找到的字幕轨道，避免重复查找 - 现在存储从 main-world 获取的原始轨道 */
+let cachedCaptionTracks: any[] | null = null;
+
+/** 标记当前视频的轨道信息是否已获取和处理 */
+let tracksInfoFetched: boolean = false;
+/** 存储处理后的可用轨道信息 (再次包含 kind) */
+let processedAvailableTracks: { languageCode: string, languageName: string, kind: string }[] | null = null;
+
+
+// --- Tooltip Functions (Keep as is) --- 
 
 /**
  * 如果工具提示容器元素不存在，则创建它。
@@ -178,6 +199,8 @@ function hideTooltip() {
   }, 100); // 匹配过渡持续时间 (0.1s)
 }
 
+// --- Button Creation Functions (Keep as is) --- 
+
 /**
  * 为按钮创建边框图像元素。
  * @returns {HTMLImageElement} 边框图像元素。
@@ -192,619 +215,731 @@ function createBorderImage(): HTMLImageElement {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    pointer-events: none;
-    box-sizing: border-box;
+    pointer-events: none; /* 边框不应捕获鼠标事件 */
   `;
-  border.classList.add('ytp-custom-button-border');
   return border;
 }
 
 /**
- * 为按钮创建主图标图像元素。
- * @param {string} src - 图标的初始源 URL。
- * @param {string} alt - 图标的 alt 文本。
+ * 为按钮创建图标图像元素。
+ * @param {string} src - 图标的 URL。
+ * @param {string} alt - 图标的替代文本。
  * @returns {HTMLImageElement} 图标图像元素。
  */
 function createIconImage(src: string, alt: string): HTMLImageElement {
   const icon = document.createElement('img');
   icon.src = src;
-  icon.width = 24;
-  icon.height = 24;
   icon.alt = alt;
   icon.style.cssText = `
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    pointer-events: none;
+    position: relative; /* 使其在边框上方 */
+    width: 24px;
+    height: 24px;
+    vertical-align: middle; /* 与按钮文本对齐 */
   `;
-  icon.classList.add('ytp-custom-button-icon'); // 添加类名以便样式化
   return icon;
 }
 
 /**
- * 创建带有自定义工具提示的自定义控制按钮。
- * @param {string} id - 按钮元素的唯一 ID。
- * @param {string} tooltipText - 要在自定义工具提示中显示的文本。
- * @param {string} initialIconSrc - 初始显示的图标 URL。
- * @param {() => void} onClick - 按钮点击时执行的函数。
- * @returns {{button: HTMLButtonElement, icon: HTMLImageElement}} 包含创建的按钮元素及其内部图标元素的对象。
+ * 创建一个自定义控制按钮，包含图标和边框。
+ * @param {string} id - 按钮的 ID。
+ * @param {string} tooltipText - 悬停时显示的工具提示文本。
+ * @param {string} initialIconSrc - 按钮图标的初始 URL。
+ * @param {() => void} onClick - 按钮点击时的回调函数。
+ * @returns {{ button: HTMLButtonElement; icon: HTMLImageElement }} 包含按钮元素和图标元素的对象。
  */
 function createControlButton(
   id: string,
-  tooltipText: string, // 为清晰起见重命名参数
+  tooltipText: string,
   initialIconSrc: string,
   onClick: () => void
 ): { button: HTMLButtonElement; icon: HTMLImageElement } {
   const button = document.createElement('button');
   button.id = id;
-  // 不再设置 button.title
+  button.className = 'ytp-button vid-translate-button'; // 使用 YouTube 类名和自定义类名
+  button.setAttribute('aria-label', tooltipText);
   button.style.cssText = `
-    position: relative;
-    width: 48px;
-    height: 48px;
-    padding: 0;
-    border: none;
-    background: none;
-    cursor: pointer;
-    vertical-align: top;
-    outline: none;
+    position: relative; /* 使边框能够绝对定位 */
+    overflow: visible; /* 确保边框可见 */
+    width: 48px; /* 增加宽度以容纳边框 */
+    height: 100%;
+    display: inline-flex; /* 使用 flex 居中图标 */
+    align-items: center;
+    justify-content: center;
   `;
-  button.classList.add('ytp-button');
 
   const border = createBorderImage();
-  const icon = createIconImage(initialIconSrc, tooltipText); // 使用 tooltipText 作为 alt 文本
+  const icon = createIconImage(initialIconSrc, tooltipText);
 
-  button.appendChild(border);
-  button.appendChild(icon);
+  button.appendChild(border); // 先添加边框
+  button.appendChild(icon); // 再添加图标
 
-  // 为自定义工具提示添加事件监听器
-  button.addEventListener('mouseenter', () => {
-    showTooltip(button, tooltipText);
-  });
-  button.addEventListener('mouseleave', hideTooltip);
-
+  // 添加事件监听器
   button.addEventListener('click', onClick);
+  button.addEventListener('mouseenter', () => showTooltip(button, tooltipText));
+  button.addEventListener('mouseleave', hideTooltip);
 
   return { button, icon };
 }
 
+
+// --- Subtitle Fetching & Processing (Keep fetchSubtitleData, processAndStoreSubtitles) ---
+
 /**
- * 查找并尝试解析 ytInitialPlayerResponse 对象。
- * 优先尝试直接访问 window.ytInitialPlayerResponse，如果失败则查找并解析相关 <script> 标签。
- * @returns {YtInitialPlayerResponse | null} 解析后的对象，如果找不到则返回 null。
- */
-function findInitialPlayerResponse(): YtInitialPlayerResponse | null {
-  // 直接尝试查找并解析 <script> 标签
-  console.log('尝试查找并解析包含 ytInitialPlayerResponse 的 <script> 标签...');
-
-  // 2. 备用：查找并解析 <script> 标签
-  const scripts = document.querySelectorAll('script');
-  for (const script of scripts) {
-      const scriptContent = script.textContent;
-      // 寻找包含关键变量定义的脚本 (更精确地匹配)
-      if (scriptContent?.includes('var ytInitialPlayerResponse = {') || scriptContent?.includes('window["ytInitialPlayerResponse"] = {')) {
-          try {
-              // 尝试更健壮地提取 JSON 对象
-              let potentialJsonString = '';
-              const startIndex = scriptContent.indexOf('{');
-              // 需要找到匹配的结束大括号，而不是最后一个
-              // 这是一个简化方法，可能对复杂的脚本无效
-              let braceCount = 0;
-              let endIndex = -1;
-              if (startIndex !== -1) {
-                  for (let i = startIndex; i < scriptContent.length; i++) {
-                      if (scriptContent[i] === '{') {
-                          braceCount++;
-                      } else if (scriptContent[i] === '}') {
-                          braceCount--;
-                      }
-                      if (braceCount === 0) {
-                          endIndex = i;
-                          break;
-                      }
-                  }
-              }
-
-              if (startIndex !== -1 && endIndex !== -1 && startIndex < endIndex) {
-                  potentialJsonString = scriptContent.substring(startIndex, endIndex + 1);
-                  
-                  // 简单的验证
-                  if (potentialJsonString.trim().startsWith('{') && potentialJsonString.trim().endsWith('}')) {
-                      // @ts-ignore - We assume the structure after parsing
-                      const playerResponse: YtInitialPlayerResponse = JSON.parse(potentialJsonString);
-
-                      // 再次检查解析后的对象是否包含所需数据 (使用 Optional Chaining)
-                      if (playerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks) {
-                          console.log('成功：通过解析 <script> 标签获取。');
-                          return playerResponse;
-                      } else {
-                          console.warn('解析出的 JSON 对象不包含 captions 数据。脚本内容可能已更改。');
-                      }
-                  } else {
-                      console.warn('提取的字符串不是有效的 JSON 对象格式。');
-                  }
-              } else {
-                   console.warn('在 script 标签中未能定位有效的 JSON 起始/结束大括号。脚本格式可能不支持此解析方法。');
-              }
-
-          } catch (parseError) {
-              console.error('解析 <script> 标签中的 ytInitialPlayerResponse JSON 时出错:', parseError);
-              console.error('Script content snippet (first 500 chars):', scriptContent?.substring(0, 500)); 
-              // 继续尝试下一个 script 标签
-          }
-      }
-  }
-
-  // 如果循环结束仍未找到
-  console.error('失败：未能从 <script> 标签中找到有效的 ytInitialPlayerResponse 数据。');
-  return null;
-}
-
-// --- Function to get subtitle data using baseUrl ---
-/**
- * @description 使用给定的 `baseUrl` 从 YouTube 服务器异步获取字幕数据。
- *              会自动添加 `fmt=json3` 参数以请求 JSON 格式的数据。
- * @param {string} baseUrl - 从 `captionTracks` 中获取的特定字幕轨道的 URL。
- * @returns {Promise<object | null>} 一个 Promise，解析为包含字幕事件的 JSON 对象，
- *                                   如果请求失败或发生错误则解析为 null。
+ * 根据 baseUrl 异步获取字幕数据。
+ * @param {string} baseUrl - 字幕文件的 URL。
+ * @returns {Promise<object | null>} 返回解析后的 JSON 或 XML 对象，如果失败则返回 null。
  */
 async function fetchSubtitleData(baseUrl: string): Promise<object | null> {
-    if (!baseUrl) {
-        console.error("没有提供 baseUrl 来获取字幕数据。");
-        return null;
+  console.log('Fetching subtitle data from:', baseUrl);
+  try {
+    const response = await fetch(baseUrl);
+    if (!response.ok) {
+      console.error(`HTTP error! status: ${response.status} while fetching ${baseUrl}`);
+      return null;
     }
-    try {
-        // 确保 URL 格式正确并添加必要的参数
-        // 使用 URL 对象来健壮地处理 URL 和参数
-        const url = new URL(baseUrl);
-        url.searchParams.set('fmt', 'json3'); // 请求 json3 格式
-        url.searchParams.set('lang', url.searchParams.get('lang') || 'en'); // 确保有 lang 参数，可能影响返回内容
 
-        console.log(`正在从此 URL 获取字幕数据: ${url.toString()}`);
-        
-        // 使用 fetch API 发起网络请求
-        const response = await fetch(url.toString());
-
-        if (!response.ok) {
-            // 处理 HTTP 错误状态
-            console.error(`获取字幕数据时出错: ${response.status} ${response.statusText}`);
-            try {
-                // 尝试读取并记录错误响应体
-                const errorText = await response.text();
-                console.error("字幕获取错误响应体:", errorText);
-            } catch (e) { 
-                console.error("无法读取错误响应体"); 
-            }
-            return null;
-        }
-        // 解析 JSON 数据
-        const data = await response.json();
-        console.log("成功获取字幕数据 (JSON):", data); // 打印获取到的数据
-        return data; // 返回获取到的 JSON 字幕数据
-
-    } catch (error) {
-        // 处理网络错误或其他 fetch 过程中的异常
-        console.error("获取字幕数据时发生网络错误或异常:", error);
-        return null;
+    const contentType = response.headers.get('content-type');
+    if (contentType?.includes('application/xml') || contentType?.includes('text/xml')) {
+      const xmlText = await response.text();
+      // 简单的 XML 解析 (仅示例，可能需要更健壮的库)
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+      console.log('Fetched and parsed XML subtitle data.');
+      // TODO: 将 XML 解析为与 JSON 结构兼容的对象
+      // 这是一个占位符，实际需要实现 XML 到 { events: [...] } 的转换
+      const events = Array.from(xmlDoc.getElementsByTagName('text')).map((el, index) => ({
+          tStartMs: parseFloat(el.getAttribute('start') || '0') * 1000,
+          dDurationMs: parseFloat(el.getAttribute('dur') || '0') * 1000,
+          segs: [{ utf8: el.textContent?.trim() || '' }]
+      }));
+      return { events: events };
+    } else {
+      // 默认假设是 JSON 或 JSON 变体
+      const jsonData = await response.json();
+      console.log('Fetched JSON subtitle data.');
+      return jsonData;
     }
+  } catch (error) {
+    console.error('Error fetching or parsing subtitle data:', error);
+    return null;
+  }
 }
 
 /**
- * 处理从 API 获取的原始字幕 JSON 数据。
+ * 处理从 API 获取的原始字幕 JSON 数据，并将其存储在全局变量中。
  * @param {any} subtitleJson - 包含字幕事件的 JSON 对象。
  */
 function processAndStoreSubtitles(subtitleJson: any) {
-    if (!subtitleJson || !Array.isArray(subtitleJson.events)) {
-        console.error('无效的字幕 JSON 数据或缺少 events 数组:', subtitleJson);
-        processedSubtitleEvents = []; // 清空旧数据
-        return false;
-    }
+  if (!subtitleJson || !Array.isArray(subtitleJson.events)) {
+    console.error('Invalid subtitle JSON data received:', subtitleJson);
+    processedSubtitleEvents = [];
+    return;
+  }
 
-    processedSubtitleEvents = []; // 清空旧数据
-    const events = subtitleJson.events;
+  processedSubtitleEvents = subtitleJson.events.map((event: any) => {
+    const start = event.tStartMs;
+    const duration = event.dDurationMs;
+    // 处理可能存在的多个 segs
+    const text = (event.segs || [])
+      .map((seg: any) => seg?.utf8 || '')
+      .join('') // 将所有片段连接起来
+      .trim(); // 去除首尾空格
 
-    for (let i = 0; i < events.length; i++) {
-        const event = events[i];
-        // 确保 tStartMs 存在
-        if (typeof event.tStartMs !== 'number') continue;
+    return {
+      start: start / 1000, // 转换为秒
+      end: (start + duration) / 1000, // 计算结束时间（秒）
+      text: text,
+    };
+  }).filter((event: { start: number; end: number; text: string }) => event.text); // 过滤掉没有文本的事件
 
-        let text = '';
-        // 组合 segs 文本
-        if (Array.isArray(event.segs)) {
-            text = event.segs.map((seg: any) => seg.utf8 || '').join('');
-        }
-        // 去除文本中的 HTML 标签 (简单处理)
-        text = text.replace(/<[^>]*>/g, '').trim(); 
-        // 解码 HTML 实体 (简单处理常见的)
-        text = text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
-
-        if (!text) continue; // 跳过空字幕
-
-        const start = event.tStartMs;
-        // 确定结束时间：优先使用 dDurationMs，否则用下一个事件的开始时间，最后加一个默认时长
-        let end = start + (event.dDurationMs || 3000); // 默认显示 3 秒
-        if (i + 1 < events.length && typeof events[i + 1].tStartMs === 'number') {
-            // 如果提供了 dDurationMs，则使用它，否则用下一个字幕的开始时间
-            if (!event.dDurationMs) {
-               end = events[i + 1].tStartMs;
-            }
-        }
-
-        processedSubtitleEvents.push({ start, end, text });
-    }
-
-    console.log(`处理完成 ${processedSubtitleEvents.length} 条字幕事件。`);
-    // 按开始时间排序，以防万一数据不是有序的
-    processedSubtitleEvents.sort((a, b) => a.start - b.start);
-    return true;
+  console.log(`Processed ${processedSubtitleEvents.length} subtitle events.`);
+  // 可选：打印前几个事件进行调试
+  // console.log('First few processed events:', processedSubtitleEvents.slice(0, 5));
 }
 
+// --- Subtitle Display & Sync (Keep handleSubtitleUpdate, updateSubtitleLoop, stopSubtitleUpdates, createSubtitleOverlay) ---
+
 /**
- * 处理视频时间更新事件，查找并显示当前时间的字幕。
- * (现在由 requestAnimationFrame 循环调用)
+ * 字幕更新的核心逻辑：根据当前视频时间查找并显示字幕。
  */
-function handleSubtitleUpdate() { // 重命名以反映其目的
-    // 尝试获取 video 元素 (如果尚未获取或丢失)
-    if (!videoElement) {
-        videoElement = document.querySelector('video');
-    }
-    
-    // 如果元素不存在或翻译未激活，则不执行
-    if (!videoElement || !subtitleOverlayElement || !translateActive) {
-        // 确保字幕在非激活状态下是隐藏的
-        if (subtitleOverlayElement && subtitleOverlayElement.style.opacity !== '0') {
-            subtitleOverlayElement.textContent = '';
-            subtitleOverlayElement.style.opacity = '0';
-            subtitleOverlayElement.style.visibility = 'hidden';
-        }
-        return; 
+function handleSubtitleUpdate() {
+    if (!videoElement || !subtitleOverlayElement) {
+        // console.log('Video or overlay not found, skipping subtitle update.');
+        return; // 如果元素丢失，则不执行更新
     }
 
-    const currentTimeMs = videoElement.currentTime * 1000;
-    let currentSubtitleText = '';
+    const currentTime = videoElement.currentTime;
+    let currentSubtitle = '';
 
     // 查找当前时间对应的字幕
-    const currentEvent = processedSubtitleEvents.find(
-        event => currentTimeMs >= event.start && currentTimeMs < event.end
+    const activeEvent = processedSubtitleEvents.find(
+        (event) => currentTime >= event.start && currentTime < event.end
     );
 
-    if (currentEvent) {
-        currentSubtitleText = currentEvent.text;
+    if (activeEvent) {
+        currentSubtitle = activeEvent.text;
+        // 处理 HTML 实体（例如 &amp; -> &）
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = currentSubtitle;
+        currentSubtitle = tempDiv.textContent || tempDiv.innerText || '';
     }
 
     // 更新字幕内容和可见性
-    if (currentSubtitleText) {
-        if (subtitleOverlayElement.textContent !== currentSubtitleText) {
-           subtitleOverlayElement.textContent = currentSubtitleText;
-        }
-        if (subtitleOverlayElement.style.opacity !== '1') {
-           subtitleOverlayElement.style.visibility = 'visible';
-           subtitleOverlayElement.style.opacity = '1';
-        }
-    } else {
-        if (subtitleOverlayElement.style.opacity !== '0') {
-           subtitleOverlayElement.textContent = ''; 
-           subtitleOverlayElement.style.opacity = '0';
-           // 延迟隐藏 visibility 以配合过渡 (requestAnimationFrame 可能不需要这个了，但保留以防万一)
-           setTimeout(() => {
-               if (subtitleOverlayElement && subtitleOverlayElement.style.opacity === '0') {
-                   subtitleOverlayElement.style.visibility = 'hidden';
-               }
-           }, 200); 
+    if (subtitleOverlayElement.textContent !== currentSubtitle) {
+        subtitleOverlayElement.textContent = currentSubtitle;
+    }
+
+    const shouldShow = !!currentSubtitle;
+    const currentOpacity = parseFloat(subtitleOverlayElement.style.opacity || '0');
+    const targetOpacity = shouldShow ? 1 : 0;
+
+    if (currentOpacity !== targetOpacity) {
+        // 添加简单的淡入淡出效果
+        subtitleOverlayElement.style.opacity = targetOpacity.toString();
+        // 如果需要立即隐藏而不是淡出，可以设置 visibility
+        if (!shouldShow) {
+            // 在淡出动画结束后隐藏
+            setTimeout(() => {
+                if (subtitleOverlayElement && parseFloat(subtitleOverlayElement.style.opacity) === 0) {
+                    subtitleOverlayElement.style.visibility = 'hidden';
+                }
+            }, 200); // 稍大于 transition 时间
+        } else {
+            subtitleOverlayElement.style.visibility = 'visible';
         }
     }
 }
 
 /**
- * requestAnimationFrame 循环，用于持续更新字幕。
+ * 使用 requestAnimationFrame 的字幕更新循环。
  */
 function updateSubtitleLoop() {
-    if (!translateActive) { // 如果翻译被关闭，停止循环
-        console.log('停止字幕更新循环。');
-        // 确保 video 引用被清除 (如果需要)
-        // videoElement = null; 
-        // 清理最后的字幕显示
-        handleSubtitleUpdate(); 
-        animationFrameId = null;
-        return;
+    handleSubtitleUpdate();
+    // 继续请求下一帧
+    if (translateActive) { // 仅当翻译激活时继续循环
+       animationFrameId = requestAnimationFrame(updateSubtitleLoop);
+    } else {
+        animationFrameId = null; // 确保 ID 被清除
     }
-
-    handleSubtitleUpdate(); // 执行当前的字幕更新检查
-
-    // 请求下一帧继续循环
-    animationFrameId = requestAnimationFrame(updateSubtitleLoop);
 }
 
 /**
- * 停止字幕更新循环并隐藏字幕。
+ * 停止字幕更新循环并隐藏叠加层。
  */
 function stopSubtitleUpdates() {
     if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
         animationFrameId = null;
+        console.log('Subtitle update loop stopped.');
     }
-    // 确保 video 引用被清除
-    videoElement = null; 
-    // 确保字幕最终被隐藏
     if (subtitleOverlayElement) {
-        subtitleOverlayElement.textContent = '';
         subtitleOverlayElement.style.opacity = '0';
         subtitleOverlayElement.style.visibility = 'hidden';
+        subtitleOverlayElement.textContent = ''; // 清空内容
     }
-    console.log('已手动停止字幕更新并隐藏。');
 }
 
 /**
- * 创建并添加用于显示字幕的叠加层元素。
- * @param {HTMLElement} playerContainer - YouTube 播放器的主容器元素。
+ * 创建字幕叠加层元素并附加到播放器容器。
+ * @param {HTMLElement} playerContainer - YouTube 播放器容器元素。
  */
 function createSubtitleOverlay(playerContainer: HTMLElement) {
-    if (subtitleOverlayElement) {
-        // 如果已存在，确保它在正确的容器内
-        if (!playerContainer.contains(subtitleOverlayElement)) {
-            playerContainer.appendChild(subtitleOverlayElement);
-        }
-        return; // 防止重复创建
-    }
+    if (subtitleOverlayElement) return; // 防止重复创建
 
-    console.log('正在创建字幕叠加层...');
     subtitleOverlayElement = document.createElement('div');
-    subtitleOverlayElement.id = 'custom-subtitle-overlay';
-    // 恢复样式为初始隐藏
+    subtitleOverlayElement.id = 'yt-translator-subtitle-overlay';
     subtitleOverlayElement.style.cssText = `
         position: absolute;
-        bottom: 25%; 
-        left: 50%;   
-        transform: translateX(-50%); 
-        z-index: 9999; 
-        background-color: rgba(0, 0, 0, 0.7); 
-        color: white; 
-        padding: 10px 20px; 
-        border-radius: 5px; 
-        font-size: 18px; 
-        text-align: center; 
-        max-width: 80%; 
-        pointer-events: none; 
-        line-height: 1.4; 
-        white-space: pre-line; 
-        /* 恢复初始隐藏 */
-        visibility: hidden; 
+        bottom: 60px; /* 调整到底部距离 */
+        left: 50%;
+        transform: translateX(-50%);
+        background-color: rgba(0, 0, 0, 0.7);
+        color: white;
+        padding: 5px 15px;
+        border-radius: 5px;
+        font-size: 1.6rem; /* 字号调整 */
+        text-align: center;
+        z-index: 2000; /* 确保在控件之上 */
+        pointer-events: none; /* 允许点击穿透 */
+        max-width: 80%;
         opacity: 0;
-        transition: opacity 0.2s ease-in-out, visibility 0s linear 0.2s; /* 恢复过渡 */
-        /* text-shadow 样式可以保留或移除，根据需要 */
-        text-shadow: 0px 0px 2px rgba(0,0,0,0.8), 
-                     0px 0px 3px rgba(0,0,0,0.8), 
-                     1px 1px 3px rgba(0,0,0,0.8);
+        visibility: hidden;
+        transition: opacity 0.2s ease-in-out;
+        text-shadow: 1px 1px 2px black;
     `;
 
-    // 移除临时占位文本
-    // subtitleOverlayElement.textContent = '[ 字幕显示区 ]';
-
-    // 将叠加层添加到播放器容器中
     playerContainer.appendChild(subtitleOverlayElement);
-    console.log('字幕叠加层已创建并添加到播放器容器 (初始隐藏)。');
+    console.log('Subtitle overlay created and appended.');
 }
 
+
+// --- Control Injection Logic (Keep as is) ---
+
 /**
- * 将自定义控制面板注入 YouTube 播放器控件。
+ * 将自定义控件注入到 YouTube 播放器。
+ * 此函数现在依赖于新的 `fetchAndProcessTracksInfo`。
  */
 function injectControls() {
-  // --- 尝试创建字幕叠加层 --- 
-  const playerContainer = document.querySelector('.html5-video-player') as HTMLElement;
-  if (playerContainer) {
-      createSubtitleOverlay(playerContainer);
-  } else {
-      console.warn('injectControls 时未能找到播放器容器 .html5-video-player');
-      // MutationObserver 应该稍后会处理
-  }
-  // --- 结束 --- 
-
   if (controlsInjected) {
-    console.log('控件已注入。');
+    console.log('控件已注入，跳过。');
     return;
   }
 
-  const leftControls = document.querySelector('.ytp-left-controls') as HTMLElement;
-  if (!leftControls) {
-    console.log('尚未找到 .ytp-left-controls。');
+  const rightControls = document.querySelector('.ytp-right-controls');
+  if (!rightControls) {
+    console.log('未找到 .ytp-right-controls，稍后重试...');
     return;
   }
 
-  console.log('正在注入自定义控件...');
-  ensureTooltipExists(); // 确保在创建按钮前工具提示 DOM 已准备好
+  const playerContainer = document.querySelector('.html5-video-player');
+  if (playerContainer && !subtitleOverlayElement) {
+    createSubtitleOverlay(playerContainer as HTMLElement);
+  }
 
-  const panel = document.createElement('div');
-  panel.id = 'ytp-custom-controls-panel';
-  panel.style.cssText = `
-    display: flex;
-    align-items: center;
-    height: 48px;
-    /* margin-right is already set below */
-    /* order: 99; Might be unnecessary with marginLeft: auto */
-  `;
-  // 将 panel 推到左侧控制栏的最右边
-  panel.style.marginLeft = 'auto';
-  // 确保与右侧控件有间距
-  panel.style.marginRight = '8px';
+  // 创建按钮容器
+  const customControlsPanel = document.createElement('div');
+  customControlsPanel.className = 'ytp-chrome-controls vid-translator-panel';
+  customControlsPanel.style.display = 'flex';
+  customControlsPanel.style.alignItems = 'center';
 
-  // --- 创建翻译按钮 ---
-  const translateTooltipText = '翻译开关';
+  // 创建翻译按钮
   const { button: translateButton, icon: translateIcon } = createControlButton(
-    'custom-translate-button',
-    translateTooltipText,
+    'vid-translate-toggle-button',
+    '开启/关闭翻译',
     translateActive ? ON_ICON_URL : OFF_ICON_URL,
-    () => {
-      const wasActive = translateActive; // 记录之前的状态
+    async () => {
       translateActive = !translateActive;
+      console.log('翻译按钮点击，新状态:', translateActive);
       translateIcon.src = translateActive ? ON_ICON_URL : OFF_ICON_URL;
-      // 保存状态到存储
-      chrome.storage.sync.set({ translateActive });
-      console.log('翻译状态:', translateActive);
-      showTooltip(translateButton, translateActive ? '关闭翻译' : '开启翻译'); // 更新 tooltip 文本
-      console.log('翻译状态切换:', translateActive);
-      
-      if (translateActive) { 
-          console.log('开启翻译，尝试获取并显示字幕...');
-          const playerResponse: YtInitialPlayerResponse | null = findInitialPlayerResponse(); // 调用封装的函数并指定类型
-          const captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+      // 将状态保存到存储
+      chrome.storage.sync.set({ translateActive: translateActive });
 
-          if (captionTracks && captionTracks.length > 0) { 
-              // --- 这部分代码是正确的，保留 --- 
-              console.log('原始 captionTracks:', captionTracks);
-              const availableTracks = captionTracks.map((track: any) => ({
-                languageCode: track.languageCode,
-                languageName: track.name?.simpleText || track.languageCode, 
-                baseUrl: track.baseUrl,
-                isTranslatable: track.isTranslatable,
-                kind: track.kind || 'standard' 
-              }));
-              console.log('提取到的字幕轨道:', availableTracks);
-              
-              let targetTrack: any = null;
-              targetTrack = availableTracks.find(track => track.languageCode.startsWith('en') && track.kind !== 'asr');
-              if (!targetTrack) {
-                  targetTrack = availableTracks.find(track => track.languageCode.startsWith('en') && track.kind === 'asr');
-              }
-              if (!targetTrack) {
-                  targetTrack = availableTracks[0];
-              }
-              // --- 结束正确部分 ---
+      if (translateActive) {
+        // 确保视频元素存在
+        if (!videoElement) {
+            videoElement = document.querySelector('video');
+            if (!videoElement) {
+                console.error('未能找到 video 元素，无法开始翻译。');
+                return;
+            }
+        }
+        // 确保字幕轨道信息已获取 (如果尚未获取)
+        if (!tracksInfoFetched) {
+            console.log('翻译开启，需要获取字幕轨道信息...');
+            try {
+                 await fetchAndProcessTracksInfo(); // 等待获取完成
+                 if (!processedAvailableTracks || processedAvailableTracks.length === 0) {
+                     console.warn('没有可用的字幕轨道，无法进行翻译。');
+                     // 可以给用户提示
+                     translateActive = false; // 无法翻译，状态改回去
+                     translateIcon.src = OFF_ICON_URL;
+                     chrome.storage.sync.set({ translateActive: translateActive });
+                     return;
+                 }
+            } catch (error) {
+                console.error('获取轨道信息失败，无法开启翻译。', error);
+                translateActive = false; // 获取失败，状态改回去
+                translateIcon.src = OFF_ICON_URL;
+                chrome.storage.sync.set({ translateActive: translateActive });
+                return;
+            }
+        }
 
-              if (targetTrack && targetTrack.baseUrl) {
-                  console.log(`已选择字幕轨道: ${targetTrack.languageName} (${targetTrack.languageCode}, ${targetTrack.kind})`);
-                  (async () => {
-                      console.log(`准备使用 baseUrl 获取字幕: ${targetTrack.baseUrl}`);
-                      const subtitleJson = await fetchSubtitleData(targetTrack.baseUrl);
-                      if (subtitleJson) {
-                          console.log('最终获取到的字幕 JSON 数据:', subtitleJson);
-                          if (processAndStoreSubtitles(subtitleJson)) {
-                              console.log('字幕数据处理成功，启动更新循环。');
-                              // --- 启动 requestAnimationFrame 循环 ---
-                              if (!animationFrameId) { 
-                                 // 确保 video 元素可用
-                                 if (!videoElement) videoElement = document.querySelector('video');
-                                 if(videoElement){
-                                    animationFrameId = requestAnimationFrame(updateSubtitleLoop);
-                                 } else {
-                                     console.error("无法找到 video 元素，无法启动字幕更新循环。");
-                                     stopSubtitleUpdates(); // 找不到 video 元素也停止
-                                 }
-                              }
-                          } else {
-                              console.error("处理字幕数据失败。");
-                              stopSubtitleUpdates(); // 处理失败则停止
-                          }
-                      } else {
-                          console.error('未能获取到选定轨道的字幕数据。');
-                          stopSubtitleUpdates(); // 获取失败则停止
-                      }
-                  })();
-              } else {
-                  console.error('未能根据优先级选择有效的字幕轨道或 baseUrl。');
-                  stopSubtitleUpdates(); // 选择失败则停止
-              }
-          } else {
-             console.error('未能从 playerResponse 获取有效或非空的 captionTracks 数据。');
-             stopSubtitleUpdates(); // 获取列表失败则停止
-          }
-      } else if (wasActive) { // 仅在之前是激活状态时执行关闭逻辑
-         // 翻译关闭时的逻辑
-         console.log('翻译已关闭，停止字幕更新循环并隐藏。');
-         stopSubtitleUpdates(); // 关闭开关时停止循环并隐藏
+        // TODO: 在这里添加实际选择轨道、获取字幕内容、翻译和显示的逻辑
+        // 暂时只启动/停止原始字幕显示循环
+        console.log('启动字幕更新循环...');
+        if (!animationFrameId) {
+            animationFrameId = requestAnimationFrame(updateSubtitleLoop);
+        }
+      } else {
+        console.log('停止字幕更新循环...');
+        stopSubtitleUpdates();
       }
     }
   );
 
-  // --- 创建设置按钮 ---
-  const settingsTooltipText = '翻译设置';
-  const { button: settingsButton, icon: settingsIcon } = createControlButton(
-    'custom-settings-button',
-    settingsTooltipText,
-    SETTING_ICON_URL, // 初始状态
+  // 创建设置按钮
+  const { button: settingsButton } = createControlButton(
+    'vid-translate-settings-button',
+    '翻译设置',
+    SETTING_ICON_URL,
     () => {
-      // 切换激活状态和图标 (可选，如果需要视觉反馈)
-      // const isActive = settingsIcon.src === SETTING_ACTIVE_ICON_URL;
-      // settingsIcon.src = isActive ? SETTING_ICON_URL : SETTING_ACTIVE_ICON_URL;
-      
-      console.log('设置按钮已点击，发送消息打开 Side Panel...');
-      
-      // --- 发送消息给 Background Script --- 
-      chrome.runtime.sendMessage({ action: 'openSidePanel' }, (response) => {
-        if (chrome.runtime.lastError) {
-          console.error('发送 openSidePanel 消息时出错:', chrome.runtime.lastError.message);
-          alert('无法打开设置面板，请检查扩展或稍后重试。'); // 简单的用户反馈
-        } else {
-          console.log('打开 Side Panel 的消息已发送，后台响应:', response);
-          // 可以根据后台响应做进一步处理，例如更新图标状态
-        }
+      console.log('设置按钮点击');
+      // 确保轨道信息已获取 (打开设置面板需要源语言列表)
+      fetchAndProcessTracksInfo().then(() => {
+          console.log('轨道信息已确认，发送打开 Side Panel 消息...');
+          // 向后台脚本发送消息以打开侧边栏
+          chrome.runtime.sendMessage({ action: 'openSidePanel' }, (response) => {
+            if (chrome.runtime.lastError) {
+              console.error('发送 openSidePanel 消息时出错:', chrome.runtime.lastError.message);
+            } else if (response && response.status === 'success') {
+              console.log('Side Panel 打开成功。');
+            } else {
+              console.warn('打开 Side Panel 失败或收到意外响应:', response);
+            }
+          });
+      }).catch(error => {
+           console.error('获取轨道信息以打开设置失败:', error);
       });
-      // --- 消息发送结束 ---
     }
   );
 
-  panel.appendChild(translateButton);
-  panel.appendChild(settingsButton);
+  // 将按钮添加到面板
+  customControlsPanel.appendChild(translateButton);
+  customControlsPanel.appendChild(settingsButton);
 
-  // 将面板附加到左侧控件
-  leftControls.appendChild(panel);
+  // 将面板注入到右侧控件
+  rightControls.insertBefore(customControlsPanel, rightControls.firstChild);
 
   controlsInjected = true;
   console.log('自定义控件注入成功。');
 }
 
+
+// --- Initialization and Navigation Handling --- 
+
 /**
- * 初始化内容脚本。
- * 读取初始状态并设置 MutationObserver。
+ * 注入主世界脚本到页面中。
  */
-function initialize() {
-  // 从存储中读取初始翻译状态
-  chrome.storage.sync.get(['translateActive'], (result) => {
-    if (chrome.runtime.lastError) {
-      console.error('读取存储时出错:', chrome.runtime.lastError);
-    } else {
-      translateActive = !!result.translateActive; // 确保是布尔值
-      console.log('初始翻译状态:', translateActive);
+function injectMainWorldScript() {
+  try {
+    const scriptId = 'yt-translator-main-world-script';
+    if (document.getElementById(scriptId)) {
+      console.log('[Content Script] Main world script already injected.');
+      return;
     }
-    // 尝试立即注入控件
-    injectControls(); // 这也会确保工具提示存在
-  });
-
-  // 观察 DOM 变化以查找播放器控件和容器
-  const observer = new MutationObserver((mutationsList, observer) => {
-    let playerContainerFound = document.querySelector('.html5-video-player') as HTMLElement;
-    let controlsFound = document.querySelector('.ytp-left-controls');
-
-    // 优先尝试创建叠加层，因为它可能比控件先出现
-    if (playerContainerFound && !subtitleOverlayElement) {
-        console.log('Observer 找到播放器容器，创建叠加层...');
-        createSubtitleOverlay(playerContainerFound);
-    }
-
-    // 检查是否可以注入控件
-    if (playerContainerFound && controlsFound && !controlsInjected) {
-      console.log('Observer 找到播放器容器和控件，注入控件...');
-      injectControls(); // 这会再次尝试创建叠加层（如果之前失败了）
-      // 如果我们假设播放器和控件一旦加载就不会消失，可以停止观察
-      // observer.disconnect(); 
-      // console.log('MutationObserver 已停止。');
-      return; // 注入后可以退出当前回调
-    }
-    
-    // 如果只注入了控件但还没停止观察 (例如动态加载场景)
-    if (controlsInjected) {
-       // 理论上可以停止了，除非控件会被销毁重建
-       // observer.disconnect(); 
-       // console.log('MutationObserver 已停止 (控件已注入)。');
-        return;
-    }
-
-  });
-
-  // 开始观察 document body 的子节点添加
-  observer.observe(document.body, { childList: true, subtree: true });
-  console.log('MutationObserver 已启动，监视播放器和控件。');
+    const script = document.createElement('script');
+    script.id = scriptId;
+    script.src = chrome.runtime.getURL('src/main-world.js');
+    script.type = 'module'; // 如果 main-world.js 使用了 ES 模块特性
+    (document.head || document.documentElement).appendChild(script);
+    console.log('[Content Script] Injected main world script:', script.src);
+    script.onload = () => {
+      console.log('[Content Script] Main world script loaded.');
+      // 可选：如果需要明确知道脚本何时准备好，可以在这里设置一个标志，或等待 'MAIN_WORLD_READY' 消息
+    };
+    script.onerror = (e) => {
+       console.error('[Content Script] Failed to load main world script:', e);
+    };
+  } catch (error) {
+    console.error('[Content Script] Error injecting main world script:', error);
+  }
 }
 
-// 运行初始化逻辑
+/**
+ * 初始化内容脚本，包括按钮注入、DOM 监听和主世界脚本注入。
+ */
+function initialize() {
+  console.log('初始化内容脚本 (v2 - PostMessage)...');
+
+  // --- 注入主世界脚本 ---
+  injectMainWorldScript();
+  // --- 结束注入 ---
+
+  // 从存储中读取初始翻译状态
+  chrome.storage.sync.get('translateActive', (result) => {
+    translateActive = !!result.translateActive; // 使用 !! 确保是布尔值
+    console.log('从存储加载的初始翻译状态:', translateActive);
+    // 尝试立即注入（如果控件已存在）
+    injectControls();
+  });
+
+  // 使用 MutationObserver 监听 DOM 变化以确保注入
+  const observer = new MutationObserver((mutations) => {
+    // 优化：检查是否有相关节点变化，以及控件是否尚未注入
+    if (!controlsInjected) {
+       const rightControls = document.querySelector('.ytp-right-controls'); // 改为检查右侧控件
+       const playerContainer = document.querySelector('.html5-video-player'); // 同时检查播放器容器
+       if (rightControls) {
+         injectControls(); // 如果找到右侧控件，尝试注入
+       }
+       // 如果叠加层需要播放器容器，也在这里检查
+       if (playerContainer && !subtitleOverlayElement) {
+           createSubtitleOverlay(playerContainer as HTMLElement);
+       }
+    }
+    // 如果 video 元素丢失了（例如页面导航），尝试重新获取
+    if (translateActive && !videoElement) {
+        videoElement = document.querySelector('video');
+        if (videoElement && !animationFrameId) {
+            // 如果翻译激活且有 video 元素，但循环未运行，启动它
+            console.log('在 MutationObserver 中重新找到 video 元素，尝试重启字幕循环。');
+            // 需要确保字幕数据已加载才能启动
+            // if (processedSubtitleEvents.length > 0) {
+            //    animationFrameId = requestAnimationFrame(updateSubtitleLoop);
+            // }
+        }
+    }
+  });
+
+  observer.observe(document.body, { childList: true, subtree: true });
+  console.log('MutationObserver 已设置。');
+
+
+  // --- 处理来自 Side Panel 的消息 ---
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message.action === 'requestAvailableTracks') {
+          console.log('收到来自 Side Panel 的 requestAvailableTracks 请求');
+          // --- 调用新的核心函数获取轨道信息 ---
+          fetchAndProcessTracksInfo().then(tracks => {
+              console.log('发送给 Side Panel 的可用轨道信息 (来自 Main World):', tracks);
+              sendResponse({ availableTracks: tracks || [] });
+          }).catch(error => {
+              console.error('处理 requestAvailableTracks 时出错 (Main World):', error);
+              sendResponse({ availableTracks: [] });
+          });
+          return true; // 异步响应
+      }
+      return false;
+  });
+
+  // --- 新增：监听来自 Main World 的消息 ---
+  window.addEventListener('message', (event) => {
+    // 验证消息来源和类型
+    if (event.source !== window || event.data?.source !== 'main-world') {
+      return;
+    }
+
+    const { type, payload, error } = event.data;
+
+    if (type === 'MAIN_WORLD_READY') {
+        console.log('[Content Script] Received MAIN_WORLD_READY signal.');
+        mainWorldReady = true;
+        // 如果有等待发送的请求，可以在这里发送 (可能不需要，因为请求只在需要时触发)
+        // if (captionTracksRequestSent && !resolveCaptionTracksPromise) {
+        //      console.log('[Content Script] Main world ready, re-attempting request...');
+        // }
+    } else if (type === 'CAPTION_TRACKS_RESPONSE') {
+      console.log('[Content Script] Received CAPTION_TRACKS_RESPONSE:', event.data);
+      if (error) {
+        console.error('[Content Script] Error from main world script:', error);
+        if (rejectCaptionTracksPromise) {
+          rejectCaptionTracksPromise(new Error(error));
+        }
+      } else if (payload && resolveCaptionTracksPromise) {
+        // 成功收到轨道数据，解决 Promise
+        resolveCaptionTracksPromise(payload.captionTracks || null);
+      } else {
+          console.warn('[Content Script] Received caption tracks response but no pending promise.');
+      }
+      // 清理 Promise 回调
+      resolveCaptionTracksPromise = null;
+      rejectCaptionTracksPromise = null;
+    }
+  });
+  // --- 结束监听 Main World 消息 ---
+
+  // --- 处理 YouTube 页面内导航 ---
+  // 确保只添加一次监听器
+  if (!(document as any).__yt_navigate_listener_added__) {
+      document.addEventListener('yt-navigate-finish', handleYoutubeNavigation);
+      (document as any).__yt_navigate_listener_added__ = true;
+      console.log('已添加 yt-navigate-finish 监听器。');
+  } else {
+       console.log('yt-navigate-finish 监听器已存在，跳过添加。');
+  }
+}
+
+/**
+ * 获取并处理当前视频的可用字幕轨道信息 (通过 Main World)。
+ * 使用 Promise 来处理异步通信。
+ * 只在首次调用时实际请求，之后返回缓存结果。
+ * @returns {Promise<{ languageCode: string, languageName: string, kind: string }[] | null>} 处理后的轨道信息数组，或 null 表示获取失败。
+ */
+async function fetchAndProcessTracksInfo(): Promise<{ languageCode: string, languageName: string, kind: string }[] | null> {
+    if (tracksInfoFetched) {
+        console.log('[CS-fetch] 轨道信息已获取，返回缓存的处理结果。');
+        return processedAvailableTracks;
+    }
+
+    console.log('[CS-fetch] 首次请求轨道信息 (向 Main World)...');
+
+    // 如果请求已发送且正在等待响应，避免重复请求
+    if (captionTracksRequestSent && (resolveCaptionTracksPromise || rejectCaptionTracksPromise)) {
+        console.warn('[CS-fetch] 请求已发送，正在等待响应，请勿重复调用。');
+        // 返回一个永远 pending 的 Promise 或 null，或者等待现有 Promise
+        // 等待现有 Promise 的简化方式：
+        if (resolveCaptionTracksPromise && rejectCaptionTracksPromise) {
+             console.log('[CS-fetch] 等待现有 Promise 完成...');
+             return new Promise((res, rej) => {
+                 const originalResolve = resolveCaptionTracksPromise;
+                 const originalReject = rejectCaptionTracksPromise;
+                 // @ts-ignore possible null assignment
+                 resolveCaptionTracksPromise = (value) => { originalResolve(value); res(processedAvailableTracks); }; // 解决时返回处理后的结果
+                 // @ts-ignore possible null assignment
+                 rejectCaptionTracksPromise = (reason) => { originalReject(reason); rej(reason); };
+             });
+        }
+        return null; // 如果无法附加到现有 Promise，返回 null
+    }
+
+    // --- 创建 Promise 来等待 Main World 的响应 ---
+    const captionTracksPromise = new Promise<any[] | null>((resolve, reject) => {
+        resolveCaptionTracksPromise = resolve;
+        rejectCaptionTracksPromise = reject;
+
+        // 设置超时，例如 10 秒
+        const timeoutId = setTimeout(() => {
+            if (rejectCaptionTracksPromise) {
+                console.error('[CS-fetch] 获取字幕轨道超时。');
+                rejectCaptionTracksPromise(new Error('Timeout waiting for caption tracks from main world'));
+                resolveCaptionTracksPromise = null; // 清理引用
+                rejectCaptionTracksPromise = null; // 清理引用
+                captionTracksRequestSent = false; // 允许下次重试
+            }
+        }, 10000);
+
+        // 包装 resolve/reject 以清理超时
+        const wrapPromiseCallback = <T extends (...args: any[]) => void>(callback: T | null): T | null => {
+            if (!callback) return null;
+            return ((...args: any[]) => {
+                clearTimeout(timeoutId);
+                callback(...args);
+            }) as T;
+        };
+
+        resolveCaptionTracksPromise = wrapPromiseCallback(resolveCaptionTracksPromise);
+        rejectCaptionTracksPromise = wrapPromiseCallback(rejectCaptionTracksPromise);
+
+        // --- 发送消息到 Main World (如果已就绪) ---
+        const sendMessageToMainWorld = () => {
+            console.log('[CS-fetch] 发送 REQUEST_CAPTION_TRACKS 消息到 Main World...');
+            window.postMessage({
+                source: 'content-script',
+                type: 'REQUEST_CAPTION_TRACKS'
+            }, '*'); // Target origin '*' can be refined
+            captionTracksRequestSent = true; // 标记请求已发送
+        };
+
+        // 检查 Main World 是否已就绪
+        if (mainWorldReady) {
+            sendMessageToMainWorld();
+        } else {
+            // 如果 Main World 尚未就绪，等待 'MAIN_WORLD_READY' 消息
+            console.log('[CS-fetch] Main World 尚未就绪，等待 MAIN_WORLD_READY 消息...');
+            const readyListener = (event: MessageEvent) => {
+                if (event.source === window && event.data?.source === 'main-world' && event.data?.type === 'MAIN_WORLD_READY') {
+                    console.log('[CS-fetch] 在等待期间收到 MAIN_WORLD_READY，发送消息...');
+                    window.removeEventListener('message', readyListener);
+                    sendMessageToMainWorld();
+                }
+            };
+            window.addEventListener('message', readyListener);
+            // 额外超时：如果在一定时间内未收到 READY 信号，也视为失败
+            const readyTimeoutId = setTimeout(() => {
+                window.removeEventListener('message', readyListener);
+                if (rejectCaptionTracksPromise) {
+                    console.error('[CS-fetch] 等待 MAIN_WORLD_READY 超时。');
+                     rejectCaptionTracksPromise(new Error('Timeout waiting for main world script to be ready'));
+                     resolveCaptionTracksPromise = null;
+                     rejectCaptionTracksPromise = null;
+                     captionTracksRequestSent = false;
+                }
+            }, 5000); // 例如 5 秒
+            // 包装 resolve/reject 以清理 readyTimeoutId
+             const wrapPromiseCallbackForReady = <T extends (...args: any[]) => void>(callback: T | null): T | null => {
+                 if (!callback) return null;
+                 return ((...args: any[]) => {
+                     clearTimeout(readyTimeoutId);
+                     window.removeEventListener('message', readyListener); // 确保监听器被移除
+                     callback(...args);
+                 }) as T;
+            };
+            resolveCaptionTracksPromise = wrapPromiseCallbackForReady(resolveCaptionTracksPromise);
+            rejectCaptionTracksPromise = wrapPromiseCallbackForReady(rejectCaptionTracksPromise);
+        }
+    });
+    // --- 结束 Promise 创建 ---
+
+    try {
+        // 等待 Main World 的响应
+        const rawTracks = await captionTracksPromise;
+        console.log('[CS-fetch] 从 Main World 收到原始轨道:', rawTracks);
+
+        if (rawTracks && Array.isArray(rawTracks) && rawTracks.length > 0) {
+            cachedCaptionTracks = rawTracks; // 缓存原始数据
+            console.log('[CS-fetch] 处理收到的原始轨道数据...');
+
+            // --- 处理逻辑：直接映射所有轨道，保持原始 kind --- 
+             processedAvailableTracks = rawTracks.map((track: any) => {
+                // 直接使用原始的 kind 值，不做任何修改或默认赋值
+                return {
+                    languageCode: track.languageCode,
+                    languageName: track.name?.simpleText || track.languageCode, // 使用 name.simpleText，回退到 code
+                    kind: track.kind // 直接使用原始 kind (可能为 undefined, null, 'asr', etc.)
+                };
+            });
+            console.log(`[CS-fetch] 处理完成的轨道信息:`, processedAvailableTracks);
+
+        } else {
+            console.warn('[CS-fetch] 从 Main World 收到的轨道数据无效或为空。');
+            cachedCaptionTracks = null;
+            processedAvailableTracks = [];
+        }
+
+        tracksInfoFetched = true;
+        // 清理请求发送标志，以便下次导航可以重新请求
+        // captionTracksRequestSent = false; // 移动到 finally 或 navigation handler
+
+    } catch (error) {
+        console.error('[CS-fetch] 获取或处理轨道信息时出错:', error);
+        tracksInfoFetched = false; // 获取失败，标记为未获取
+        cachedCaptionTracks = null;
+        processedAvailableTracks = null;
+        // return null; // 错误时将在 finally 后返回
+        throw error; // 重新抛出错误，让调用者知道失败了
+    } finally {
+        // 清理回调引用，无论成功或失败
+        resolveCaptionTracksPromise = null;
+        rejectCaptionTracksPromise = null;
+        // 不在这里重置 captionTracksRequestSent，由导航处理器负责
+        console.log('[CS-fetch] Promise 处理完成 (finally)。');
+    }
+     // 只有在成功时返回处理结果
+     return processedAvailableTracks;
+}
+
+
+/**
+ * 处理 YouTube 页面内导航完成事件。
+ * 重置与特定视频相关的状态。
+ */
+function handleYoutubeNavigation() {
+    console.log('检测到 YouTube 导航 (yt-navigate-finish) v2...');
+
+    console.log('重置视频状态 (v2)...');
+    // 1. 重置注入标志（允许下次重新注入控件）
+    controlsInjected = false;
+
+    // 2. 重置字幕轨道信息状态和缓存
+    tracksInfoFetched = false;
+    processedAvailableTracks = null;
+    cachedCaptionTracks = null;
+    captionTracksRequestSent = false; // 允许为新页面发送请求
+    // 清理可能未完成的 Promise 回调
+    if (rejectCaptionTracksPromise) {
+        rejectCaptionTracksPromise(new Error('Navigation occurred'));
+    }
+    resolveCaptionTracksPromise = null;
+    rejectCaptionTracksPromise = null;
+
+    // 3. 停止并清理当前字幕显示
+    stopSubtitleUpdates();
+    processedSubtitleEvents = [];
+    if (subtitleOverlayElement) {
+        subtitleOverlayElement.textContent = '';
+        subtitleOverlayElement.style.opacity = '0';
+        subtitleOverlayElement.style.visibility = 'hidden';
+    }
+
+    // 4. 重置 video 元素引用
+    videoElement = null;
+
+    // 5. 主世界脚本通常不需要重新注入，因为它已在页面上
+    // MutationObserver 会负责重新调用 injectControls 来添加按钮
+
+    console.log('视频状态已重置 (v2)。等待用户操作或页面加载触发后续逻辑。');
+}
+
+// 在脚本加载时执行初始化
 initialize(); 

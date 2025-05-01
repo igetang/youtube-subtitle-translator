@@ -69,17 +69,58 @@ This document tracks the development process, key decisions, and technical imple
             *   Uses the `sendResponse` callback for asynchronous reply.
         *   Side Panel receives the list and populates the "Source Language" `<select>` options.
 
+## Phase 3: Handling SPA Navigation & Data Fetching Refinement (Completed - Core Mechanism)
+
+8.  **Challenge: SPA Navigation:** Initial implementation using `yt-navigate-finish` event listener showed issues where cached data from the previous video might still be present or accessed immediately after navigation (due to relying on parsing `<script>` tags).
+
+9.  **Reference Plugin Analysis (e.g., Dualsub):**
+    *   **Navigation Detection:** Relies on **Polling** mechanism instead of `yt-navigate-finish`.
+        *   *Main World Script:* Polls `document.getElementById('movie_player').getPlayerResponse()` every ~3 seconds and compares the returned object reference to detect video data changes.
+        *   *Content Script (Isolated World):* Polls URL and player DOM elements every ~3 seconds to detect context changes.
+    *   **Data Fetching:** Primarily uses `getPlayerResponse()` called from the **main world script** to get reliable player data, including `captionTracks`. This confirms the viability and likely stability of accessing the player API.
+    *   **Communication:** Uses `window.postMessage` to transfer processed subtitle list data from the main world script to the isolated content script.
+    *   **`kind` Handling:** Distinguishes ASR tracks by appending a suffix (`-x-ytbasr`) to the `languageCode`, rather than using a separate `kind` field.
+
+10. **Decision & Implementation (方案 B - getPlayerResponse via Main World):** Based on the analysis and successful testing, implemented the approach combining `yt-navigate-finish` event listening with accessing the `getPlayerResponse()` API via an injected main world script.
+    *   **Created `content/main-world.ts`:** This script runs in the page's main execution context.
+        *   Listens for `REQUEST_CAPTION_TRACKS` messages from the content script via `window.addEventListener('message', ...)`. 
+        *   Calls `document.getElementById('movie_player').getPlayerResponse()`. 
+        *   Extracts `captionTracks` from the response.
+        *   Sends the tracks (or error) back to the content script using `window.postMessage({ source: 'main-world', type: 'CAPTION_TRACKS_RESPONSE', ... })`.
+        *   Sends a `MAIN_WORLD_READY` message upon initialization.
+    *   **Updated Build Configuration:**
+        *   Added `content/main-world.ts` as an entry point in `vite.config.ts`.
+        *   Added the built `src/main-world.js` to `web_accessible_resources` in `manifest.json`.
+    *   **Refactored `content/content-script.ts`:**
+        *   Added `injectMainWorldScript()` function to inject `src/main-world.js` into the page during initialization.
+        *   Added `window.addEventListener('message', ...)` to listen for responses (`CAPTION_TRACKS_RESPONSE`) and the ready signal (`MAIN_WORLD_READY`) from the main world script.
+        *   Rewritten `fetchAndProcessTracksInfo()`:
+            *   It now returns a `Promise`.
+            *   When called, it sends the `REQUEST_CAPTION_TRACKS` message to the main world script via `window.postMessage`.
+            *   Uses `resolveCaptionTracksPromise` and `rejectCaptionTracksPromise` to handle the asynchronous response or timeout.
+            *   Caches the raw tracks received from the main world.
+            *   Processes the raw tracks, mapping `languageCode`, `languageName`, and `kind` (preserving the original `kind` value).
+            *   Sets `tracksInfoFetched` flag upon successful completion.
+        *   Removed the old `findInitialPlayerResponse()` function.
+        *   Updated `handleYoutubeNavigation()` to reset `postMessage` related states (`captionTracksRequestSent`, promise resolvers).
+
 ## Build & Configuration Notes
 
 *   **Vite:** Used for building TypeScript, handling multiple entry points (background, content, sidepanel), and managing assets.
 *   **Manifest V3:** Adhered to MV3 requirements (Service Worker for background, stricter permissions, etc.).
 *   **Paths:** Ensured paths in `manifest.json` correctly point to the built files relative to the extension's root directory after the Vite build (e.g., `src/background.js`, `sidepanel/sidepanel.html`).
+*   **(Implemented) Main World Injection:** Added `content/main-world.ts` script, configured it in Vite and Manifest for injection, enabling access to `getPlayerResponse`.
 
 ## Next Steps / ToDo
 
+*   [x] Implement main world script injection.
+*   [x] Implement communication channel (`postMessage`) between content script and main world script.
+*   [x] Refactor `fetchAndProcessTracksInfo` to request data from the main world script via `postMessage`.
 *   Implement actual translation logic using a translation API.
-*   Refine bilingual display mode.
-*   Add error handling for fetch requests and API calls.
-*   Implement user feedback mechanisms (e.g., loading states).
-*   Add tests.
-*   Improve UI/UX styling. 
+*   Refine bilingual display mode based on selected source/target languages and subtitle mode setting.
+*   Implement subtitle fetching (`fetchSubtitleData`) based on the chosen track from `cachedCaptionTracks`.
+*   Integrate translation results into the `subtitleOverlayElement`.
+*   Add robust error handling for `postMessage` communication, `fetch` requests, and translation API calls.
+*   Implement user feedback mechanisms (e.g., loading states during fetch/translation).
+*   Add tests (Unit/Integration).
+*   Improve UI/UX styling (Buttons, Overlay, Side Panel). 
