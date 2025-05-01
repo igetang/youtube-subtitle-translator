@@ -104,6 +104,30 @@ This document tracks the development process, key decisions, and technical imple
         *   Removed the old `findInitialPlayerResponse()` function.
         *   Updated `handleYoutubeNavigation()` to reset `postMessage` related states (`captionTracksRequestSent`, promise resolvers).
 
+## Phase 4: Bug Fixing & Refinements
+
+11. **Fix: Side Panel Opening Permission Denied:**
+    *   **Problem:** Clicking the settings button resulted in a console error: "`sidePanel.open()` may only be called in response to a user gesture."
+    *   **Cause:** The `chrome.runtime.sendMessage({ action: 'openSidePanel' })` call happened *after* an `await fetchAndProcessTracksInfo()` in the button's click handler. The `await` broke the direct chain from the user click to the API call.
+    *   **Solution:** Modified the settings button click handler in `content-script.ts` to immediately send the `openSidePanel` message, and *then* asynchronously call `fetchAndProcessTracksInfo` (using `.then().catch()`) to ensure track info is ready for the panel later.
+
+12. **Fix: Native YouTube Buttons Disappearing:**
+    *   **Problem:** After injecting the custom translation and settings buttons, the native YouTube buttons in the right control bar (`.ytp-right-controls`) disappeared.
+    *   **Debugging:**
+        *   Initially suspected CSS conflicts caused by adding a flex container (`customControlsPanel`) inside the native flex container.
+        *   Removing the flex styles from the custom panel didn't fix it.
+        *   Suspected that simply injecting an extra `div` wrapper disrupted YouTube's layout logic.
+    *   **Solution:** Refactored `injectControls` in `content-script.ts` to remove the intermediate `customControlsPanel` div. Instead, the two custom buttons (`<button>`) are now directly inserted into the `.ytp-right-controls` container using `insertBefore()`, minimizing DOM structure changes.
+
+13. **Fix: Custom Button Vertical Alignment:**
+    *   **Problem:** The injected custom buttons were not vertically centered within the YouTube control bar, appearing lower than the native buttons.
+    *   **Debugging:**
+        *   Confirmed internal icon/border were centered within the button using absolute positioning.
+        *   Tried removing `vertical-align` from the icon `<img>` - no effect.
+        *   Tried removing `display: inline-flex` and `height: 100%` from the button `<button>` - still misaligned.
+        *   Compared our button's structure and CSS with the native settings button. Noticed native buttons use SVG directly and rely heavily on CSS classes (`ytp-button`, `ytp-settings-button`) with minimal inline styles.
+    *   **Solution:** Simplified the button's inline styles in `createControlButton`, removing `padding`, `border`, `background` etc. Crucially, **restored `display: inline-flex` and `align-items: center`** on the `<button>` element itself. This combination, along with inheriting styles from `ytp-button`, allowed the button (as a flex item) to be correctly aligned by the parent `.ytp-right-controls` container.
+
 ## Build & Configuration Notes
 
 *   **Vite:** Used for building TypeScript, handling multiple entry points (background, content, sidepanel), and managing assets.

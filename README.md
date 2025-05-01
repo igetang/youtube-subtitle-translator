@@ -118,4 +118,8 @@
 *   **YYYY-MM-DD:** 实现 Content Script 将自定义按钮注入 YouTube 播放器控制栏，并使用 `chrome.storage` 同步翻译按钮状态。
 *   **YYYY-MM-DD:** 更新按钮边框实现，使用指定的 `normal-border.svg` 文件。
 *   **YYYY-MM-DD:** 移除按钮默认 HTML 提示框，实现模拟 YouTube 风格的自定义提示框系统。
-*   **YYYY-MM-DD:** 调整注入控制面板的 CSS，使用 `marginLeft: auto` 使其在左侧控制栏靠右显示。 
+*   **YYYY-MM-DD:** 调整注入控制面板的 CSS，使用 `marginLeft: auto` 使其在左侧控制栏靠右显示。
+*   **YYYY-MM-DD:** **重构字幕轨道获取:** 引入主世界脚本 (`main-world.ts`) 通过 `getPlayerResponse()` 获取数据；Content Script (`content-script.ts`) 使用 `window.postMessage` 与主世界脚本通信，并通过 `Promise` 处理异步响应，替换了之前解析 `<script>` 标签的方法。
+*   **YYYY-MM-DD:** **修复 Side Panel 打开权限错误:** 调整设置按钮点击逻辑，先**立即**发送 `openSidePanel` 消息给 Background Script，再**异步** (`then/catch`) 获取轨道信息，以保留用户手势上下文。
+*   **YYYY-MM-DD:** **修复原生按钮消失问题:** 修改 `injectControls` 函数，移除包裹按钮的 `div` 容器，改为直接将两个 `<button>` 元素使用 `insertBefore` 注入到 `.ytp-right-controls` 容器的开头。
+*   **YYYY-MM-DD:** **修复按钮垂直对齐:** 调整 `createControlButton` 函数，为按钮 `<button>` 重新添加 `display: inline-flex` 和 `align-items: center` 样式，同时移除其他可能冲突的内联样式，使其能被父容器正确对齐。 

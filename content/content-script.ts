@@ -96,7 +96,7 @@ let cachedCaptionTracks: any[] | null = null;
 /** 标记当前视频的轨道信息是否已获取和处理 */
 let tracksInfoFetched: boolean = false;
 /** 存储处理后的可用轨道信息 (再次包含 kind) */
-let processedAvailableTracks: { languageCode: string, languageName: string, kind: string }[] | null = null;
+let processedAvailableTracks: { languageCode: string, languageName: string, kind: string }[] | null = null; 
 
 
 // --- Tooltip Functions (Keep as is) --- 
@@ -199,7 +199,7 @@ function hideTooltip() {
   }, 100); // 匹配过渡持续时间 (0.1s)
 }
 
-// --- Button Creation Functions (Keep as is) --- 
+// --- REVERT to Button Creation Functions using IMG --- 
 
 /**
  * 为按钮创建边框图像元素。
@@ -208,6 +208,7 @@ function hideTooltip() {
 function createBorderImage(): HTMLImageElement {
   const border = document.createElement('img');
   border.src = NORMAL_BORDER_URL;
+  // 保持绝对定位居中
   border.style.cssText = `
     position: absolute;
     width: 36px;
@@ -215,7 +216,7 @@ function createBorderImage(): HTMLImageElement {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    pointer-events: none; /* 边框不应捕获鼠标事件 */
+    pointer-events: none;
   `;
   return border;
 }
@@ -230,20 +231,23 @@ function createIconImage(src: string, alt: string): HTMLImageElement {
   const icon = document.createElement('img');
   icon.src = src;
   icon.alt = alt;
+  // 保持绝对定位居中
   icon.style.cssText = `
-    position: relative; /* 使其在边框上方 */
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
     width: 24px;
     height: 24px;
-    vertical-align: middle; /* 与按钮文本对齐 */
   `;
   return icon;
 }
 
 /**
- * 创建一个自定义控制按钮，包含图标和边框。
+ * 创建一个自定义控制按钮。
  * @param {string} id - 按钮的 ID。
  * @param {string} tooltipText - 悬停时显示的工具提示文本。
- * @param {string} initialIconSrc - 按钮图标的初始 URL。
+ * @param {string} initialIconSrc - 图标的初始 URL。
  * @param {() => void} onClick - 按钮点击时的回调函数。
  * @returns {{ button: HTMLButtonElement; icon: HTMLImageElement }} 包含按钮元素和图标元素的对象。
  */
@@ -255,34 +259,35 @@ function createControlButton(
 ): { button: HTMLButtonElement; icon: HTMLImageElement } {
   const button = document.createElement('button');
   button.id = id;
-  button.className = 'ytp-button vid-translate-button'; // 使用 YouTube 类名和自定义类名
+  button.className = 'ytp-button vid-translate-button'; // 继承 ytp-button 样式
   button.setAttribute('aria-label', tooltipText);
+  // --- 重新应用关键的内联样式 --- 
   button.style.cssText = `
-    position: relative; /* 使边框能够绝对定位 */
-    overflow: visible; /* 确保边框可见 */
-    width: 48px; /* 增加宽度以容纳边框 */
-    height: 100%;
-    display: inline-flex; /* 使用 flex 居中图标 */
-    align-items: center;
-    justify-content: center;
+    position: relative; /* 保留，用于子元素绝对定位 */
+    overflow: visible; /* 保留，确保边框可见 */
+    width: 48px; /* 保留宽度 */
+    display: inline-flex; /* <--- 重新添加，让父容器知道如何处理 */
+    align-items: center; /* <--- 重新添加，垂直居中内部内容 (虽然是绝对定位) */
+    justify-content: center; /* <--- 重新添加，水平居中内部内容 */
+    /* 移除其他可能冲突的样式: height, padding, border, background, cursor */
   `;
 
-  const border = createBorderImage();
-  const icon = createIconImage(initialIconSrc, tooltipText);
+  const border = createBorderImage(); // 绝对定位居中
+  const icon = createIconImage(initialIconSrc, tooltipText); // 绝对定位居中
 
-  button.appendChild(border); // 先添加边框
-  button.appendChild(icon); // 再添加图标
+  button.appendChild(border);
+  button.appendChild(icon);
 
   // 添加事件监听器
   button.addEventListener('click', onClick);
   button.addEventListener('mouseenter', () => showTooltip(button, tooltipText));
   button.addEventListener('mouseleave', hideTooltip);
 
-  return { button, icon };
+  return { button, icon }; // 返回 icon (img) 而不是 iconSvg
 }
 
 
-// --- Subtitle Fetching & Processing (Keep fetchSubtitleData, processAndStoreSubtitles) ---
+// --- Subtitle Fetching & Processing (Keep as is) ---
 
 /**
  * 根据 baseUrl 异步获取字幕数据。
@@ -293,10 +298,10 @@ async function fetchSubtitleData(baseUrl: string): Promise<object | null> {
   console.log('Fetching subtitle data from:', baseUrl);
   try {
     const response = await fetch(baseUrl);
-    if (!response.ok) {
+        if (!response.ok) {
       console.error(`HTTP error! status: ${response.status} while fetching ${baseUrl}`);
-      return null;
-    }
+            return null;
+        }
 
     const contentType = response.headers.get('content-type');
     if (contentType?.includes('application/xml') || contentType?.includes('text/xml')) {
@@ -319,10 +324,10 @@ async function fetchSubtitleData(baseUrl: string): Promise<object | null> {
       console.log('Fetched JSON subtitle data.');
       return jsonData;
     }
-  } catch (error) {
+    } catch (error) {
     console.error('Error fetching or parsing subtitle data:', error);
-    return null;
-  }
+        return null;
+    }
 }
 
 /**
@@ -330,14 +335,14 @@ async function fetchSubtitleData(baseUrl: string): Promise<object | null> {
  * @param {any} subtitleJson - 包含字幕事件的 JSON 对象。
  */
 function processAndStoreSubtitles(subtitleJson: any) {
-  if (!subtitleJson || !Array.isArray(subtitleJson.events)) {
+    if (!subtitleJson || !Array.isArray(subtitleJson.events)) {
     console.error('Invalid subtitle JSON data received:', subtitleJson);
     processedSubtitleEvents = [];
     return;
-  }
+    }
 
   processedSubtitleEvents = subtitleJson.events.map((event: any) => {
-    const start = event.tStartMs;
+        const start = event.tStartMs;
     const duration = event.dDurationMs;
     // 处理可能存在的多个 segs
     const text = (event.segs || [])
@@ -387,7 +392,7 @@ function handleSubtitleUpdate() {
     // 更新字幕内容和可见性
     if (subtitleOverlayElement.textContent !== currentSubtitle) {
         subtitleOverlayElement.textContent = currentSubtitle;
-    }
+        }
 
     const shouldShow = !!currentSubtitle;
     const currentOpacity = parseFloat(subtitleOverlayElement.style.opacity || '0');
@@ -399,10 +404,10 @@ function handleSubtitleUpdate() {
         // 如果需要立即隐藏而不是淡出，可以设置 visibility
         if (!shouldShow) {
             // 在淡出动画结束后隐藏
-            setTimeout(() => {
+           setTimeout(() => {
                 if (subtitleOverlayElement && parseFloat(subtitleOverlayElement.style.opacity) === 0) {
-                    subtitleOverlayElement.style.visibility = 'hidden';
-                }
+                   subtitleOverlayElement.style.visibility = 'hidden';
+               }
             }, 200); // 稍大于 transition 时间
         } else {
             subtitleOverlayElement.style.visibility = 'visible';
@@ -414,10 +419,10 @@ function handleSubtitleUpdate() {
  * 使用 requestAnimationFrame 的字幕更新循环。
  */
 function updateSubtitleLoop() {
-    handleSubtitleUpdate();
+        handleSubtitleUpdate(); 
     // 继续请求下一帧
     if (translateActive) { // 仅当翻译激活时继续循环
-       animationFrameId = requestAnimationFrame(updateSubtitleLoop);
+    animationFrameId = requestAnimationFrame(updateSubtitleLoop);
     } else {
         animationFrameId = null; // 确保 ID 被清除
     }
@@ -451,17 +456,17 @@ function createSubtitleOverlay(playerContainer: HTMLElement) {
     subtitleOverlayElement.style.cssText = `
         position: absolute;
         bottom: 60px; /* 调整到底部距离 */
-        left: 50%;
-        transform: translateX(-50%);
-        background-color: rgba(0, 0, 0, 0.7);
-        color: white;
+        left: 50%;   
+        transform: translateX(-50%); 
+        background-color: rgba(0, 0, 0, 0.7); 
+        color: white; 
         padding: 5px 15px;
-        border-radius: 5px;
+        border-radius: 5px; 
         font-size: 1.6rem; /* 字号调整 */
-        text-align: center;
+        text-align: center; 
         z-index: 2000; /* 确保在控件之上 */
         pointer-events: none; /* 允许点击穿透 */
-        max-width: 80%;
+        max-width: 80%; 
         opacity: 0;
         visibility: hidden;
         transition: opacity 0.2s ease-in-out;
@@ -477,11 +482,12 @@ function createSubtitleOverlay(playerContainer: HTMLElement) {
 
 /**
  * 将自定义控件注入到 YouTube 播放器。
- * 此函数现在依赖于新的 `fetchAndProcessTracksInfo`。
  */
-function injectControls() {
-  if (controlsInjected) {
-    console.log('控件已注入，跳过。');
+function injectControls() { // <-- 函数改回同步
+  // --- 检查防止重复注入 ---
+  if (controlsInjected || 
+      document.getElementById('vid-translate-toggle-button') || 
+      document.getElementById('vid-translate-settings-button')) {
     return;
   }
 
@@ -496,103 +502,95 @@ function injectControls() {
     createSubtitleOverlay(playerContainer as HTMLElement);
   }
 
-  // 创建按钮容器
-  const customControlsPanel = document.createElement('div');
-  customControlsPanel.className = 'ytp-chrome-controls vid-translator-panel';
-  customControlsPanel.style.display = 'flex';
-  customControlsPanel.style.alignItems = 'center';
+  const firstNativeButton = rightControls.firstChild; // 获取插入参照点
 
-  // 创建翻译按钮
-  const { button: translateButton, icon: translateIcon } = createControlButton(
-    'vid-translate-toggle-button',
-    '开启/关闭翻译',
-    translateActive ? ON_ICON_URL : OFF_ICON_URL,
-    async () => {
-      translateActive = !translateActive;
-      console.log('翻译按钮点击，新状态:', translateActive);
-      translateIcon.src = translateActive ? ON_ICON_URL : OFF_ICON_URL;
-      // 将状态保存到存储
-      chrome.storage.sync.set({ translateActive: translateActive });
-
-      if (translateActive) {
-        // 确保视频元素存在
-        if (!videoElement) {
-            videoElement = document.querySelector('video');
-            if (!videoElement) {
-                console.error('未能找到 video 元素，无法开始翻译。');
-                return;
-            }
-        }
-        // 确保字幕轨道信息已获取 (如果尚未获取)
-        if (!tracksInfoFetched) {
-            console.log('翻译开启，需要获取字幕轨道信息...');
-            try {
-                 await fetchAndProcessTracksInfo(); // 等待获取完成
-                 if (!processedAvailableTracks || processedAvailableTracks.length === 0) {
-                     console.warn('没有可用的字幕轨道，无法进行翻译。');
-                     // 可以给用户提示
-                     translateActive = false; // 无法翻译，状态改回去
-                     translateIcon.src = OFF_ICON_URL;
-                     chrome.storage.sync.set({ translateActive: translateActive });
-                     return;
-                 }
-            } catch (error) {
-                console.error('获取轨道信息失败，无法开启翻译。', error);
-                translateActive = false; // 获取失败，状态改回去
-                translateIcon.src = OFF_ICON_URL;
-                chrome.storage.sync.set({ translateActive: translateActive });
-                return;
-            }
-        }
-
-        // TODO: 在这里添加实际选择轨道、获取字幕内容、翻译和显示的逻辑
-        // 暂时只启动/停止原始字幕显示循环
-        console.log('启动字幕更新循环...');
-        if (!animationFrameId) {
-            animationFrameId = requestAnimationFrame(updateSubtitleLoop);
-        }
-      } else {
-        console.log('停止字幕更新循环...');
-        stopSubtitleUpdates();
-      }
-    }
-  );
-
-  // 创建设置按钮
+  // --- 1. 创建设置按钮 --- (同步)
   const { button: settingsButton } = createControlButton(
     'vid-translate-settings-button',
     '翻译设置',
     SETTING_ICON_URL,
     () => {
       console.log('设置按钮点击');
-      // 确保轨道信息已获取 (打开设置面板需要源语言列表)
-      fetchAndProcessTracksInfo().then(() => {
-          console.log('轨道信息已确认，发送打开 Side Panel 消息...');
-          // 向后台脚本发送消息以打开侧边栏
-          chrome.runtime.sendMessage({ action: 'openSidePanel' }, (response) => {
-            if (chrome.runtime.lastError) {
-              console.error('发送 openSidePanel 消息时出错:', chrome.runtime.lastError.message);
-            } else if (response && response.status === 'success') {
-              console.log('Side Panel 打开成功。');
-            } else {
-              console.warn('打开 Side Panel 失败或收到意外响应:', response);
-            }
-          });
-      }).catch(error => {
-           console.error('获取轨道信息以打开设置失败:', error);
-      });
+      console.log('立即发送打开 Side Panel 消息...');
+      chrome.runtime.sendMessage({ action: 'openSidePanel' }, (response) => {
+         if (chrome.runtime.lastError) {
+           console.error('[CS - Click Handler] 发送 openSidePanel 消息时出错:', chrome.runtime.lastError.message);
+         } else if (response && response.status === 'success') {
+           console.log('[CS - Click Handler] Background 确认 Side Panel 打开指令已收到。');
+         } else {
+           console.warn('[CS - Click Handler] Background 返回的打开 Side Panel 响应异常:', response);
+         }
+       });
+       fetchAndProcessTracksInfo()
+         .then(() => {
+             console.log('[CS - Click Handler] 轨道信息已在后台确认或获取。');
+         })
+         .catch(error => {
+             console.error('[CS - Click Handler] 在后台获取轨道信息以供 Side Panel 使用时失败:', error);
+         });
     }
   );
+  // 将设置按钮插入开头
+  rightControls.insertBefore(settingsButton, firstNativeButton);
+  console.log('设置按钮已注入');
 
-  // 将按钮添加到面板
-  customControlsPanel.appendChild(translateButton);
-  customControlsPanel.appendChild(settingsButton);
-
-  // 将面板注入到右侧控件
-  rightControls.insertBefore(customControlsPanel, rightControls.firstChild);
+  // --- 2. 创建翻译按钮 --- (同步)
+  const { button: translateButton, icon: translateIcon } = createControlButton(
+    'vid-translate-toggle-button',
+    '开启/关闭翻译',
+    translateActive ? ON_ICON_URL : OFF_ICON_URL,
+    async () => {
+       translateActive = !translateActive;
+       console.log('翻译按钮点击，新状态:', translateActive);
+       // --- 更新图标 IMG src --- 
+       translateIcon.src = translateActive ? ON_ICON_URL : OFF_ICON_URL;
+       // --- 结束更新图标 IMG --- 
+       chrome.storage.sync.set({ translateActive: translateActive });
+       if (translateActive) { 
+         if (!videoElement) {
+             videoElement = document.querySelector('video');
+             if (!videoElement) {
+                 console.error('未能找到 video 元素，无法开始翻译。');
+                 return;
+             }
+         }
+         if (!tracksInfoFetched) {
+             console.log('翻译开启，需要获取字幕轨道信息...');
+             try {
+                  await fetchAndProcessTracksInfo();
+                  if (!processedAvailableTracks || processedAvailableTracks.length === 0) {
+                      console.warn('没有可用的字幕轨道，无法进行翻译。');
+                      translateActive = false;
+                      // 更新图标回 OFF
+                      translateIcon.src = OFF_ICON_URL;
+                      chrome.storage.sync.set({ translateActive: translateActive });
+                      return;
+                  }
+             } catch (error) {
+                 console.error('获取轨道信息失败，无法开启翻译。', error);
+                 translateActive = false;
+                 // 更新图标回 OFF
+                 translateIcon.src = OFF_ICON_URL;
+                 chrome.storage.sync.set({ translateActive: translateActive });
+                 return;
+             }
+         }
+         console.log('启动字幕更新循环...');
+         if (!animationFrameId) { 
+             animationFrameId = requestAnimationFrame(updateSubtitleLoop);
+         }
+       } else {
+         console.log('停止字幕更新循环...');
+         stopSubtitleUpdates();
+       }
+    }
+  );
+  // 将翻译按钮插入开头 (在设置按钮之前)
+  rightControls.insertBefore(translateButton, settingsButton);
+  console.log('翻译按钮已注入');
 
   controlsInjected = true;
-  console.log('自定义控件注入成功。');
+  console.log('自定义控件直接注入成功。');
 }
 
 
@@ -698,7 +696,7 @@ function initialize() {
     // 验证消息来源和类型
     if (event.source !== window || event.data?.source !== 'main-world') {
       return;
-    }
+      }
 
     const { type, payload, error } = event.data;
 
@@ -814,7 +812,7 @@ async function fetchAndProcessTracksInfo(): Promise<{ languageCode: string, lang
         // 检查 Main World 是否已就绪
         if (mainWorldReady) {
             sendMessageToMainWorld();
-        } else {
+            } else {
             // 如果 Main World 尚未就绪，等待 'MAIN_WORLD_READY' 消息
             console.log('[CS-fetch] Main World 尚未就绪，等待 MAIN_WORLD_READY 消息...');
             const readyListener = (event: MessageEvent) => {
@@ -822,7 +820,7 @@ async function fetchAndProcessTracksInfo(): Promise<{ languageCode: string, lang
                     console.log('[CS-fetch] 在等待期间收到 MAIN_WORLD_READY，发送消息...');
                     window.removeEventListener('message', readyListener);
                     sendMessageToMainWorld();
-                }
+            }
             };
             window.addEventListener('message', readyListener);
             // 额外超时：如果在一定时间内未收到 READY 信号，也视为失败
@@ -863,21 +861,21 @@ async function fetchAndProcessTracksInfo(): Promise<{ languageCode: string, lang
             // --- 处理逻辑：直接映射所有轨道，保持原始 kind --- 
              processedAvailableTracks = rawTracks.map((track: any) => {
                 // 直接使用原始的 kind 值，不做任何修改或默认赋值
-                return {
-                    languageCode: track.languageCode,
+            return {
+                languageCode: track.languageCode,
                     languageName: track.name?.simpleText || track.languageCode, // 使用 name.simpleText，回退到 code
                     kind: track.kind // 直接使用原始 kind (可能为 undefined, null, 'asr', etc.)
-                };
-            });
+            };
+        });
             console.log(`[CS-fetch] 处理完成的轨道信息:`, processedAvailableTracks);
 
-        } else {
+    } else {
             console.warn('[CS-fetch] 从 Main World 收到的轨道数据无效或为空。');
             cachedCaptionTracks = null;
-            processedAvailableTracks = [];
-        }
+        processedAvailableTracks = []; 
+    }
 
-        tracksInfoFetched = true;
+    tracksInfoFetched = true;
         // 清理请求发送标志，以便下次导航可以重新请求
         // captionTracksRequestSent = false; // 移动到 finally 或 navigation handler
 
@@ -897,7 +895,7 @@ async function fetchAndProcessTracksInfo(): Promise<{ languageCode: string, lang
     }
      // 只有在成功时返回处理结果
      return processedAvailableTracks;
-}
+    }
 
 
 /**
@@ -906,7 +904,7 @@ async function fetchAndProcessTracksInfo(): Promise<{ languageCode: string, lang
  */
 function handleYoutubeNavigation() {
     console.log('检测到 YouTube 导航 (yt-navigate-finish) v2...');
-
+    
     console.log('重置视频状态 (v2)...');
     // 1. 重置注入标志（允许下次重新注入控件）
     controlsInjected = false;
@@ -924,7 +922,7 @@ function handleYoutubeNavigation() {
     rejectCaptionTracksPromise = null;
 
     // 3. 停止并清理当前字幕显示
-    stopSubtitleUpdates();
+    stopSubtitleUpdates(); 
     processedSubtitleEvents = [];
     if (subtitleOverlayElement) {
         subtitleOverlayElement.textContent = '';
