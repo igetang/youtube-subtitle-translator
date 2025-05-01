@@ -128,6 +128,18 @@ This document tracks the development process, key decisions, and technical imple
         *   Compared our button's structure and CSS with the native settings button. Noticed native buttons use SVG directly and rely heavily on CSS classes (`ytp-button`, `ytp-settings-button`) with minimal inline styles.
     *   **Solution:** Simplified the button's inline styles in `createControlButton`, removing `padding`, `border`, `background` etc. Crucially, **restored `display: inline-flex` and `align-items: center`** on the `<button>` element itself. This combination, along with inheriting styles from `ytp-button`, allowed the button (as a flex item) to be correctly aligned by the parent `.ytp-right-controls` container.
 
+14. **Fix: Side Panel Source Language Not Updating on Navigation:**
+    *   **Problem:** When the Side Panel was open and the user navigated to a new YouTube video (SPA navigation), the "Source Language" dropdown in the Side Panel did not update with the languages for the new video. It only updated if the panel was closed and reopened.
+    *   **Cause:** The Side Panel (`sidepanel.ts`) only requested the available language tracks from the Content Script (`content-script.ts`) once when its `DOMContentLoaded` event fired. YouTube's SPA navigation doesn't re-trigger this event.
+    *   **Solution:** Implemented a messaging flow to inform the Side Panel about navigation:
+        *   **Content Script (`content-script.ts`):** In the `handleYoutubeNavigation` function (triggered by `yt-navigate-finish`), added a `chrome.runtime.sendMessage({ action: 'youtubeNavigationFinished' })` call to notify the background script.
+        *   **Background Script (`background.ts`):** Added a listener for the `youtubeNavigationFinished` message. Upon receiving it, it broadcasts a new message `chrome.runtime.sendMessage({ action: 'youtubeNavigationOccurred', navigatedTabId: sender.tab.id })` to all extension contexts.
+        *   **Side Panel Script (`sidepanel.ts`):**
+            *   Added a `currentTabId` variable to store the ID of the tab it's associated with (obtained during `DOMContentLoaded`).
+            *   Extracted the logic for requesting and filling the source language dropdown into an async function `requestAndFillSourceLanguages(tabId)`.
+            *   Added a `chrome.runtime.onMessage.addListener` to listen for the `youtubeNavigationOccurred` message from the background script.
+            *   If the `navigatedTabId` in the message matches the `currentTabId` of the side panel, it calls `requestAndFillSourceLanguages(currentTabId)` again to refresh the language list.
+
 ## Build & Configuration Notes
 
 *   **Vite:** Used for building TypeScript, handling multiple entry points (background, content, sidepanel), and managing assets.

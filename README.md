@@ -79,7 +79,12 @@
     *   更新 `subtitleOverlayElement` 的内容和可见性。
 9.  **页面导航 (`yt-navigate-finish` 触发 `handleYoutubeNavigation`):**
     *   重置与视频相关的状态（轨道缓存、字幕数据、注入标志等）。
-    *   `MutationObserver` 会在内容加载后再次触发 `injectControls`。
+    *   MutationObserver 会在内容加载后再次触发 `injectControls`。
+10. **导航时侧边栏更新:**
+    *   Content Script 监听到 `yt-navigate-finish` 事件 (`handleYoutubeNavigation`)。
+    *   Content Script 向 Background Script 发送 `youtubeNavigationFinished` 消息。
+    *   Background Script 收到消息后，向所有扩展上下文广播 `youtubeNavigationOccurred` 消息，并携带发生导航的 `tabId`。
+    *   Side Panel 监听到广播消息，如果 `tabId` 与自身匹配，则重新调用 `requestAndFillSourceLanguages` 函数，向当前 Content Script 请求新的可用轨道列表。
 
 ## 依赖库
 
@@ -122,4 +127,5 @@
 *   **YYYY-MM-DD:** **重构字幕轨道获取:** 引入主世界脚本 (`main-world.ts`) 通过 `getPlayerResponse()` 获取数据；Content Script (`content-script.ts`) 使用 `window.postMessage` 与主世界脚本通信，并通过 `Promise` 处理异步响应，替换了之前解析 `<script>` 标签的方法。
 *   **YYYY-MM-DD:** **修复 Side Panel 打开权限错误:** 调整设置按钮点击逻辑，先**立即**发送 `openSidePanel` 消息给 Background Script，再**异步** (`then/catch`) 获取轨道信息，以保留用户手势上下文。
 *   **YYYY-MM-DD:** **修复原生按钮消失问题:** 修改 `injectControls` 函数，移除包裹按钮的 `div` 容器，改为直接将两个 `<button>` 元素使用 `insertBefore` 注入到 `.ytp-right-controls` 容器的开头。
-*   **YYYY-MM-DD:** **修复按钮垂直对齐:** 调整 `createControlButton` 函数，为按钮 `<button>` 重新添加 `display: inline-flex` 和 `align-items: center` 样式，同时移除其他可能冲突的内联样式，使其能被父容器正确对齐。 
+*   **YYYY-MM-DD:** **修复按钮垂直对齐:** 调整 `createControlButton` 函数，为按钮 `<button>` 重新添加 `display: inline-flex` 和 `align-items: center` 样式，同时移除其他可能冲突的内联样式，使其能被父容器正确对齐。
+*   **YYYY-MM-DD:** **修复侧边栏导航更新:** 实现 Content Script -> Background Script -> Side Panel 的消息传递机制，使侧边栏在 YouTube 页面导航切换视频后能自动重新获取并更新源语言选项列表。 

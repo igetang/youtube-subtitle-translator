@@ -937,6 +937,11 @@ function handleYoutubeNavigation() {
     // MutationObserver 会负责重新调用 injectControls 来添加按钮
 
     console.log('视频状态已重置 (v2)。等待用户操作或页面加载触发后续逻辑。');
+
+    // --- 新增：通知背景脚本 ---
+    console.log('[CS] Navigation finished, notifying background...');
+    chrome.runtime.sendMessage({ action: 'youtubeNavigationFinished' });
+    // --- 结束新增 ---
 }
 
 // 在脚本加载时执行初始化

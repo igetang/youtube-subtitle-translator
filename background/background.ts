@@ -129,6 +129,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     return true; // 告诉 Chrome 我们将异步发送响应
   }
+  // --- 新增：处理来自内容脚本的导航完成通知 ---
+  else if (message.action === 'youtubeNavigationFinished') {
+    if (sender.tab && sender.tab.id) {
+        const navigatedTabId = sender.tab.id;
+        console.log(`[BG] Received navigation finished from Tab ${navigatedTabId}. Broadcasting notification...`);
+        // 广播消息给所有扩展上下文（包括 Side Panel）
+        chrome.runtime.sendMessage({ action: 'youtubeNavigationOccurred', navigatedTabId: navigatedTabId });
+    } else {
+         console.warn('[BG] Received youtubeNavigationFinished without sender tab ID.');
+    }
+    // 不需要异步响应，可以返回 false 或省略 return
+    return false;
+  }
   // --- 结束处理 ---
 
   // 可以添加其他消息处理逻辑...
