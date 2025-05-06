@@ -140,6 +140,37 @@ This document tracks the development process, key decisions, and technical imple
             *   Added a `chrome.runtime.onMessage.addListener` to listen for the `youtubeNavigationOccurred` message from the background script.
             *   If the `navigatedTabId` in the message matches the `currentTabId` of the side panel, it calls `requestAndFillSourceLanguages(currentTabId)` again to refresh the language list.
 
+15. **Fix: Custom Subtitle Overlay Style Matching:**
+    *   **Problem:** The custom subtitle overlay (`#yt-translator-subtitle-overlay`) did not match YouTube's native subtitle styling, particularly in width and text wrapping behavior. The native subtitle container's width adapts to the content length, while our custom overlay had a fixed width ratio.
+    *   **Investigation:**
+        *   Inspected YouTube's native subtitle CSS using browser dev tools, capturing the computed styles in a 1280x720 player.
+        *   Key findings:
+            *   Font size: 32px in 720p player (scaling proportionally with player height)
+            *   Text alignment: center
+            *   White space: pre-wrap (preserves line breaks)
+            *   Width: Auto-adjusts based on content length
+            *   Max-width: None (but effectively ~93% of player width for long content)
+            *   Background: rgba(8, 8, 8, 0.75)
+            *   Border radius: 8px
+            *   Padding: 0px 8px
+    *   **Solution Evolution:**
+        *   **Attempt 1 - Fixed Ratio Width:**
+            *   Initially tried using a fixed ratio width (max-width: 85%) with transform for centering
+            *   Issue: Container width was always the same regardless of text length
+        *   **Attempt 2 - Calculated Width:**
+            *   Implemented `updateOverlayWidth()` function to calculate width based on player size
+            *   Used the formula: `playerWidth * 0.53` (based on 680px/1280px ratio)
+            *   Added content-length-based adjustments for short subtitles
+            *   Issue: Still not truly content-based, just better approximations
+        *   **Final Solution - Content-Based Width:**
+            *   Implemented a two-layer structure:
+                *   Outer wrapper (absolute positioned with Flexbox layout for centering)
+                *   Inner subtitle container (using `display: inline-block` with `width: auto`)
+            *   Set `max-width: 93%` to match YouTube's behavior
+            *   Added dynamic font size calculation: `playerHeight * 0.0444`
+            *   Used ResizeObserver to update both font size and container properties on player resize
+            *   Result: Subtitle container now behaves like YouTube's native subtitles, with width automatically adjusting to content length
+
 ## Build & Configuration Notes
 
 *   **Vite:** Used for building TypeScript, handling multiple entry points (background, content, sidepanel), and managing assets.

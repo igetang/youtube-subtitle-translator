@@ -93,6 +93,7 @@
 *   **Side Panel 打开权限错误**: 修复了因 `await` 阻塞导致丢失用户手势上下文，无法调用 `chrome.sidePanel.open()` 的问题。调整为先发送消息再异步获取数据。
 *   **原生按钮消失问题**: 修复了因注入自定义按钮时使用了额外 `div` 容器，干扰 YouTube 布局导致原生按钮消失的问题。改为直接注入 `<button>` 元素。
 *   **按钮垂直对齐问题**: 修复了自定义按钮在控制栏中垂直位置偏低的问题。通过调整按钮 `<button>` 的 CSS (`display: inline-flex`, `align-items: center`) 并移除冲突样式解决。
+*   **字幕容器样式匹配问题**: 解决了自定义字幕叠加层在宽度和换行行为上与YouTube原生字幕不一致的问题。采用双层结构（包装容器+内容容器）并精确匹配原生字幕样式（`max-width: 93%`、`white-space: pre-wrap`等），使字幕容器能够根据字幕内容长度自动伸缩。
 
 ### 后续计划
 
@@ -206,6 +207,7 @@
 *   [x] **修复 Side Panel 导航后自动更新轨道列表**
 *   [x] **修复 YouTube 页面导航后字幕不自动启动问题 (详细见"导航与稳定性修复"部分)**
 *   [x] **修复 YouTube 页面导航时按钮重复注入问题 (详细见"导航与稳定性修复"部分)**
+*   [x] **优化字幕容器样式，精确匹配YouTube原生字幕 (使用Flexbox布局+动态宽度)**
 *   [ ] 完善 Sidepanel 功能 (选择目标语言, 保存设置等)
 *   [ ] 接入实际的翻译 API
 *   [ ] UI 开发 (Popup)
@@ -242,4 +244,5 @@
 *   **YYYY-MM-DD:** 修复按钮注入导致原生按钮消失的问题 (移除额外 wrapper div)。
 *   **YYYY-MM-DD:** 修复自定义按钮垂直对齐问题 (调整 CSS)。
 *   **YYYY-MM-DD:** 实现 Side Panel 在 YouTube 导航后自动更新源语言列表 (通过 Background 广播)。
-*   **YYYY-MM-DD:** **详细修复导航相关的稳定性问题** (字幕自动启动 & 按钮重复注入，涉及 `startTranslationProcess`, `handleYoutubeNavigation` 主动清理旧按钮, `injectControls` 双重检查)。 
+*   **YYYY-MM-DD:** **详细修复导航相关的稳定性问题** (字幕自动启动 & 按钮重复注入，涉及 `startTranslationProcess`, `handleYoutubeNavigation` 主动清理旧按钮, `injectControls` 双重检查)。
+*   **YYYY-MM-DD:** **优化字幕容器样式** (采用双层结构与自动宽度计算，确保字幕容器行为与YouTube原生字幕一致)。 

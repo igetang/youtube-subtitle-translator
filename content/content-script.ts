@@ -58,17 +58,22 @@ let captionTracksRequestSent = false;
 let mainWorldReady = false;
 // --- 结束新增 ---
 
-/** 定义 ytInitialPlayerResponse 中我们关心的部分结构 (保持，虽然获取方式变了) */
-interface YtPlayerCaptionsRenderer {
-  captionTracks?: any[]; // 实际字幕轨道数组
-}
-
-interface YtPlayerCaptions {
-  playerCaptionsTracklistRenderer?: YtPlayerCaptionsRenderer;
-}
-
-interface YtInitialPlayerResponse {
-  captions?: YtPlayerCaptions;
+/**
+ * @typedef {object} SubtitleEvent
+ * @property {number} start - 字幕开始时间 (秒)
+ * @property {number} end - 字幕结束时间 (秒)
+ * @property {string | null} sourceText - 从最佳匹配源语言轨道获取的文本
+ * @property {string | null} targetText - 从最佳匹配原生目标轨道获取的文本，或翻译结果
+ * @property {string | null} sourceLangCode - 获取到的源文本的语言代码
+ * @property {string | null} targetLangCode - 获取/翻译到的目标文本的语言代码
+ */
+interface SubtitleEvent {
+    start: number;
+    end: number;
+    sourceText: string | null;
+    targetText: string | null;
+    sourceLangCode: string | null;
+    targetLangCode: string | null;
 }
 
 /** 防止重复注入的标志位。 */
@@ -86,7 +91,7 @@ let hideTooltipTimeout: number | null = null;
 /** 全局变量，用于引用字幕显示元素 */
 let subtitleOverlayElement: HTMLDivElement | null = null;
 /** 全局变量，用于存储处理后的字幕事件 */
-let processedSubtitleEvents: { start: number; end: number; originalText: string; translatedText: string }[] = [];
+let processedSubtitleEvents: SubtitleEvent[] = [];
 /** 全局变量，用于引用 video 元素的引用 */
 let videoElement: HTMLVideoElement | null = null;
 /** 全局变量，用于存储 requestAnimationFrame 的 ID，方便取消 */
@@ -101,6 +106,12 @@ let processedAvailableTracks: { languageCode: string, languageName: string, kind
 /** 全局变量，用于引用翻译切换按钮的图标元素，方便更新 */
 let translateToggleButtonIcon: HTMLImageElement | null = null;
 
+// --- 新增：全局变量 for ResizeObserver and Player Container ---
+/** 存储 ResizeObserver 实例 */
+let playerResizeObserver: ResizeObserver | null = null;
+/** 缓存播放器容器元素的引用 */
+let playerContainerElement: HTMLElement | null = null;
+// --- 结束新增 ---
 
 // --- Tooltip Functions (Keep as is) --- 
 
@@ -334,38 +345,37 @@ async function fetchSubtitleData(baseUrl: string): Promise<object | null> {
 }
 
 /**
- * 解析字幕 JSON 数据并存储结果。
- * 根据是原生轨道 ('native') 还是需要翻译的源轨道 ('original') 来填充字段。
- * @param subtitleJson 从 fetchSubtitleData 获取的字幕 JSON 对象。
- * @param type 指示字幕来源类型。
+ * 解析原始字幕数据 (来自 fetchSubtitleData) 并返回标准化的事件数组。
+ * @param subtitleJson - 从 fetchSubtitleData 获取的 JSON 或 XML 解析后的对象。
+ * @param langCode - 该字幕数据的语言代码。
+ * @returns {{ start: number; end: number; text: string; langCode: string }[] | null} 标准化事件数组或 null。
  */
-function processAndStoreSubtitles(subtitleJson: any, type: 'original' | 'native') {
-  processedSubtitleEvents = []; // 清空旧数据
-  if (subtitleJson && subtitleJson.events) {
+function parseSubtitleData(subtitleJson: any, langCode: string): { start: number; end: number; text: string; langCode: string }[] | null {
+    if (!subtitleJson || !subtitleJson.events || !Array.isArray(subtitleJson.events)) {
+        console.error(`无效的字幕 JSON 数据 (lang: ${langCode}):`, subtitleJson);
+        return null;
+    }
+
+    const events: { start: number; end: number; text: string; langCode: string }[] = [];
     subtitleJson.events.forEach((event: any) => {
-      if (event.tStartMs !== undefined && event.segs) { // 检查 tStartMs 是否存在
-        const start = event.tStartMs / 1000; // 转换为秒
-        // 确保 duration 合理，避免负数或过大值，提供默认值
-        const duration = event.dDurationMs > 0 ? event.dDurationMs / 1000 : 5; // 默认持续时间 5 秒
+        if (event.tStartMs !== undefined && event.segs) {
+            const start = event.tStartMs / 1000;
+            const duration = event.dDurationMs > 0 ? event.dDurationMs / 1000 : 5; // Default 5s duration
         const end = start + duration;
-        // 将所有文本片段连接起来
         const text = event.segs.map((seg: any) => seg.utf8 || '').join('');
-        if (text.trim()) { // 确保文本不为空
-          const newEvent = {
-              start: start,
-              end: end,
-              originalText: type === 'original' ? text : (type === 'native' ? text : ''), // 原文字段
-              translatedText: type === 'native' ? text : '' // 译文字段 (native 时与原文相同, original 时暂时为空)
-          };
-          processedSubtitleEvents.push(newEvent);
+            if (text.trim()) {
+                // HTML Decode text just in case
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = text;
+                const decodedText = tempDiv.textContent || tempDiv.innerText || '';
+                events.push({ start, end, text: decodedText, langCode });
         }
       }
     });
-    console.log(`处理并存储了 ${processedSubtitleEvents.length} 条字幕事件 (类型: ${type})。`);
-  } else {
-    console.error('无效的字幕 JSON 数据:', subtitleJson);
-  }
+    console.log(`解析了 ${events.length} 条字幕事件 (lang: ${langCode})。`);
+    return events.length > 0 ? events : null;
 }
+
 
 // --- Subtitle Display & Sync (Keep handleSubtitleUpdate, updateSubtitleLoop, stopSubtitleUpdates, createSubtitleOverlay) ---
 
@@ -373,7 +383,7 @@ function processAndStoreSubtitles(subtitleJson: any, type: 'original' | 'native'
  * 根据当前视频时间、存储的字幕模式更新字幕叠加层。
  * 现在会处理原文和译文。
  */
-async function handleSubtitleUpdate() { // 改为 async 以便获取设置
+async function handleSubtitleUpdate() {
   if (!videoElement || !subtitleOverlayElement || processedSubtitleEvents.length === 0) {
     if (subtitleOverlayElement && subtitleOverlayElement.style.display !== 'none') {
       subtitleOverlayElement.style.display = 'none'; // 隐藏（如果没有视频或字幕）
@@ -403,43 +413,50 @@ async function handleSubtitleUpdate() { // 改为 async 以便获取设置
     }
 
     // 根据模式组合要显示的文本
-    const original = activeEvent.originalText || '';
-    const translated = activeEvent.translatedText || ''; // 翻译可能尚未完成
+    const sourceText = activeEvent.sourceText || ''; // Fallback to empty string if null
+    const targetText = activeEvent.targetText || ''; // Fallback to empty string if null
 
-    if (subtitleMode === 'bilingual') {
-      // 双语模式：如果原文和译文都存在且不同，则都显示；否则显示可用的那个
-      if (original && translated && original !== translated) {
-        textToShow = `${original}\n${translated}`; // 用换行符分隔
-      } else if (translated) {
-        textToShow = translated; // 如果只有译文（例如原生轨道被视为译文）
-      } else {
-        textToShow = original; // 如果只有原文（例如翻译未完成）
-      }
-    } else if (subtitleMode === 'target') {
-      // 目标语言模式：优先显示译文，如果译文不可用（包括未翻译），则显示原文
-      textToShow = translated || original;
-    } else { // 'source' 模式或未识别模式
-      // 源语言模式：优先显示原文，如果原文不可用（理论上不应发生），则显示译文
-      textToShow = original || translated;
+    // NEW LOGIC based on sourceText and targetText
+     switch (subtitleMode) {
+         case 'bilingual':
+             if (sourceText && targetText && sourceText !== targetText) {
+                 textToShow = `${sourceText}\n${targetText}`; // Show both if different
+             } else {
+                 textToShow = targetText || sourceText; // Show whichever is available if one is missing or they are same
+             }
+             break;
+         case 'target':
+              textToShow = targetText || sourceText; // Prioritize target, fallback to source
+              break;
+         case 'source':
+             textToShow = sourceText || targetText; // Prioritize source, fallback to target
+             break;
+         default: // Fallback to bilingual for unknown modes
+             if (sourceText && targetText && sourceText !== targetText) {
+                 textToShow = `${sourceText}\n${targetText}`;
+             } else {
+                 textToShow = targetText || sourceText;
+             }
     }
-
-     // 使用 HTML 实体解码器，避免显示 &amp; 等
-     if (textToShow) {
-         const tempDiv = document.createElement('div');
-         tempDiv.innerHTML = textToShow; // 利用浏览器的解析
-         textToShow = tempDiv.textContent || tempDiv.innerText || '';
-     }
-
   }
 
   // 更新叠加层内容和可见性
-  // 使用 innerText 以便正确渲染换行符 \n
   if (textToShow) {
     if (subtitleOverlayElement.innerText !== textToShow) {
       subtitleOverlayElement.innerText = textToShow;
+      
+      // 添加延迟触发自动宽度调整，确保文本渲染完成
+      setTimeout(() => {
+        // 强制一次宽度重新计算
+        if (subtitleOverlayElement) {
+          // 调用新函数动态调整宽度
+          updateOverlayWidth();
+        }
+      }, 0);
     }
+    
     if (subtitleOverlayElement.style.display === 'none' || subtitleOverlayElement.style.visibility === 'hidden') {
-      subtitleOverlayElement.style.display = 'block';
+      subtitleOverlayElement.style.display = 'inline-block'; // 改为inline-block确保自动宽度
       subtitleOverlayElement.style.visibility = 'visible';
       subtitleOverlayElement.style.opacity = '1'; // 确保可见
     }
@@ -484,6 +501,8 @@ function stopSubtitleUpdates() {
         subtitleOverlayElement.style.opacity = '0';
         subtitleOverlayElement.style.visibility = 'hidden';
         subtitleOverlayElement.textContent = ''; // 清空内容
+        // 确保显示方式保持一致
+        subtitleOverlayElement.style.display = 'inline-block';
     }
 }
 
@@ -494,40 +513,69 @@ function stopSubtitleUpdates() {
 function createSubtitleOverlay(playerContainer: HTMLElement) {
     if (subtitleOverlayElement) return; // 防止重复创建
 
+    // 缓存播放器容器引用
+    playerContainerElement = playerContainer;
+
+    // 首先创建一个包装容器，用于定位
+    const overlayWrapper = document.createElement('div');
+    overlayWrapper.id = 'yt-translator-subtitle-wrapper';
+    overlayWrapper.style.cssText = `
+        position: absolute;
+        bottom: 10%;
+        left: 0;
+        right: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 2000;
+        pointer-events: none;
+    `;
+
+    // 然后创建实际的字幕容器
     subtitleOverlayElement = document.createElement('div');
     subtitleOverlayElement.id = 'yt-translator-subtitle-overlay';
     subtitleOverlayElement.style.cssText = `
-        position: absolute;
-        bottom: 70px; /* 调整到底部距离 - 增大以向上移动 */
-        left: 50%;   
-        transform: translateX(-50%); 
-        background-color: rgba(0, 0, 0, 0.7); 
-        color: white; 
-        padding: 5px 15px;
-        border-radius: 5px; 
-        font-size: 1.8rem; /* 字号调整 - 增大 */
-        text-align: center; 
-        z-index: 2000; /* 确保在控件之上 */
-        pointer-events: none; /* 允许点击穿透 */
-        max-width: 80%; 
+        position: static;
+        background-color: rgba(8, 8, 8, 0.75);
+        color: rgb(255, 255, 255);
+        padding: 0px 8px 0px 8px;
+        border-radius: 8px;
+        white-space: pre-wrap;
+        text-align: center;
+        display: inline-block;
+        width: auto; /* 关键：宽度由内容自动决定 */
+        max-width: 93%; /* 移除最大宽度限制 */
         opacity: 0;
         visibility: hidden;
-        transition: opacity 0.2s ease-in-out;
-        text-shadow: 1px 1px 2px black;
+        transition: opacity 0.1s ease-in-out;
+        text-shadow: rgba(0, 0, 0, 0.8) 0px 2px 2px;
     `;
 
-    playerContainer.appendChild(subtitleOverlayElement);
+    // 将字幕容器添加到包装容器中
+    overlayWrapper.appendChild(subtitleOverlayElement);
+    
+    // 将包装容器添加到播放器中
+    playerContainer.appendChild(overlayWrapper);
+    
     console.log('Subtitle overlay created and appended.');
+
+    // --- 新增：初始调用字体大小更新 ---
+    updateOverlayFontSize();
+
+    // --- 新增：确保 ResizeObserver 监听 ---
+    ensureResizeObserver(playerContainer);
 }
 
 
 // --- NEW: Translation Process Function ---
 /**
- * 启动翻译流程：获取轨道、获取字幕、处理并启动显示循环。
- * 新增逻辑：优先检查目标语言轨道是否存在。
+ * 重构后的翻译流程：获取源和目标（或翻译），然后合并。
  */
 async function startTranslationProcess(): Promise<void> {
-  console.log('启动翻译流程...');
+  console.log('启动翻译流程 (重构版)...');
+  stopSubtitleUpdates(); // 停止任何正在运行的更新
+  processedSubtitleEvents = []; // 清空旧数据
+
 
   // 确保 video 元素存在
   if (!videoElement) {
@@ -537,21 +585,40 @@ async function startTranslationProcess(): Promise<void> {
       await setTranslateActive(false); 
       return;
     }
-     videoElement.removeEventListener('timeupdate', handleSubtitleUpdate); 
+     // videoElement.removeEventListener('timeupdate', handleSubtitleUpdate); // This was commented out before, keep it that way
   }
 
-  // 1. 获取设置 (sourceLang, targetLang, subtitleMode)
-  let settings: { sourceLang?: string; targetLang?: string; subtitleMode?: string } = {};
+  // 1. 获取设置和可用轨道
+  let settings: { sourceLang?: string; targetLang?: string; } = {};
+  let allTracks: any[] | null = null;
   try {
-    settings = await chrome.storage.sync.get(['sourceLang', 'targetLang', 'subtitleMode']);
+    // settings = await chrome.storage.sync.get(['sourceLang', 'targetLang', 'subtitleMode']); // OLD get
+    [settings, allTracks] = await Promise.all([
+         chrome.storage.sync.get(['sourceLang', 'targetLang']),
+         // fetchAndProcessTracksInfo 现在返回处理后的 [{ languageCode, languageName, kind }],
+         // 但我们需要原始轨道数据 (包含 baseUrl) -> 从 cachedCaptionTracks 获取
+          fetchAndProcessTracksInfo().then(() => cachedCaptionTracks) // Ensure tracks are fetched and return the raw cached ones
+     ]);
+
     if (!settings.targetLang) {
-        console.warn('未在设置中找到目标语言');
+        // console.warn('未在设置中找到目标语言'); // OLD message
+        console.error('未设置目标语言!');
         await setTranslateActive(false);
         return;
     }
+     // if (!settings.sourceLang) { // OLD check
+       // console.warn('未在设置中找到源语言。');
+     // }
      if (!settings.sourceLang) {
-       console.warn('未在设置中找到源语言。');
+         console.error('未设置源语言!');
+         await setTranslateActive(false); return;
      }
+     if (!allTracks || allTracks.length === 0) {
+          console.error('无法获取视频的可用字幕轨道。');
+          await setTranslateActive(false); return;
+     }
+     console.log("获取设置与轨道信息成功:", settings, `找到 ${allTracks.length} 条轨道`);
+
   } catch (error) {
     console.error('从 chrome.storage.sync 获取设置失败:', error);
     await setTranslateActive(false);
@@ -560,218 +627,181 @@ async function startTranslationProcess(): Promise<void> {
   const targetLang = settings.targetLang;
   const sourceLang = settings.sourceLang;
 
-  let targetTrackInfo: { languageCode: string, languageName: string, kind: string } | undefined = undefined;
-  let needsTranslation = true; // Assume translation is needed initially
-  let trackToFetch: any | null = null; // Track info with baseUrl etc.
+  // let targetTrackInfo: { languageCode: string, languageName: string, kind: string } | undefined = undefined; // OLD variable
+  // let needsTranslation = true; // OLD variable, logic changes
+  // let trackToFetch: any | null = null; // OLD variable, logic changes
 
-  if (processedAvailableTracks && targetLang) {
-    console.log(`[Matcher] Starting multi-level match for target: ${targetLang}`);
+  let sourceTrackInfo: any = null;
+  let nativeTargetTrackInfo: any = null;
+  let needsTranslation = false; // Default to false
 
-    // --- Priority 1: Exact Match ---
-    console.log(`[Matcher P1] Trying exact match for: ${targetLang}`);
-    targetTrackInfo = processedAvailableTracks.find(track => track.languageCode === targetLang);
 
-    // --- Priority 2: Related Variant Match ---
-    if (!targetTrackInfo) {
-        console.log(`[Matcher P1 Failed] Trying related variant match (P2)`);
-        const targetIsChineseScript = targetLang === 'zh-Hans' || targetLang === 'zh-Hant';
-        const targetBase = targetLang.split(/[-_]/)[0]; // "zh", "en", "es"
-        const targetHasRegionOrScript = targetLang.includes('-') || targetLang.includes('_');
+  // --- 2. 查找最佳源语言轨道 ---
+  console.log(`[源] 查找轨道 for: ${sourceLang}`);
+  // (使用与之前类似的 P1-P3 匹配逻辑，但应用于源语言)
+  // P1 Source: Exact Match (prefer non-ASR with baseUrl)
+   sourceTrackInfo = allTracks.find(track => track.languageCode === sourceLang && track.kind !== 'asr' && track.baseUrl) ||
+                     allTracks.find(track => track.languageCode === sourceLang && track.baseUrl);
+  // P2/P3 Source: Fuzzy Match (simplified)
+   if (!sourceTrackInfo) {
+       const sourceBase = sourceLang.split(/[-_]/)[0];
+       sourceTrackInfo = allTracks.find(track => track.languageCode === sourceBase && track.kind !== 'asr' && track.baseUrl) ||
+                         allTracks.find(track => track.languageCode === sourceBase && track.baseUrl);
+       if (!sourceTrackInfo) {
+            sourceTrackInfo = allTracks.find(track => track.languageCode.startsWith(sourceBase + '-') && track.kind !== 'asr' && track.baseUrl) ||
+                              allTracks.find(track => track.languageCode.startsWith(sourceBase + '-') && track.baseUrl);
+       }
+   }
 
-        if (targetIsChineseScript) {
-            // P2 (Chinese): Region Code Mapping
-            console.log(`[Matcher P2 - zh] Trying region mapping for: ${targetLang}`);
-            const hansMatches = ['zh-CN', 'zh-SG'];
-            const hantMatches = ['zh-TW', 'zh-HK'];
-            const regionMatches = targetLang === 'zh-Hans' ? hansMatches : hantMatches;
-            targetTrackInfo = processedAvailableTracks.find(track => regionMatches.includes(track.languageCode));
-        } else if (targetHasRegionOrScript) {
-            // P2 (Non-Chinese, Target Specific): Find Base Code Track
-            console.log(`[Matcher P2 - Non-zh Specific] Trying to find base code track '${targetBase}' for target: ${targetLang}`);
-            targetTrackInfo = processedAvailableTracks.find(track => track.languageCode === targetBase);
-        }
-        // If target is already a base code (e.g., "en"), P2 doesn't apply in this direction.
-    }
+   // --- 添加调试日志：打印找到的源轨道信息 ---
+   if (sourceTrackInfo) {
+     console.log('[Debug] Selected Source Track Info:', {
+       languageCode: sourceTrackInfo.languageCode,
+       name: sourceTrackInfo.name?.simpleText || 'N/A',
+       kind: sourceTrackInfo.kind || 'N/A', //显式显示 kind
+       baseUrl: sourceTrackInfo.baseUrl
+     });
+   } else {
+      console.error(`[源] 无法找到有效的源语言轨道 (${sourceLang})`);
+      // TODO: Add user-facing notification?
+      await setTranslateActive(false);
+      return;
+   }
+   // --- 结束调试日志 ---
+   // console.log(`[源] 找到轨道:`, sourceTrackInfo); // 可以注释掉旧的日志
 
-    // --- Priority 3: Generic / Base Code Match ---
-    if (!targetTrackInfo) {
-        console.log(`[Matcher P1 & P2 Failed] Trying generic/base code match (P3)`);
-        const targetIsChineseScript = targetLang === 'zh-Hans' || targetLang === 'zh-Hant';
-        const targetBase = targetLang.split(/[-_]/)[0];
-        const targetHasRegionOrScript = targetLang.includes('-') || targetLang.includes('_');
 
-        if (targetIsChineseScript) {
-            // P3 (Chinese): Match generic 'zh'
-            console.log(`[Matcher P3 - zh] Trying generic 'zh' match for: ${targetLang}`);
-            targetTrackInfo = processedAvailableTracks.find(track => track.languageCode === 'zh');
-        } else if (!targetHasRegionOrScript) { // Target is a base code like "en", "es"
-            // P3 (Non-Chinese, Target General): Find *First* Specific Variant
-             console.log(`[Matcher P3 - Non-zh General] Trying to find first specific variant for base target: ${targetLang}`);
-             targetTrackInfo = processedAvailableTracks.find(track =>
-                track.languageCode.startsWith(targetBase + '-') || track.languageCode.startsWith(targetBase + '_')
-             );
-        }
-        // If target is specific non-Chinese (e.g., en-US) and P1/P2 failed, P3 doesn't offer more matches in this logic.
-    }
-  }
+  // --- 3. 查找最佳原生目标语言轨道 ---
+   console.log(`[目标] 查找原生轨道 for: ${targetLang}`);
+   // (使用之前定义的 P1-P3 匹配逻辑查找目标轨道)
+    const targetMatchResult = findBestMatchingTrack(allTracks, targetLang); // 需要一个辅助函数
+    nativeTargetTrackInfo = targetMatchResult; // Assuming findBestMatchingTrack returns the full track object or null
 
-  // --- Determine if translation is needed and find the full track info ---
-  if (targetTrackInfo) {
-    console.log(`[Matcher Result] Found native track (Code: ${targetTrackInfo.languageCode}) matching target '${targetLang}'. Using native track.`);
+   if (nativeTargetTrackInfo) {
+       // --- 添加调试日志：打印找到的原生目标轨道信息 ---
+       console.log('[Debug] Found Native Target Track Info:', {
+         languageCode: nativeTargetTrackInfo.languageCode,
+         name: nativeTargetTrackInfo.name?.simpleText || 'N/A',
+         kind: nativeTargetTrackInfo.kind || 'N/A', // 显式显示 kind
+         baseUrl: nativeTargetTrackInfo.baseUrl
+       });
+       // --- 结束调试日志 ---
+       // console.log(`[目标] 找到原生轨道:`, nativeTargetTrackInfo); // 可以注释掉旧的日志
     needsTranslation = false;
-    // Find the full track info (with baseUrl, kind) from cachedCaptionTracks
-    // Prioritize non-ASR tracks if multiple tracks match the languageCode
-    const potentialTracks = cachedCaptionTracks?.filter(t => t.languageCode === targetTrackInfo!.languageCode);
-    if (potentialTracks && potentialTracks.length > 0) {
-        trackToFetch = potentialTracks.find(t => t.kind !== 'asr') || potentialTracks[0];
-        console.log(`[Matcher Result] Selected track to fetch:`, trackToFetch);
-        if (!trackToFetch.baseUrl) {
-             console.warn(`[Matcher Result] Found track but it's missing baseUrl. Cannot use native track.`, trackToFetch);
-             needsTranslation = true; // Fallback to translation if track is unusable
-             targetTrackInfo = undefined;
-             trackToFetch = null;
-        }
     } else {
-        console.warn(`[Matcher Result] Matched languageCode ${targetTrackInfo.languageCode}, but couldn't find corresponding full track in cachedCaptionTracks.`);
-        needsTranslation = true; // Fallback to translation if we can't find the full track info
-        targetTrackInfo = undefined;
-        trackToFetch = null;
-    }
-  } else {
-    console.log(`[Matcher Result] No suitable native track found for target '${targetLang}' after all matching levels. Proceeding to translation.`);
+       console.log(`[目标] 未找到原生轨道，需要翻译。`);
     needsTranslation = true;
   }
 
-  // --- If Translation Needed: Find Source Track ---
-  if (needsTranslation) {
-    if (!sourceLang) {
-        console.error('Translation needed, but source language is not set!');
-        await setTranslateActive(false); // Turn off translation state
-        return;
-    }
-    console.log(`[Translation Path] Finding source track for language: ${sourceLang}`);
-    // --- Use a multi-level approach to find the best SOURCE track ---
-    let sourceTrackToFetch: any | null = null;
-
-    if (cachedCaptionTracks) {
-        // P1 Source: Exact Match (prefer non-ASR)
-        sourceTrackToFetch = cachedCaptionTracks.find(track => track.languageCode === sourceLang && track.kind !== 'asr') ||
-                             cachedCaptionTracks.find(track => track.languageCode === sourceLang);
-
-        // P2/P3 Source: Fuzzy Match (more lenient for source)
-        if (!sourceTrackToFetch) {
-            const sourceBase = sourceLang.split(/[-_]/)[0];
-            const sourceHasRegionOrScript = sourceLang.includes('-') || sourceLang.includes('_');
-
-            // Try matching base code if source is specific
-            if (sourceHasRegionOrScript) {
-                 sourceTrackToFetch = cachedCaptionTracks.find(track => track.languageCode === sourceBase && track.kind !== 'asr') ||
-                                      cachedCaptionTracks.find(track => track.languageCode === sourceBase);
-            }
-
-            // Try matching first specific if source is base
-            if (!sourceTrackToFetch && !sourceHasRegionOrScript) {
-                sourceTrackToFetch = cachedCaptionTracks.find(track => (track.languageCode.startsWith(sourceBase + '-') || track.languageCode.startsWith(sourceBase + '_')) && track.kind !== 'asr') ||
-                                     cachedCaptionTracks.find(track => (track.languageCode.startsWith(sourceBase + '-') || track.languageCode.startsWith(sourceBase + '_')));
-            }
-
-            // Special case for source 'zh-Hans'/'zh-Hant' matching generic 'zh'
-            if (!sourceTrackToFetch && (sourceLang === 'zh-Hans' || sourceLang === 'zh-Hant')) {
-                 sourceTrackToFetch = cachedCaptionTracks.find(track => track.languageCode === 'zh' && track.kind !== 'asr') ||
-                                      cachedCaptionTracks.find(track => track.languageCode === 'zh');
-            }
-        }
-    }
-    // --- End Source Track Finding ---
+  // --- 4. 异步获取数据 ---
+  let sourceSubtitlePromise: Promise<ReturnType<typeof parseSubtitleData>> | null = null;
+  let targetSubtitlePromise: Promise<ReturnType<typeof parseSubtitleData>> | null = null; // For native target track
 
 
-    if (!sourceTrackToFetch) {
-        console.error(`[Translation Path] Cannot find specified source language track '${sourceLang}' (including fuzzy matches).`);
-        await setTranslateActive(false); // Turn off translation state
-        return;
-    }
-    trackToFetch = sourceTrackToFetch; // This is the track we'll fetch subtitles FROM
-    console.log(`[Translation Path] Found source track to fetch for translation:`, trackToFetch);
+  console.log(`[数据] 开始获取源字幕 (${sourceTrackInfo.languageCode}) from ${sourceTrackInfo.baseUrl}`);
+  sourceSubtitlePromise = fetchSubtitleData(sourceTrackInfo.baseUrl)
+      .then(data => data ? parseSubtitleData(data, sourceTrackInfo.languageCode) : null)
+      .catch(error => {
+          console.error(`获取或解析源字幕 (${sourceTrackInfo.languageCode}) 时出错:`, error);
+          return null; // Return null on error
+      });
+
+  if (!needsTranslation && nativeTargetTrackInfo) {
+      console.log(`[数据] 开始获取原生目标字幕 (${nativeTargetTrackInfo.languageCode}) from ${nativeTargetTrackInfo.baseUrl}`);
+      targetSubtitlePromise = fetchSubtitleData(nativeTargetTrackInfo.baseUrl)
+           .then(data => data ? parseSubtitleData(data, nativeTargetTrackInfo.languageCode) : null)
+           .catch(error => {
+               console.error(`获取或解析原生目标字幕 (${nativeTargetTrackInfo.languageCode}) 时出错:`, error);
+               return null; // Return null on error
+          });
   }
 
-  // --- Fetch and Process ---
-  if (!trackToFetch || !trackToFetch.baseUrl) {
-    console.error('Could not determine a valid track with a baseUrl to fetch.');
-    await setTranslateActive(false); // Turn off translation state
-    return;
-  }
+  // --- 5. 等待数据获取完成 ---
+  const [sourceEvents, nativeTargetEvents] = await Promise.all([
+      sourceSubtitlePromise,
+      targetSubtitlePromise // Will be null if needsTranslation is true
+  ]);
 
-  console.log(`Fetching subtitle data from: ${trackToFetch.baseUrl} (Lang: ${trackToFetch.languageCode}, Kind: ${trackToFetch.kind}, Needs Translation: ${needsTranslation})`);
+   if (!sourceEvents) {
+       console.error("未能获取或解析源字幕数据，无法继续。");
+       await setTranslateActive(false);
+        return;
+    }
+   console.log(`[数据] 源字幕事件处理完成 (${sourceEvents.length} 条)`);
+   if (nativeTargetEvents) {
+        console.log(`[数据] 原生目标字幕事件处理完成 (${nativeTargetEvents.length} 条)`);
+   }
 
-  try {
-    console.log(`正在从 ${trackToFetch.baseUrl} 获取字幕数据... (语言: ${trackToFetch.languageCode}, 类型: ${trackToFetch.kind})`);
-    const subtitleJson = await fetchSubtitleData(trackToFetch.baseUrl);
-    if (subtitleJson) {
+
+  // --- 6. 执行翻译 (如果需要) ---
+  let translationResults: { [id: string]: string } | null = null;
         if (needsTranslation) {
-            // --- 需要翻译的流程 --- 
-            console.log('字幕数据已获取，处理源文本并发送进行翻译...');
-            // 1. 处理源文本，存储到 originalText 字段
-            processAndStoreSubtitles(subtitleJson, 'original');
+       console.log(`[翻译] 需要翻译 ${sourceEvents.length} 条源字幕 (${sourceTrackInfo.languageCode} -> ${targetLang})`);
+       // 发送简化结构以减少数据量
+       const subtitlesToSend = sourceEvents.map((e, index) => ({
+           id: `${e.start}-${e.end}-${index}`, // Consistent ID generation
+           text: e.text
+       }));
 
-            if (processedSubtitleEvents.length > 0) {
-                console.log(`发送 ${processedSubtitleEvents.length} 条字幕到后台进行翻译 (目标: ${targetLang})...`);
-                // 2. 发送消息到后台请求翻译
+       try {
+           const response: any = await new Promise((resolve, reject) => {
                 chrome.runtime.sendMessage(
                     {
                         action: 'translateSubtitles',
-                        payload: {
-                            // 发送简化结构以减少数据量，包含 ID 以便匹配
-                            subtitles: processedSubtitleEvents.map((e, index) => ({ 
-                                id: `${e.start}-${e.end}-${index}`, // Use index for uniqueness if start/end collide
-                                text: e.originalText 
-                            })),
-                            targetLang: targetLang, 
-                            sourceLang: trackToFetch.languageCode // 发送实际获取的源语言代码
-                        }
+                       payload: { subtitles: subtitlesToSend, targetLang: targetLang, sourceLang: sourceTrackInfo.languageCode }
                     },
                     (response) => {
                         if (chrome.runtime.lastError) {
-                            console.error('发送翻译请求到后台时出错:', chrome.runtime.lastError);
-                            setTranslateActive(false); // 出错时回滚状态
-                            return;
-                        }
-                        if (response?.status === 'success' && response.translatedSubtitles) {
-                            console.log('收到来自后台的翻译结果:', response.translatedSubtitles);
-                            // 3. 将翻译结果合并回 processedSubtitleEvents
-                            updateStoredSubtitlesWithTranslation(response.translatedSubtitles);
-                            // 4. 启动字幕显示循环
-                            startSubtitleDisplayLoop();
+                           reject(new Error(chrome.runtime.lastError.message));
+                       } else if (response?.status === 'success') {
+                           resolve(response);
                         } else {
-                            console.error('后台翻译失败或返回无效数据:', response);
-                            setTranslateActive(false); // 翻译失败也回滚状态
-                        }
-                    }
-                );
-            } else {
-                console.warn("处理后的源字幕事件为空，无法进行翻译。");
-                await setTranslateActive(false); // 处理后为空，回滚
-            }
-        } else {
-            // --- 使用原生目标语言轨道的流程 --- 
-            console.log('原生目标语言字幕数据已获取，正在处理...');
-            // 直接处理并存储目标语言文本 (填充 original 和 translated)
-            processAndStoreSubtitles(subtitleJson, 'native');
+                           reject(new Error(response?.message || 'Unknown translation error from background'));
+                       }
+                   }
+               );
+           });
+           translationResults = response.translatedSubtitles;
+           console.log(`[翻译] 成功收到翻译结果 (${Object.keys(translationResults || {}).length} 条)`);
+       } catch (error) {
+           console.error('[翻译] 翻译请求失败:', error);
+           // 翻译失败，但我们仍然可以显示源语言
+           // translationResults 保持为 null
+            // TODO: Notify user about translation failure?
+       }
+   }
+
+   // --- 7. 合并数据 ---
+   processedSubtitleEvents = mergeSubtitleData(
+       sourceEvents,
+       needsTranslation ? translationResults : nativeTargetEvents,
+       targetLang // Pass the target language code we aimed for
+   );
+
+   // --- 8. 启动显示 ---
+   // --- 添加调试日志：打印处理后的字幕事件 ---
+   console.log(`[Debug] Processed ${processedSubtitleEvents.length} subtitle events. Listing below:`);
+   console.table(processedSubtitleEvents.map(event => ({
+       start: event.start.toFixed(3),
+       end: event.end.toFixed(3),
+       duration: (event.end - event.start).toFixed(3),
+       source: event.sourceText ? event.sourceText.substring(0, 100) + (event.sourceText.length > 100 ? '...' : '') : null,
+       target: event.targetText ? event.targetText.substring(0, 100) + (event.targetText.length > 100 ? '...' : '') : null,
+       sourceLang: event.sourceLangCode,
+       targetLang: event.targetLangCode
+   })));
+   // --- 结束调试日志 ---
+
              if (processedSubtitleEvents.length > 0) {
-                 startSubtitleDisplayLoop();
+       console.log("字幕数据处理和合并完成，启动显示循环。");
+       startSubtitleDisplayLoop(); // This function already exists and uses processedSubtitleEvents
             } else {
-                console.warn("处理后的原生目标语言字幕事件为空，无法启动显示。");
-                 await setTranslateActive(false); // 处理后为空，回滚
-            }
-        }
-    } else {
-      console.error('获取字幕数据失败或数据无效。');
-      await setTranslateActive(false);
-    }
-  } catch (error) {
-    console.error('获取或处理字幕数据时发生错误:', error);
-    await setTranslateActive(false);
-  }
+       console.warn("处理后的字幕事件为空，无法启动显示。");
+       // Maybe turn off active state? Or just show nothing?
+        await setTranslateActive(false); // Turn off if nothing to show
+   }
 }
+
 
 /** 辅助函数：启动字幕显示循环 */
 function startSubtitleDisplayLoop() {
@@ -795,12 +825,18 @@ function updateStoredSubtitlesWithTranslation(translatedData: { [id: string]: st
         const translatedText = translatedData[id];
         if (translatedText !== undefined) {
             updatedCount++;
-            return { ...event, translatedText: translatedText };
-        }
+            // return { ...event, translatedText: translatedText }; // OLD STRUCTURE
+            // For new structure, we assume this function is called AFTER mergeSubtitleData
+            // which already handles populating targetText from translations.
+            // This function might become obsolete or needs rework if we want to update existing merged events.
+            // Let's comment out the modification for now, as mergeSubtitleData should handle it.
+             console.warn("updateStoredSubtitlesWithTranslation called, but logic is now in mergeSubtitleData.");
+        } else {
         console.warn(`未找到 ID ${id} 的翻译结果。`);
+        }
         return event; // 保持原样
     });
-    console.log(`已将 ${updatedCount} 条翻译结果合并到 processedSubtitleEvents`);
+    console.log(`已将 ${updatedCount} 条翻译结果合并到 processedSubtitleEvents (或已在 mergeSubtitleData 中处理)`);
 }
 
 
@@ -1370,3 +1406,200 @@ async function setTranslateActive(active: boolean): Promise<void> {
 
 // 在脚本加载时执行初始化
 initialize(); 
+
+/**
+ * NEW: 合并源字幕数据和目标字幕/翻译数据。
+ * 以源字幕的时间戳为基准。
+ * @param sourceEvents - 解析后的源语言字幕事件数组。
+ * @param targetEventsOrTranslations - 解析后的原生目标语言字幕事件数组 或 从后台获取的翻译结果对象。
+ * @param targetLangCode - 目标语言代码。
+ * @returns {SubtitleEvent[]} 合并后的字幕事件数组。
+ */
+function mergeSubtitleData(
+    sourceEvents: { start: number; end: number; text: string; langCode: string }[],
+    targetEventsOrTranslations: { start: number; end: number; text: string; langCode: string }[] | { [id: string]: string } | null,
+    targetLangCode: string
+): SubtitleEvent[] {
+    console.log("开始合并字幕数据...");
+    const mergedEvents: SubtitleEvent[] = [];
+
+    const isTargetNative = Array.isArray(targetEventsOrTranslations);
+    const translations = isTargetNative ? null : targetEventsOrTranslations as { [id: string]: string } | null;
+
+    for (const sourceEvent of sourceEvents) {
+        let targetText: string | null = null;
+
+        if (isTargetNative && targetEventsOrTranslations) {
+            // 查找时间上重叠的原生目标事件 (简单匹配：开始时间在源事件区间内)
+            // A more robust approach might average timings or find the closest start time.
+            const matchingTargetEvent = (targetEventsOrTranslations as { start: number; end: number; text: string; }[]).find(
+                targetEvent => targetEvent.start >= sourceEvent.start && targetEvent.start < sourceEvent.end
+            );
+             // If no direct overlap, maybe find the one starting closest *after* the source start?
+             /* if (!matchingTargetEvent) {
+                  matchingTargetEvent = targetEventsOrTranslations
+                     .filter(te => te.start >= sourceEvent.start)
+                     .sort((a, b) => a.start - b.start)[0];
+             } */
+            targetText = matchingTargetEvent ? matchingTargetEvent.text : null;
+            // console.log(`Source[${sourceEvent.start.toFixed(2)}]: ${sourceEvent.text.substring(0,10)} -> Native Target[${matchingTargetEvent?.start.toFixed(2)}]: ${targetText?.substring(0,10)}`);
+
+        } else if (translations) {
+            // 从翻译结果中查找 (使用 ID)
+            // ID generation MUST match the one used when sending the request in startTranslationProcess
+            const eventId = `${sourceEvent.start}-${sourceEvent.end}-${sourceEvents.indexOf(sourceEvent)}`;
+            targetText = translations[eventId] || null;
+             // console.log(`Source[${sourceEvent.start.toFixed(2)}] ID:${eventId}: ${sourceEvent.text.substring(0,10)} -> Translated Target: ${targetText?.substring(0,10)}`);
+             if (!targetText && Object.keys(translations).length > 0) { // Only warn if translations exist but ID missing
+                 // console.warn(`未找到 ID ${eventId} 的翻译结果。`);
+             }
+        }
+
+        mergedEvents.push({
+            start: sourceEvent.start,
+            end: sourceEvent.end,
+            sourceText: sourceEvent.text,
+            targetText: targetText,
+            sourceLangCode: sourceEvent.langCode,
+            targetLangCode: targetLangCode, // Target language code is fixed for this batch
+        });
+    }
+
+    console.log(`合并完成，生成了 ${mergedEvents.length} 条双语字幕事件。`);
+    return mergedEvents;
+}
+
+
+// Need to implement the findBestMatchingTrack helper function based on P1-P3 logic
+/**
+ * Finds the best matching track from available tracks based on target language code.
+ * @param availableTracks - Array of raw tracks from cachedCaptionTracks.
+ * @param targetLang - The desired target language code (e.g., 'en', 'zh-Hans').
+ * @returns The full track object (including baseUrl) or null if no suitable match found.
+ */
+function findBestMatchingTrack(availableTracks: any[], targetLang: string): any | null {
+     if (!availableTracks || availableTracks.length === 0 || !targetLang) {
+         return null;
+     }
+     console.log(`[Matcher] Finding best match for target '${targetLang}' among ${availableTracks.length} tracks.`);
+
+     let bestMatch: any = null;
+
+     // P1: Exact Match (prefer non-ASR with baseUrl)
+     bestMatch = availableTracks.find(t => t.languageCode === targetLang && t.kind !== 'asr' && t.baseUrl) ||
+                 availableTracks.find(t => t.languageCode === targetLang && t.baseUrl);
+     if (bestMatch) { console.log(`[Matcher P1] Found exact match:`, bestMatch); return bestMatch; }
+
+    // P2 & P3: Combined Fuzzy Logic
+    const targetBase = targetLang.split(/[-_]/)[0];
+    const targetHasRegionOrScript = targetLang.includes('-') || targetLang.includes('_');
+    const targetIsChineseScript = targetLang === 'zh-Hans' || targetLang === 'zh-Hant';
+
+    // P2 (Target Specific -> Base or Region Mapping)
+    if (targetIsChineseScript) {
+        const hansMatches = ['zh-CN', 'zh-SG'];
+        const hantMatches = ['zh-TW', 'zh-HK'];
+        const regionMatches = targetLang === 'zh-Hans' ? hansMatches : hantMatches;
+        bestMatch = availableTracks.find(t => regionMatches.includes(t.languageCode) && t.kind !== 'asr' && t.baseUrl) ||
+                    availableTracks.find(t => regionMatches.includes(t.languageCode) && t.baseUrl);
+        if (bestMatch) { console.log(`[Matcher P2 - zh region] Found match:`, bestMatch); return bestMatch; }
+    } else if (targetHasRegionOrScript) { // Non-Chinese Specific Target -> Base Code
+        bestMatch = availableTracks.find(t => t.languageCode === targetBase && t.kind !== 'asr' && t.baseUrl) ||
+                    availableTracks.find(t => t.languageCode === targetBase && t.baseUrl);
+        if (bestMatch) { console.log(`[Matcher P2 - Non-zh specific->base] Found match:`, bestMatch); return bestMatch; }
+    }
+
+     // P3 (Target General -> Specific or Generic zh)
+     if (targetIsChineseScript) { // Target is zh-Hans/Hant -> Generic 'zh'
+         bestMatch = availableTracks.find(t => t.languageCode === 'zh' && t.kind !== 'asr' && t.baseUrl) ||
+                     availableTracks.find(t => t.languageCode === 'zh' && t.baseUrl);
+          if (bestMatch) { console.log(`[Matcher P3 - zh script->generic] Found match:`, bestMatch); return bestMatch; }
+     } else if (!targetHasRegionOrScript) { // Target is Base Code -> First Specific Variant
+          bestMatch = availableTracks.find(t => (t.languageCode.startsWith(targetBase + '-') || t.languageCode.startsWith(targetBase + '_')) && t.kind !== 'asr' && t.baseUrl) ||
+                      availableTracks.find(t => (t.languageCode.startsWith(targetBase + '-') || t.languageCode.startsWith(targetBase + '_')) && t.baseUrl);
+          if (bestMatch) { console.log(`[Matcher P3 - Non-zh base->specific] Found match:`, bestMatch); return bestMatch; }
+     }
+
+     console.log(`[Matcher] No suitable match found for '${targetLang}' after all levels.`);
+     return null; // No suitable match found
+} 
+
+/**
+ * 根据播放器的大小更新字幕叠加层的字体大小。
+ * 基于对 YouTube 原生字幕行为的测量数据进行调整。
+ */
+function updateOverlayFontSize(): void {
+  if (!subtitleOverlayElement) return; // 如果叠加层不存在，则不执行任何操作
+
+  // 尝试获取播放器容器 (如果尚未缓存)
+  if (!playerContainerElement) {
+    playerContainerElement = document.querySelector<HTMLElement>('.html5-video-player');
+  }
+
+  if (playerContainerElement) {
+    const playerHeight = playerContainerElement.clientHeight;
+
+    // --- 基于测量数据的线性计算 ---
+    // 通过测量发现，原生字幕字体大小与播放器高度近似成正比
+    // font-size ≈ playerHeight * 0.0444
+    const calculatedPx = playerHeight * 0.0444;
+
+    // 设置一个最小字体大小，防止过小 (基于测量到的最小值 12.44px)
+    const minPx = 12;
+    const finalPx = Math.max(minPx, calculatedPx);
+
+    const newSize = finalPx.toFixed(1) + 'px'; // 保留一位小数
+
+    // 仅在字体大小实际改变时更新，以减少不必要的 DOM 操作
+    if (subtitleOverlayElement.style.fontSize !== newSize) {
+      subtitleOverlayElement.style.fontSize = newSize;
+       // console.log(`Player height: ${playerHeight.toFixed(1)}px, Updated font size: ${newSize}`); // Optional debug log
+    }
+  } else {
+    // console.warn("updateOverlayFontSize: Player container not found."); // 调试日志
+  }
+}
+
+/**
+ * 创建字幕叠加层元素并附加到播放器容器。
+ * @param {HTMLElement} playerContainer - YouTube 播放器容器元素。
+ */
+
+/**
+ * 确保 ResizeObserver 正在监听播放器容器。
+ * @param {HTMLElement} playerContainer - YouTube 播放器容器元素。
+ */
+function ensureResizeObserver(playerContainer: HTMLElement): void {
+    // 如果已存在观察者，先断开连接
+    if (playerResizeObserver) {
+        playerResizeObserver.disconnect();
+    } else {
+        // 如果不存在，创建新的观察者
+        playerResizeObserver = new ResizeObserver(() => {
+            // 播放器大小变化时，同时更新字体大小和宽度
+            updateOverlayFontSize();
+            updateOverlayWidth();
+        });
+    }
+    // 开始观察播放器容器
+    playerResizeObserver.observe(playerContainer);
+    console.log('ResizeObserver started observing player container.');
+}
+
+/**
+ * 根据播放器宽度和字幕内容动态调整字幕容器宽度
+ * 模拟YouTube原生字幕的宽度行为 - 宽度由内容决定
+ */
+function updateOverlayWidth(): void {
+  if (!subtitleOverlayElement || !playerContainerElement) return;
+  
+  // 关键修改：移除最大宽度限制，让容器宽度完全由内容决定
+  // 设置宽度为自动，让浏览器根据内容计算实际宽度
+  subtitleOverlayElement.style.width = 'auto';
+  subtitleOverlayElement.style.maxWidth = '93%'; // 移除最大宽度限制
+  
+  // 可选：强制重新计算布局
+  void subtitleOverlayElement.offsetWidth;
+  
+  console.log(`字幕容器宽度设为自动，无最大宽度限制`);
+}
