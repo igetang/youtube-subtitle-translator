@@ -34,6 +34,7 @@ window.addEventListener('load', () => {
 
 /**
  * @fileoverview 将自定义控制按钮注入 YouTube 播放器。
+ * 并处理字幕的获取、处理和显示。
  */
 
 /**
@@ -85,7 +86,7 @@ let hideTooltipTimeout: number | null = null;
 /** 全局变量，用于引用字幕显示元素 */
 let subtitleOverlayElement: HTMLDivElement | null = null;
 /** 全局变量，用于存储处理后的字幕事件 */
-let processedSubtitleEvents: { start: number; end: number; text: string }[] = [];
+let processedSubtitleEvents: { start: number; end: number; originalText: string; translatedText: string }[] = [];
 /** 全局变量，用于引用 video 元素的引用 */
 let videoElement: HTMLVideoElement | null = null;
 /** 全局变量，用于存储 requestAnimationFrame 的 ID，方便取消 */
@@ -96,7 +97,9 @@ let cachedCaptionTracks: any[] | null = null;
 /** 标记当前视频的轨道信息是否已获取和处理 */
 let tracksInfoFetched: boolean = false;
 /** 存储处理后的可用轨道信息 (再次包含 kind) */
-let processedAvailableTracks: { languageCode: string, languageName: string, kind: string }[] | null = null; 
+let processedAvailableTracks: { languageCode: string, languageName: string, kind: string }[] | null = null;
+/** 全局变量，用于引用翻译切换按钮的图标元素，方便更新 */
+let translateToggleButtonIcon: HTMLImageElement | null = null;
 
 
 // --- Tooltip Functions (Keep as is) --- 
@@ -331,88 +334,128 @@ async function fetchSubtitleData(baseUrl: string): Promise<object | null> {
 }
 
 /**
- * 处理从 API 获取的原始字幕 JSON 数据，并将其存储在全局变量中。
- * @param {any} subtitleJson - 包含字幕事件的 JSON 对象。
+ * 解析字幕 JSON 数据并存储结果。
+ * 根据是原生轨道 ('native') 还是需要翻译的源轨道 ('original') 来填充字段。
+ * @param subtitleJson 从 fetchSubtitleData 获取的字幕 JSON 对象。
+ * @param type 指示字幕来源类型。
  */
-function processAndStoreSubtitles(subtitleJson: any) {
-    if (!subtitleJson || !Array.isArray(subtitleJson.events)) {
-    console.error('Invalid subtitle JSON data received:', subtitleJson);
-    processedSubtitleEvents = [];
-    return;
-    }
-
-  processedSubtitleEvents = subtitleJson.events.map((event: any) => {
-        const start = event.tStartMs;
-    const duration = event.dDurationMs;
-    // 处理可能存在的多个 segs
-    const text = (event.segs || [])
-      .map((seg: any) => seg?.utf8 || '')
-      .join('') // 将所有片段连接起来
-      .trim(); // 去除首尾空格
-
-    return {
-      start: start / 1000, // 转换为秒
-      end: (start + duration) / 1000, // 计算结束时间（秒）
-      text: text,
-    };
-  }).filter((event: { start: number; end: number; text: string }) => event.text); // 过滤掉没有文本的事件
-
-  console.log(`Processed ${processedSubtitleEvents.length} subtitle events.`);
-  // 可选：打印前几个事件进行调试
-  // console.log('First few processed events:', processedSubtitleEvents.slice(0, 5));
+function processAndStoreSubtitles(subtitleJson: any, type: 'original' | 'native') {
+  processedSubtitleEvents = []; // 清空旧数据
+  if (subtitleJson && subtitleJson.events) {
+    subtitleJson.events.forEach((event: any) => {
+      if (event.tStartMs !== undefined && event.segs) { // 检查 tStartMs 是否存在
+        const start = event.tStartMs / 1000; // 转换为秒
+        // 确保 duration 合理，避免负数或过大值，提供默认值
+        const duration = event.dDurationMs > 0 ? event.dDurationMs / 1000 : 5; // 默认持续时间 5 秒
+        const end = start + duration;
+        // 将所有文本片段连接起来
+        const text = event.segs.map((seg: any) => seg.utf8 || '').join('');
+        if (text.trim()) { // 确保文本不为空
+          const newEvent = {
+              start: start,
+              end: end,
+              originalText: type === 'original' ? text : (type === 'native' ? text : ''), // 原文字段
+              translatedText: type === 'native' ? text : '' // 译文字段 (native 时与原文相同, original 时暂时为空)
+          };
+          processedSubtitleEvents.push(newEvent);
+        }
+      }
+    });
+    console.log(`处理并存储了 ${processedSubtitleEvents.length} 条字幕事件 (类型: ${type})。`);
+  } else {
+    console.error('无效的字幕 JSON 数据:', subtitleJson);
+  }
 }
 
 // --- Subtitle Display & Sync (Keep handleSubtitleUpdate, updateSubtitleLoop, stopSubtitleUpdates, createSubtitleOverlay) ---
 
 /**
- * 字幕更新的核心逻辑：根据当前视频时间查找并显示字幕。
+ * 根据当前视频时间、存储的字幕模式更新字幕叠加层。
+ * 现在会处理原文和译文。
  */
-function handleSubtitleUpdate() {
-    if (!videoElement || !subtitleOverlayElement) {
-        // console.log('Video or overlay not found, skipping subtitle update.');
-        return; // 如果元素丢失，则不执行更新
+async function handleSubtitleUpdate() { // 改为 async 以便获取设置
+  if (!videoElement || !subtitleOverlayElement || processedSubtitleEvents.length === 0) {
+    if (subtitleOverlayElement && subtitleOverlayElement.style.display !== 'none') {
+      subtitleOverlayElement.style.display = 'none'; // 隐藏（如果没有视频或字幕）
+      subtitleOverlayElement.innerText = ''; // 清空内容
+    }
+    return;
+  }
+
+  const currentTime = videoElement.currentTime;
+  let textToShow = '';
+
+  // 查找当前时间对应的字幕事件
+  const activeEvent = processedSubtitleEvents.find(
+    (event) => currentTime >= event.start && currentTime <= event.end
+  );
+
+  if (activeEvent) {
+    // 从存储中获取当前的字幕显示模式
+    let subtitleMode = 'bilingual'; // 默认值
+    try {
+      // 注意：storage.sync 可能有延迟，如果需要绝对实时，考虑用 message 或 storage.local
+      const settings = await chrome.storage.sync.get(['subtitleMode']);
+      subtitleMode = settings.subtitleMode || 'bilingual';
+    } catch (e) {
+      console.error("获取 subtitleMode 失败:", e);
+      // 出错时继续使用默认值
     }
 
-    const currentTime = videoElement.currentTime;
-    let currentSubtitle = '';
+    // 根据模式组合要显示的文本
+    const original = activeEvent.originalText || '';
+    const translated = activeEvent.translatedText || ''; // 翻译可能尚未完成
 
-    // 查找当前时间对应的字幕
-    const activeEvent = processedSubtitleEvents.find(
-        (event) => currentTime >= event.start && currentTime < event.end
-    );
-
-    if (activeEvent) {
-        currentSubtitle = activeEvent.text;
-        // 处理 HTML 实体（例如 &amp; -> &）
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = currentSubtitle;
-        currentSubtitle = tempDiv.textContent || tempDiv.innerText || '';
+    if (subtitleMode === 'bilingual') {
+      // 双语模式：如果原文和译文都存在且不同，则都显示；否则显示可用的那个
+      if (original && translated && original !== translated) {
+        textToShow = `${original}\n${translated}`; // 用换行符分隔
+      } else if (translated) {
+        textToShow = translated; // 如果只有译文（例如原生轨道被视为译文）
+      } else {
+        textToShow = original; // 如果只有原文（例如翻译未完成）
+      }
+    } else if (subtitleMode === 'target') {
+      // 目标语言模式：优先显示译文，如果译文不可用（包括未翻译），则显示原文
+      textToShow = translated || original;
+    } else { // 'source' 模式或未识别模式
+      // 源语言模式：优先显示原文，如果原文不可用（理论上不应发生），则显示译文
+      textToShow = original || translated;
     }
 
-    // 更新字幕内容和可见性
-    if (subtitleOverlayElement.textContent !== currentSubtitle) {
-        subtitleOverlayElement.textContent = currentSubtitle;
-        }
+     // 使用 HTML 实体解码器，避免显示 &amp; 等
+     if (textToShow) {
+         const tempDiv = document.createElement('div');
+         tempDiv.innerHTML = textToShow; // 利用浏览器的解析
+         textToShow = tempDiv.textContent || tempDiv.innerText || '';
+     }
 
-    const shouldShow = !!currentSubtitle;
-    const currentOpacity = parseFloat(subtitleOverlayElement.style.opacity || '0');
-    const targetOpacity = shouldShow ? 1 : 0;
+  }
 
-    if (currentOpacity !== targetOpacity) {
-        // 添加简单的淡入淡出效果
-        subtitleOverlayElement.style.opacity = targetOpacity.toString();
-        // 如果需要立即隐藏而不是淡出，可以设置 visibility
-        if (!shouldShow) {
-            // 在淡出动画结束后隐藏
-           setTimeout(() => {
-                if (subtitleOverlayElement && parseFloat(subtitleOverlayElement.style.opacity) === 0) {
-                   subtitleOverlayElement.style.visibility = 'hidden';
-               }
-            }, 200); // 稍大于 transition 时间
-        } else {
-            subtitleOverlayElement.style.visibility = 'visible';
-        }
+  // 更新叠加层内容和可见性
+  // 使用 innerText 以便正确渲染换行符 \n
+  if (textToShow) {
+    if (subtitleOverlayElement.innerText !== textToShow) {
+      subtitleOverlayElement.innerText = textToShow;
     }
+    if (subtitleOverlayElement.style.display === 'none' || subtitleOverlayElement.style.visibility === 'hidden') {
+      subtitleOverlayElement.style.display = 'block';
+      subtitleOverlayElement.style.visibility = 'visible';
+      subtitleOverlayElement.style.opacity = '1'; // 确保可见
+    }
+  } else {
+    if (subtitleOverlayElement.style.display !== 'none') {
+      subtitleOverlayElement.style.opacity = '0';
+      // 在淡出动画后隐藏
+       setTimeout(() => {
+           if (subtitleOverlayElement && subtitleOverlayElement.style.opacity === '0') {
+               subtitleOverlayElement.style.display = 'none';
+               subtitleOverlayElement.style.visibility = 'hidden';
+               subtitleOverlayElement.innerText = ''; // 清空内容
+           }
+       }, 200); // 匹配 CSS transition 时间
+    }
+  }
 }
 
 /**
@@ -455,14 +498,14 @@ function createSubtitleOverlay(playerContainer: HTMLElement) {
     subtitleOverlayElement.id = 'yt-translator-subtitle-overlay';
     subtitleOverlayElement.style.cssText = `
         position: absolute;
-        bottom: 60px; /* 调整到底部距离 */
+        bottom: 70px; /* 调整到底部距离 - 增大以向上移动 */
         left: 50%;   
         transform: translateX(-50%); 
         background-color: rgba(0, 0, 0, 0.7); 
         color: white; 
         padding: 5px 15px;
         border-radius: 5px; 
-        font-size: 1.6rem; /* 字号调整 */
+        font-size: 1.8rem; /* 字号调整 - 增大 */
         text-align: center; 
         z-index: 2000; /* 确保在控件之上 */
         pointer-events: none; /* 允许点击穿透 */
@@ -478,25 +521,324 @@ function createSubtitleOverlay(playerContainer: HTMLElement) {
 }
 
 
-// --- Control Injection Logic (Keep as is) ---
+// --- NEW: Translation Process Function ---
+/**
+ * 启动翻译流程：获取轨道、获取字幕、处理并启动显示循环。
+ * 新增逻辑：优先检查目标语言轨道是否存在。
+ */
+async function startTranslationProcess(): Promise<void> {
+  console.log('启动翻译流程...');
+
+  // 确保 video 元素存在
+  if (!videoElement) {
+    videoElement = document.querySelector<HTMLVideoElement>('.html5-main-video');
+    if (!videoElement) {
+      console.error('无法找到 video 元素。');
+      await setTranslateActive(false); 
+      return;
+    }
+     videoElement.removeEventListener('timeupdate', handleSubtitleUpdate); 
+  }
+
+  // 1. 获取设置 (sourceLang, targetLang, subtitleMode)
+  let settings: { sourceLang?: string; targetLang?: string; subtitleMode?: string } = {};
+  try {
+    settings = await chrome.storage.sync.get(['sourceLang', 'targetLang', 'subtitleMode']);
+    if (!settings.targetLang) {
+        console.warn('未在设置中找到目标语言');
+        await setTranslateActive(false);
+        return;
+    }
+     if (!settings.sourceLang) {
+       console.warn('未在设置中找到源语言。');
+     }
+  } catch (error) {
+    console.error('从 chrome.storage.sync 获取设置失败:', error);
+    await setTranslateActive(false);
+    return;
+  }
+  const targetLang = settings.targetLang;
+  const sourceLang = settings.sourceLang;
+
+  let targetTrackInfo: { languageCode: string, languageName: string, kind: string } | undefined = undefined;
+  let needsTranslation = true; // Assume translation is needed initially
+  let trackToFetch: any | null = null; // Track info with baseUrl etc.
+
+  if (processedAvailableTracks && targetLang) {
+    console.log(`[Matcher] Starting multi-level match for target: ${targetLang}`);
+
+    // --- Priority 1: Exact Match ---
+    console.log(`[Matcher P1] Trying exact match for: ${targetLang}`);
+    targetTrackInfo = processedAvailableTracks.find(track => track.languageCode === targetLang);
+
+    // --- Priority 2: Related Variant Match ---
+    if (!targetTrackInfo) {
+        console.log(`[Matcher P1 Failed] Trying related variant match (P2)`);
+        const targetIsChineseScript = targetLang === 'zh-Hans' || targetLang === 'zh-Hant';
+        const targetBase = targetLang.split(/[-_]/)[0]; // "zh", "en", "es"
+        const targetHasRegionOrScript = targetLang.includes('-') || targetLang.includes('_');
+
+        if (targetIsChineseScript) {
+            // P2 (Chinese): Region Code Mapping
+            console.log(`[Matcher P2 - zh] Trying region mapping for: ${targetLang}`);
+            const hansMatches = ['zh-CN', 'zh-SG'];
+            const hantMatches = ['zh-TW', 'zh-HK'];
+            const regionMatches = targetLang === 'zh-Hans' ? hansMatches : hantMatches;
+            targetTrackInfo = processedAvailableTracks.find(track => regionMatches.includes(track.languageCode));
+        } else if (targetHasRegionOrScript) {
+            // P2 (Non-Chinese, Target Specific): Find Base Code Track
+            console.log(`[Matcher P2 - Non-zh Specific] Trying to find base code track '${targetBase}' for target: ${targetLang}`);
+            targetTrackInfo = processedAvailableTracks.find(track => track.languageCode === targetBase);
+        }
+        // If target is already a base code (e.g., "en"), P2 doesn't apply in this direction.
+    }
+
+    // --- Priority 3: Generic / Base Code Match ---
+    if (!targetTrackInfo) {
+        console.log(`[Matcher P1 & P2 Failed] Trying generic/base code match (P3)`);
+        const targetIsChineseScript = targetLang === 'zh-Hans' || targetLang === 'zh-Hant';
+        const targetBase = targetLang.split(/[-_]/)[0];
+        const targetHasRegionOrScript = targetLang.includes('-') || targetLang.includes('_');
+
+        if (targetIsChineseScript) {
+            // P3 (Chinese): Match generic 'zh'
+            console.log(`[Matcher P3 - zh] Trying generic 'zh' match for: ${targetLang}`);
+            targetTrackInfo = processedAvailableTracks.find(track => track.languageCode === 'zh');
+        } else if (!targetHasRegionOrScript) { // Target is a base code like "en", "es"
+            // P3 (Non-Chinese, Target General): Find *First* Specific Variant
+             console.log(`[Matcher P3 - Non-zh General] Trying to find first specific variant for base target: ${targetLang}`);
+             targetTrackInfo = processedAvailableTracks.find(track =>
+                track.languageCode.startsWith(targetBase + '-') || track.languageCode.startsWith(targetBase + '_')
+             );
+        }
+        // If target is specific non-Chinese (e.g., en-US) and P1/P2 failed, P3 doesn't offer more matches in this logic.
+    }
+  }
+
+  // --- Determine if translation is needed and find the full track info ---
+  if (targetTrackInfo) {
+    console.log(`[Matcher Result] Found native track (Code: ${targetTrackInfo.languageCode}) matching target '${targetLang}'. Using native track.`);
+    needsTranslation = false;
+    // Find the full track info (with baseUrl, kind) from cachedCaptionTracks
+    // Prioritize non-ASR tracks if multiple tracks match the languageCode
+    const potentialTracks = cachedCaptionTracks?.filter(t => t.languageCode === targetTrackInfo!.languageCode);
+    if (potentialTracks && potentialTracks.length > 0) {
+        trackToFetch = potentialTracks.find(t => t.kind !== 'asr') || potentialTracks[0];
+        console.log(`[Matcher Result] Selected track to fetch:`, trackToFetch);
+        if (!trackToFetch.baseUrl) {
+             console.warn(`[Matcher Result] Found track but it's missing baseUrl. Cannot use native track.`, trackToFetch);
+             needsTranslation = true; // Fallback to translation if track is unusable
+             targetTrackInfo = undefined;
+             trackToFetch = null;
+        }
+    } else {
+        console.warn(`[Matcher Result] Matched languageCode ${targetTrackInfo.languageCode}, but couldn't find corresponding full track in cachedCaptionTracks.`);
+        needsTranslation = true; // Fallback to translation if we can't find the full track info
+        targetTrackInfo = undefined;
+        trackToFetch = null;
+    }
+  } else {
+    console.log(`[Matcher Result] No suitable native track found for target '${targetLang}' after all matching levels. Proceeding to translation.`);
+    needsTranslation = true;
+  }
+
+  // --- If Translation Needed: Find Source Track ---
+  if (needsTranslation) {
+    if (!sourceLang) {
+        console.error('Translation needed, but source language is not set!');
+        await setTranslateActive(false); // Turn off translation state
+        return;
+    }
+    console.log(`[Translation Path] Finding source track for language: ${sourceLang}`);
+    // --- Use a multi-level approach to find the best SOURCE track ---
+    let sourceTrackToFetch: any | null = null;
+
+    if (cachedCaptionTracks) {
+        // P1 Source: Exact Match (prefer non-ASR)
+        sourceTrackToFetch = cachedCaptionTracks.find(track => track.languageCode === sourceLang && track.kind !== 'asr') ||
+                             cachedCaptionTracks.find(track => track.languageCode === sourceLang);
+
+        // P2/P3 Source: Fuzzy Match (more lenient for source)
+        if (!sourceTrackToFetch) {
+            const sourceBase = sourceLang.split(/[-_]/)[0];
+            const sourceHasRegionOrScript = sourceLang.includes('-') || sourceLang.includes('_');
+
+            // Try matching base code if source is specific
+            if (sourceHasRegionOrScript) {
+                 sourceTrackToFetch = cachedCaptionTracks.find(track => track.languageCode === sourceBase && track.kind !== 'asr') ||
+                                      cachedCaptionTracks.find(track => track.languageCode === sourceBase);
+            }
+
+            // Try matching first specific if source is base
+            if (!sourceTrackToFetch && !sourceHasRegionOrScript) {
+                sourceTrackToFetch = cachedCaptionTracks.find(track => (track.languageCode.startsWith(sourceBase + '-') || track.languageCode.startsWith(sourceBase + '_')) && track.kind !== 'asr') ||
+                                     cachedCaptionTracks.find(track => (track.languageCode.startsWith(sourceBase + '-') || track.languageCode.startsWith(sourceBase + '_')));
+            }
+
+            // Special case for source 'zh-Hans'/'zh-Hant' matching generic 'zh'
+            if (!sourceTrackToFetch && (sourceLang === 'zh-Hans' || sourceLang === 'zh-Hant')) {
+                 sourceTrackToFetch = cachedCaptionTracks.find(track => track.languageCode === 'zh' && track.kind !== 'asr') ||
+                                      cachedCaptionTracks.find(track => track.languageCode === 'zh');
+            }
+        }
+    }
+    // --- End Source Track Finding ---
+
+
+    if (!sourceTrackToFetch) {
+        console.error(`[Translation Path] Cannot find specified source language track '${sourceLang}' (including fuzzy matches).`);
+        await setTranslateActive(false); // Turn off translation state
+        return;
+    }
+    trackToFetch = sourceTrackToFetch; // This is the track we'll fetch subtitles FROM
+    console.log(`[Translation Path] Found source track to fetch for translation:`, trackToFetch);
+  }
+
+  // --- Fetch and Process ---
+  if (!trackToFetch || !trackToFetch.baseUrl) {
+    console.error('Could not determine a valid track with a baseUrl to fetch.');
+    await setTranslateActive(false); // Turn off translation state
+    return;
+  }
+
+  console.log(`Fetching subtitle data from: ${trackToFetch.baseUrl} (Lang: ${trackToFetch.languageCode}, Kind: ${trackToFetch.kind}, Needs Translation: ${needsTranslation})`);
+
+  try {
+    console.log(`正在从 ${trackToFetch.baseUrl} 获取字幕数据... (语言: ${trackToFetch.languageCode}, 类型: ${trackToFetch.kind})`);
+    const subtitleJson = await fetchSubtitleData(trackToFetch.baseUrl);
+    if (subtitleJson) {
+        if (needsTranslation) {
+            // --- 需要翻译的流程 --- 
+            console.log('字幕数据已获取，处理源文本并发送进行翻译...');
+            // 1. 处理源文本，存储到 originalText 字段
+            processAndStoreSubtitles(subtitleJson, 'original');
+
+            if (processedSubtitleEvents.length > 0) {
+                console.log(`发送 ${processedSubtitleEvents.length} 条字幕到后台进行翻译 (目标: ${targetLang})...`);
+                // 2. 发送消息到后台请求翻译
+                chrome.runtime.sendMessage(
+                    {
+                        action: 'translateSubtitles',
+                        payload: {
+                            // 发送简化结构以减少数据量，包含 ID 以便匹配
+                            subtitles: processedSubtitleEvents.map((e, index) => ({ 
+                                id: `${e.start}-${e.end}-${index}`, // Use index for uniqueness if start/end collide
+                                text: e.originalText 
+                            })),
+                            targetLang: targetLang, 
+                            sourceLang: trackToFetch.languageCode // 发送实际获取的源语言代码
+                        }
+                    },
+                    (response) => {
+                        if (chrome.runtime.lastError) {
+                            console.error('发送翻译请求到后台时出错:', chrome.runtime.lastError);
+                            setTranslateActive(false); // 出错时回滚状态
+                            return;
+                        }
+                        if (response?.status === 'success' && response.translatedSubtitles) {
+                            console.log('收到来自后台的翻译结果:', response.translatedSubtitles);
+                            // 3. 将翻译结果合并回 processedSubtitleEvents
+                            updateStoredSubtitlesWithTranslation(response.translatedSubtitles);
+                            // 4. 启动字幕显示循环
+                            startSubtitleDisplayLoop();
+                        } else {
+                            console.error('后台翻译失败或返回无效数据:', response);
+                            setTranslateActive(false); // 翻译失败也回滚状态
+                        }
+                    }
+                );
+            } else {
+                console.warn("处理后的源字幕事件为空，无法进行翻译。");
+                await setTranslateActive(false); // 处理后为空，回滚
+            }
+        } else {
+            // --- 使用原生目标语言轨道的流程 --- 
+            console.log('原生目标语言字幕数据已获取，正在处理...');
+            // 直接处理并存储目标语言文本 (填充 original 和 translated)
+            processAndStoreSubtitles(subtitleJson, 'native');
+             if (processedSubtitleEvents.length > 0) {
+                 startSubtitleDisplayLoop();
+            } else {
+                console.warn("处理后的原生目标语言字幕事件为空，无法启动显示。");
+                 await setTranslateActive(false); // 处理后为空，回滚
+            }
+        }
+    } else {
+      console.error('获取字幕数据失败或数据无效。');
+      await setTranslateActive(false);
+    }
+  } catch (error) {
+    console.error('获取或处理字幕数据时发生错误:', error);
+    await setTranslateActive(false);
+  }
+}
+
+/** 辅助函数：启动字幕显示循环 */
+function startSubtitleDisplayLoop() {
+    stopSubtitleUpdates(); 
+    if (videoElement && processedSubtitleEvents.length > 0) {
+        console.log("启动字幕显示循环 (requestAnimationFrame)");
+        animationFrameId = requestAnimationFrame(updateSubtitleLoop);
+    } else {
+         console.warn("无法启动字幕显示循环，videoElement 或 processedSubtitleEvents 不可用。");
+    }
+}
+
+/**
+ * 辅助函数：将后台返回的翻译结果合并到 processedSubtitleEvents 中。
+ * @param translatedData - 后台返回的翻译结果对象 { [id: string]: string }。
+ */
+function updateStoredSubtitlesWithTranslation(translatedData: { [id: string]: string }) {
+    let updatedCount = 0;
+    processedSubtitleEvents = processedSubtitleEvents.map((event, index) => {
+        const id = `${event.start}-${event.end}-${index}`; // 使用与发送时相同的 ID 生成逻辑
+        const translatedText = translatedData[id];
+        if (translatedText !== undefined) {
+            updatedCount++;
+            return { ...event, translatedText: translatedText };
+        }
+        console.warn(`未找到 ID ${id} 的翻译结果。`);
+        return event; // 保持原样
+    });
+    console.log(`已将 ${updatedCount} 条翻译结果合并到 processedSubtitleEvents`);
+}
+
+
+// --- Control Injection Logic ---
 
 /**
  * 将自定义控件注入到 YouTube 播放器。
+ * @returns {void}
  */
-function injectControls() { // <-- 函数改回同步
-  // --- 检查防止重复注入 ---
-  if (controlsInjected || 
-      document.getElementById('vid-translate-toggle-button') || 
+function injectControls(): void { 
+  console.log(`[injectControls] Function called. controlsInjected = ${controlsInjected}`);
+
+  // --- Restore combined check: Use flag AND check for existing elements ---
+  if (controlsInjected ||
+      document.getElementById('vid-translate-toggle-button') ||
       document.getElementById('vid-translate-settings-button')) {
+    console.log(`[injectControls] Skipping injection.`);
+    controlsInjected = true; 
     return;
   }
+  // --- End of combined check ---
+
+  /* // Keep the previous flag-only check commented out for reference
+  // --- Use ONLY controlsInjected flag to prevent re-injection in the same context ---
+  if (controlsInjected) {
+    console.log('[injectControls] Skipping because controlsInjected is already true.'); // Add log for clarity
+    return;
+  }
+  // --- Removed the check for existing element IDs ---
+  */
 
   const rightControls = document.querySelector('.ytp-right-controls');
   if (!rightControls) {
-    console.log('未找到 .ytp-right-controls，稍后重试...');
-    return;
+    console.log('[injectControls] .ytp-right-controls not found, retrying later...');
+    return; // 稍后由 MutationObserver 重试
   }
 
+  // 确保字幕叠加层存在
   const playerContainer = document.querySelector('.html5-video-player');
   if (playerContainer && !subtitleOverlayElement) {
     createSubtitleOverlay(playerContainer as HTMLElement);
@@ -504,93 +846,70 @@ function injectControls() { // <-- 函数改回同步
 
   const firstNativeButton = rightControls.firstChild; // 获取插入参照点
 
-  // --- 1. 创建设置按钮 --- (同步)
+  // --- 1. 创建设置按钮 ---
   const { button: settingsButton } = createControlButton(
     'vid-translate-settings-button',
     '翻译设置',
-    SETTING_ICON_URL,
-    () => {
-      console.log('设置按钮点击');
-      console.log('立即发送打开 Side Panel 消息...');
+    SETTING_ICON_URL, // 初始图标
+    () => { // 点击回调
+      console.log('Settings button clicked.');
+      // 打开 Side Panel
       chrome.runtime.sendMessage({ action: 'openSidePanel' }, (response) => {
          if (chrome.runtime.lastError) {
-           console.error('[CS - Click Handler] 发送 openSidePanel 消息时出错:', chrome.runtime.lastError.message);
-         } else if (response && response.status === 'success') {
-           console.log('[CS - Click Handler] Background 确认 Side Panel 打开指令已收到。');
+           console.error('[CS - SettingsClick] Error sending openSidePanel:', chrome.runtime.lastError.message);
+         } else if (response?.status === 'success') {
+           console.log('[CS - SettingsClick] Background confirmed Side Panel open.');
          } else {
-           console.warn('[CS - Click Handler] Background 返回的打开 Side Panel 响应异常:', response);
+           console.warn('[CS - SettingsClick] Unexpected response for openSidePanel:', response);
          }
        });
+       // 确保轨道信息可用 (如果尚未获取)
        fetchAndProcessTracksInfo()
-         .then(() => {
-             console.log('[CS - Click Handler] 轨道信息已在后台确认或获取。');
-         })
-         .catch(error => {
-             console.error('[CS - Click Handler] 在后台获取轨道信息以供 Side Panel 使用时失败:', error);
-         });
+         .then(() => console.log('[CS - SettingsClick] Track info fetched/confirmed for Side Panel.'))
+         .catch(error => console.error('[CS - SettingsClick] Failed to fetch track info for Side Panel:', error));
     }
   );
-  // 将设置按钮插入开头
   rightControls.insertBefore(settingsButton, firstNativeButton);
-  console.log('设置按钮已注入');
+  console.log('[injectControls] Settings button injected.');
 
-  // --- 2. 创建翻译按钮 --- (同步)
-  const { button: translateButton, icon: translateIcon } = createControlButton(
+  // --- 2. 创建翻译按钮 ---
+  const { button: translateButton, icon: toggleIcon } = createControlButton(
     'vid-translate-toggle-button',
-    '开启/关闭翻译',
+    translateActive ? '关闭翻译' : '开启翻译', // 更新初始 tooltip
     translateActive ? ON_ICON_URL : OFF_ICON_URL,
-    async () => {
-       translateActive = !translateActive;
-       console.log('翻译按钮点击，新状态:', translateActive);
-       // --- 更新图标 IMG src --- 
-       translateIcon.src = translateActive ? ON_ICON_URL : OFF_ICON_URL;
-       // --- 结束更新图标 IMG --- 
-       chrome.storage.sync.set({ translateActive: translateActive });
-       if (translateActive) { 
-         if (!videoElement) {
-             videoElement = document.querySelector('video');
-             if (!videoElement) {
-                 console.error('未能找到 video 元素，无法开始翻译。');
-                 return;
-             }
-         }
-         if (!tracksInfoFetched) {
-             console.log('翻译开启，需要获取字幕轨道信息...');
-             try {
-                  await fetchAndProcessTracksInfo();
-                  if (!processedAvailableTracks || processedAvailableTracks.length === 0) {
-                      console.warn('没有可用的字幕轨道，无法进行翻译。');
-                      translateActive = false;
-                      // 更新图标回 OFF
-                      translateIcon.src = OFF_ICON_URL;
-                      chrome.storage.sync.set({ translateActive: translateActive });
-                      return;
-                  }
-             } catch (error) {
-                 console.error('获取轨道信息失败，无法开启翻译。', error);
-                 translateActive = false;
-                 // 更新图标回 OFF
-                 translateIcon.src = OFF_ICON_URL;
-                 chrome.storage.sync.set({ translateActive: translateActive });
-                 return;
-             }
-         }
-         console.log('启动字幕更新循环...');
-         if (!animationFrameId) { 
-             animationFrameId = requestAnimationFrame(updateSubtitleLoop);
-         }
+    async () => { // 改为 async 以便调用 setTranslateActive
+       const newState = !translateActive; 
+       console.log(`Translate button clicked. Attempting state change to: ${newState}`);
+
+       if (newState) {
+           // 尝试启动翻译
+           // 先更新状态和图标（乐观更新），startTranslationProcess 失败时会回滚
+           await setTranslateActive(true);
+           startTranslationProcess(); // 异步启动，不阻塞 UI
        } else {
-         console.log('停止字幕更新循环...');
-         stopSubtitleUpdates();
+           // 停止翻译
+           console.log('Stopping translation process...');
+           stopSubtitleUpdates();
+           await setTranslateActive(false); // 更新状态、图标、存储
        }
     }
   );
-  // 将翻译按钮插入开头 (在设置按钮之前)
-  rightControls.insertBefore(translateButton, settingsButton);
-  console.log('翻译按钮已注入');
+  translateToggleButtonIcon = toggleIcon; 
+  translateButton.dataset.tooltipText = translateActive ? '关闭翻译' : '开启翻译'; // 设置初始data-* 属性
 
+  rightControls.insertBefore(translateButton, settingsButton);
+  console.log('[injectControls] Translate toggle button injected.');
+
+  // --- 标记注入完成 ---
   controlsInjected = true;
-  console.log('自定义控件直接注入成功。');
+  console.log('[injectControls] Custom controls injected successfully.');
+  console.log(`[injectControls] Checking auto-start condition: translateActive = ${translateActive}`); 
+  if (translateActive) {
+      console.log('[injectControls] Controls injected and translateActive is true, initiating auto-start...');
+      startTranslationProcess().catch((error: unknown) => { 
+          console.error('[injectControls] Auto-start after injection failed:', error);
+      });
+  }
 }
 
 
@@ -649,32 +968,26 @@ function initialize() {
        const rightControls = document.querySelector('.ytp-right-controls'); // 改为检查右侧控件
        const playerContainer = document.querySelector('.html5-video-player'); // 同时检查播放器容器
        if (rightControls) {
-         injectControls(); // 如果找到右侧控件，尝试注入
+         console.log('[MutationObserver] Detected right controls, attempting injectControls...'); // <--- 新增日志
+         // injectControls 会检查 controlsInjected 标志，避免重复调用实际注入逻辑
+         // 并且它现在包含了自动启动的逻辑
+         injectControls();
        }
        // 如果叠加层需要播放器容器，也在这里检查
        if (playerContainer && !subtitleOverlayElement) {
+           // console.log('[MutationObserver] Detected player container, ensuring overlay exists...'); // 可选日志
            createSubtitleOverlay(playerContainer as HTMLElement);
        }
     }
-    // 如果 video 元素丢失了（例如页面导航），尝试重新获取
-    if (translateActive && !videoElement) {
-        videoElement = document.querySelector('video');
-        if (videoElement && !animationFrameId) {
-            // 如果翻译激活且有 video 元素，但循环未运行，启动它
-            console.log('在 MutationObserver 中重新找到 video 元素，尝试重启字幕循环。');
-            // 需要确保字幕数据已加载才能启动
-            // if (processedSubtitleEvents.length > 0) {
-            //    animationFrameId = requestAnimationFrame(updateSubtitleLoop);
-            // }
-        }
-    }
+    // 注意：移除了之前在这里重新查找 video 元素并尝试重启循环的逻辑。
+    // 现在这个逻辑由 injectControls -> startTranslationProcess 处理。
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
   console.log('MutationObserver 已设置。');
 
 
-  // --- 处理来自 Side Panel 的消息 ---
+  // --- 处理来自 Side Panel 或 Background 的消息 ---
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message.action === 'requestAvailableTracks') {
           console.log('收到来自 Side Panel 的 requestAvailableTracks 请求');
@@ -687,9 +1000,77 @@ function initialize() {
               sendResponse({ availableTracks: [] });
           });
           return true; // 异步响应
+      } else if (message.type === 'GET_TRANSLATABLE_LANGUAGES') {
+          console.log('[CS] Received GET_TRANSLATABLE_LANGUAGES request.');
+          // --- 使用正确的函数获取轨道信息 ---
+          fetchAndProcessTracksInfo()
+            .then(tracks => {
+                console.log('[CS] Fetched Tracks for GET_TRANSLATABLE_LANGUAGES:', JSON.stringify(tracks, null, 2));
+                // Send back the processed tracks (which have the desired structure)
+                sendResponse({ success: true, availableTracks: tracks || [] });
+            })
+            .catch(error => {
+                console.error('[CS] Error fetching tracks for GET_TRANSLATABLE_LANGUAGES:', error);
+                sendResponse({ success: false, error: error.message || 'Failed to fetch track info.' });
+            });
+          // --- 结束修改 ---
+          return true; // Indicate asynchronous response
       }
-      return false;
+      return false; // Indicate synchronous response or no response needed for other messages
   });
+
+  // --- 新增：监听存储变化 ---
+  chrome.storage.onChanged.addListener((changes, namespace) => {
+    if (namespace === 'sync' && changes.targetLang) {
+      const newTargetLang = changes.targetLang.newValue;
+      const oldTargetLang = changes.targetLang.oldValue;
+      console.log(`[CS Storage Listener] 检测到 targetLang 变化: 从 ${oldTargetLang} 到 ${newTargetLang}`);
+
+      // 检查翻译功能是否处于激活状态
+      if (translateActive) {
+        console.log('[CS Storage Listener] 翻译功能已激活，将使用新的目标语言重新启动翻译流程...');
+        // 重新执行翻译流程
+        // 需要确保 startTranslationProcess 能够安全地被重复调用
+        // 它应该停止之前的字幕更新、清除状态，然后再开始新的流程
+        startTranslationProcess().catch(error => {
+          console.error('[CS Storage Listener] 重新启动翻译流程时出错:', error);
+          // 考虑是否需要通知用户或回滚状态
+        });
+      } else {
+        console.log('[CS Storage Listener] 翻译功能未激活，无需操作。');
+      }
+    }
+    // 可以添加对 sourceLang 或 subtitleMode 变化的监听（如果需要）
+    if (namespace === 'sync' && changes.subtitleMode) {
+        const newMode = changes.subtitleMode.newValue;
+        const oldMode = changes.subtitleMode.oldValue;
+        console.log(`[CS Storage Listener] 检测到 subtitleMode 变化: 从 ${oldMode} 到 ${newMode}`);
+        // 字幕模式的改变不需要重新获取或翻译，只需要在下一次 handleSubtitleUpdate 时生效
+        // 但如果希望立即看到效果（虽然可能不明显），可以强制调用一次
+        if (translateActive && videoElement) {
+             console.log('[CS Storage Listener] 翻译已激活，强制更新字幕显示以应用新模式...');
+             handleSubtitleUpdate(); // 强制更新一次显示
+        }
+    }
+     if (namespace === 'sync' && changes.sourceLang) {
+         const newSourceLang = changes.sourceLang.newValue;
+         const oldSourceLang = changes.sourceLang.oldValue;
+         console.log(`[CS Storage Listener] 检测到 sourceLang 变化: 从 ${oldSourceLang} 到 ${newSourceLang}`);
+         // 如果翻译激活且确实需要翻译（即没有找到原生目标轨道）
+         // 则可能需要重新启动流程
+         if (translateActive) {
+              // 需要更复杂的检查：只有当上次执行 startTranslationProcess 确实进入了"需要翻译"的分支时，
+              // sourceLang 的改变才需要重启。如果上次是直接用了原生轨道，则 sourceLang 改变无影响。
+              // 为了简化，暂时也触发重启，让 startTranslationProcess 内部逻辑判断是否需要重新获取源轨道。
+              console.log('[CS Storage Listener] 翻译功能已激活，将使用新的源语言重新启动翻译流程（如果需要）...');
+              // 同样确保 startTranslationProcess 可以安全地被重复调用
+              startTranslationProcess().catch(error => {
+                  console.error('[CS Storage Listener] 因 sourceLang 改变重新启动翻译流程时出错:', error);
+              });
+         }
+     }
+  });
+  // --- 结束监听存储变化 ---
 
   // --- 新增：监听来自 Main World 的消息 ---
   window.addEventListener('message', (event) => {
@@ -902,27 +1283,11 @@ async function fetchAndProcessTracksInfo(): Promise<{ languageCode: string, lang
  * 处理 YouTube 页面内导航完成事件。
  * 重置与特定视频相关的状态。
  */
-function handleYoutubeNavigation() {
-    console.log('检测到 YouTube 导航 (yt-navigate-finish) v2...');
-    
-    console.log('重置视频状态 (v2)...');
-    // 1. 重置注入标志（允许下次重新注入控件）
-    controlsInjected = false;
+function handleYoutubeNavigation(): void {
+    console.log('YouTube navigation detected (yt-navigate-finish). Resetting state...');
 
-    // 2. 重置字幕轨道信息状态和缓存
-    tracksInfoFetched = false;
-    processedAvailableTracks = null;
-    cachedCaptionTracks = null;
-    captionTracksRequestSent = false; // 允许为新页面发送请求
-    // 清理可能未完成的 Promise 回调
-    if (rejectCaptionTracksPromise) {
-        rejectCaptionTracksPromise(new Error('Navigation occurred'));
-    }
-    resolveCaptionTracksPromise = null;
-    rejectCaptionTracksPromise = null;
-
-    // 3. 停止并清理当前字幕显示
-    stopSubtitleUpdates(); 
+    // 1. 停止当前字幕并清除状态
+    stopSubtitleUpdates();
     processedSubtitleEvents = [];
     if (subtitleOverlayElement) {
         subtitleOverlayElement.textContent = '';
@@ -930,18 +1295,77 @@ function handleYoutubeNavigation() {
         subtitleOverlayElement.style.visibility = 'hidden';
     }
 
-    // 4. 重置 video 元素引用
+    // 2. 重置与轨道获取和处理相关的状态
+    tracksInfoFetched = false;
+    processedAvailableTracks = null;
+    cachedCaptionTracks = null;
+    captionTracksRequestSent = false; // <--- 允许为新页面重新请求
+    // 如果有正在进行的请求，取消它
+    if (rejectCaptionTracksPromise) {
+        console.log('[Navigation] Aborting pending caption track request due to navigation.');
+        rejectCaptionTracksPromise(new Error('Navigation occurred')); // 会触发 Promise 的 catch 和清理
+    }
+    resolveCaptionTracksPromise = null; // 确保清理
+    rejectCaptionTracksPromise = null; // 确保清理
+
+    // 3. 重置 video 元素引用
     videoElement = null;
+    // 重置按钮图标引用 (它会在 injectControls 中重新获取)
+    translateToggleButtonIcon = null;
 
-    // 5. 主世界脚本通常不需要重新注入，因为它已在页面上
-    // MutationObserver 会负责重新调用 injectControls 来添加按钮
+    // --- 4. NEW: Explicitly remove old button elements --- 
+    try {
+        const oldTranslateButton = document.getElementById('vid-translate-toggle-button');
+        if (oldTranslateButton) {
+            console.log('[Navigation] Removing old translate button element.');
+            oldTranslateButton.remove();
+        }
+        const oldSettingsButton = document.getElementById('vid-translate-settings-button');
+        if (oldSettingsButton) {
+            console.log('[Navigation] Removing old settings button element.');
+            oldSettingsButton.remove();
+        }
+    } catch (error: unknown) {
+        console.error('[Navigation] Error removing old buttons:', error);
+    }
+    // --- End button removal ---
 
-    console.log('视频状态已重置 (v2)。等待用户操作或页面加载触发后续逻辑。');
+    // 5. 重置注入标志，允许 MutationObserver 重新注入控件
+    controlsInjected = false;
 
-    // --- 新增：通知背景脚本 ---
-    console.log('[CS] Navigation finished, notifying background...');
+    // 6. 通知背景脚本 (如果需要)
+    console.log('[Navigation] Notifying background script...');
     chrome.runtime.sendMessage({ action: 'youtubeNavigationFinished' });
-    // --- 结束新增 ---
+
+    console.log('Video state reset complete. Waiting for DOM updates to potentially re-inject controls.');
+    // 注意：这里不再需要手动调用 injectControls 或 startTranslationProcess
+    // MutationObserver 会检测到变化并调用 injectControls，
+    // 而 injectControls 会根据 translateActive 状态决定是否调用 startTranslationProcess
+}
+
+/**
+ * 辅助函数，用于设置翻译状态并更新存储和图标。
+ * @param {boolean} active - 新的翻译状态。
+ */
+async function setTranslateActive(active: boolean): Promise<void> {
+  translateActive = active;
+  // 更新图标
+  if (translateToggleButtonIcon) {
+    translateToggleButtonIcon.src = active ? ON_ICON_URL : OFF_ICON_URL;
+    // 更新 tooltip 文本
+    const button = translateToggleButtonIcon.closest('button');
+    if (button) {
+        button.dataset.tooltipText = active ? '关闭翻译' : '开启翻译';
+    }
+  }
+  // 保存到存储
+  try {
+    await chrome.storage.sync.set({ translateActive: active });
+    console.log(`翻译状态已${active ? '激活' : '关闭'}并保存。`);
+  } catch (error) {
+    console.error('保存翻译状态到 chrome.storage.sync 时出错:', error);
+    // 这里可以考虑是否回滚 UI 状态，或者只是记录错误
+  }
 }
 
 // 在脚本加载时执行初始化

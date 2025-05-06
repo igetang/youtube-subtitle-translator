@@ -142,6 +142,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // 不需要异步响应，可以返回 false 或省略 return
     return false;
   }
+  // --- 处理来自内容脚本的翻译请求 ---
+  else if (message.action === 'translateSubtitles') {
+    console.log('Background received translation request:', message.payload);
+    const { subtitles, targetLang } = message.payload;
+
+    if (!Array.isArray(subtitles) || !targetLang) {
+         console.error("Invalid payload for translateSubtitles action");
+         sendResponse({ status: 'error', message: 'Invalid payload'});
+         return false; // 同步响应错误
+    }
+
+    // 调用模拟翻译函数 (异步)
+    dummyTranslateFunction(subtitles, targetLang)
+        .then(translatedSubtitles => {
+             console.log('Background sending translation results:', translatedSubtitles);
+             sendResponse({ status: 'success', translatedSubtitles: translatedSubtitles });
+         })
+         .catch(error => {
+             console.error('Background dummy translation failed:', error);
+             sendResponse({ status: 'error', message: error.message || 'Unknown translation error' });
+        });
+
+    return true; // 表明我们将异步响应
+  }
   // --- 结束处理 ---
 
   // 可以添加其他消息处理逻辑...
@@ -149,7 +173,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // 对于未明确处理的消息
   console.warn('收到未处理的消息动作:', message.action);
   // 返回 false 或不返回，表示没有响应或同步处理
+  return false; // 默认返回 false
 });
+
+/**
+ * 模拟异步翻译功能。
+ * @param subtitles 要翻译的字幕数组 {id: string, text: string}[]。
+ * @param targetLang 目标语言代码。
+ * @returns {Promise<{[id: string]: string}>} 包含翻译结果的对象 {id: translatedText}。
+ */
+async function dummyTranslateFunction(
+    subtitles: { id: string, text: string }[],
+    targetLang: string
+): Promise<{ [id: string]: string }> {
+    console.log(`DUMMY TRANSLATING ${subtitles.length} items to ${targetLang}...`);
+    // 模拟网络延迟
+    await new Promise(resolve => setTimeout(resolve, 50)); // 短暂延迟
+
+    const results: { [id: string]: string } = {};
+    subtitles.forEach(sub => {
+        // 简单的模拟：添加语言代码前缀
+        results[sub.id] = `[${targetLang}] ${sub.text}`;
+    });
+
+    return results;
+}
 
 // 可以在这里添加其他的后台任务初始化代码
 // 例如：监听安装事件、设置定时任务 (chrome.alarms) 等

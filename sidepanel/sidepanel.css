@@ -39,6 +39,101 @@ select {
     font-size: 0.9em;
 }
 
+/* --- Custom Select Styles --- */
+.custom-select-container {
+    position: relative; /* Crucial for panel positioning */
+    flex-grow: 1;
+}
+
+.custom-select-trigger {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px;
+    background-color: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: 0.9em;
+    cursor: pointer;
+    user-select: none; /* Prevent text selection */
+}
+
+.custom-select-trigger .selected-value {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis; /* Add ellipsis if text is too long */
+    margin-right: 5px;
+}
+
+.custom-select-trigger .arrow {
+    font-size: 0.8em;
+    transition: transform 0.2s ease-in-out;
+}
+
+.custom-select-container.open .custom-select-trigger .arrow {
+    transform: rotate(180deg);
+}
+
+.custom-select-panel {
+    display: none; /* Hidden by default */
+    position: absolute;
+    top: 100%; /* Position below the trigger */
+    left: 0;
+    right: 0;
+    background-color: #2a2a2a; /* Slightly different background */
+    border: 1px solid #555;
+    border-top: none; /* Avoid double border */
+    border-radius: 0 0 4px 4px;
+    max-height: 200px; /* Limit height and enable scrolling */
+    overflow-y: auto;
+    z-index: 10; /* Ensure it appears above other elements */
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.custom-select-panel input[type="search"] {
+    width: calc(100% - 16px); /* Full width minus padding */
+    padding: 8px;
+    margin: 8px;
+    box-sizing: border-box;
+    background-color: #444;
+    color: #fff;
+    border: 1px solid #666;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+
+.custom-select-options {
+    /* Container for options */
+}
+
+.custom-select-option {
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 0.9em;
+    color: #eee;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.custom-select-option:hover {
+    background-color: #444;
+}
+
+.custom-select-option.selected {
+    background-color: #065fd4; /* YouTube blue for selected */
+    color: #fff;
+    font-weight: bold;
+}
+
+.custom-select-option.disabled {
+    color: #777;
+    cursor: not-allowed;
+    background-color: transparent !important; /* Override hover */
+}
+/* --- End Custom Select Styles --- */
+
 /* 模拟开关样式 */
 .switch-container {
     display: flex;
