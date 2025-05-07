@@ -95,28 +95,93 @@
 *   **按钮垂直对齐问题**: 修复了自定义按钮在控制栏中垂直位置偏低的问题。通过调整按钮 `<button>` 的 CSS (`display: inline-flex`, `align-items: center`) 并移除冲突样式解决。
 *   **字幕容器样式匹配问题**: 解决了自定义字幕叠加层在宽度和换行行为上与YouTube原生字幕不一致的问题。采用双层结构（包装容器+内容容器）并精确匹配原生字幕样式（`max-width: 93%`、`white-space: pre-wrap`等），使字幕容器能够根据字幕内容长度自动伸缩。
 
-### 后续计划
+### 最近完成的字幕模式功能优化
 
-*   完善 Sidepanel 功能 (选择目标语言, 保存设置等)。
-*   接入实际的翻译 API (如 Google Translate API 或其他服务)。
-*   UI 开发 (Popup)。
-*   UI 开发 (Options Page)。
-*   添加键盘快捷键支持。
-*   优化错误处理和日志。
-*   添加测试 (单元/集成)。
-*   国际化 (i18n)。
-*   打包与发布。
+在实现"双语显示"与"仅目标语言显示"功能过程中，我们完成了以下优化：
 
-## 页面结构
+1. **统一模式命名**：
+   - 在整个代码库中统一使用 `bilingual` 和 `targetOnly` 作为模式名称
+   - 确保侧边栏、内容脚本和存储中的命名一致性
 
-*   **Content Script (`content/content-script.ts`):** 核心逻辑，注入并控制 YouTube 页面上的按钮，处理字幕显示，与 Background 和 Side Panel 通信，并注入和协调 Main World Script。
-*   **Main World Script (`content/main-world.ts`):** 注入到 YouTube 页面主环境，负责调用页面级 API (`getPlayerResponse()`) 并通过 `postMessage` 将数据传回 Content Script。
-*   **Background Service Worker (`background/background.ts`):** 管理 Side Panel 的动态启用/禁用，并响应来自 Content Script 的打开 Side Panel 请求，以及在导航时广播消息。
-*   **Side Panel (`sidepanel/`):** 设置界面 (HTML, CSS, TSX/React)，负责显示和保存用户设置，并与 Content Script 通信获取可用字幕轨道，监听导航更新。
-*   **Popup:** (已创建 `popup.html` 和 `popup.ts`，功能待实现)
-*   **Options Page:** (已创建 `options.html` 和 `options.ts`，功能待实现)
+2. **改进字幕渲染逻辑**：
+   - 重构 `handleSubtitleUpdate` 函数使用全局变量而不是每次读取存储
+   - 确保切换模式时字幕能立即更新显示
+   - **优化字幕显示顺序**：调整为目标语言（用户理解的语言）在上，源语言在下的布局，提升阅读体验
 
-## 数据流
+3. **加强模式同步机制**：
+   - 通过 Chrome 消息传递和存储变化监听实现双重同步
+   - 确保模式变化在多个组件之间保持一致
+
+4. **处理导航场景**：
+   - 在页面导航后正确重新应用字幕模式
+   - 保证用户在切换视频后保持设置的一致性
+
+5. **优化初始化流程**：
+   - 在适当的时机初始化字幕模式
+   - 确保模式能在播放器UI加载后正确应用
+
+这些优化确保了字幕模式设置能在YouTube视频导航和播放过程中保持一致，提升了用户体验。
+
+### 字幕显示顺序优化详情
+
+为提升用户观看体验，我们对双语字幕的显示顺序进行了重要优化：
+
+#### 优化前后对比
+- **优化前**：源语言（原视频语言）在上，目标语言（翻译后语言）在下
+- **优化后**：目标语言（用户理解的语言）在上，源语言（原视频语言）在下
+
+#### 优化理由
+1. **认知流畅性**：将用户熟悉的语言放在上方，减少认知负担，让用户可以快速理解内容
+2. **符合阅读习惯**：自上而下的阅读顺序意味着用户首先接触到的是最重要的信息
+3. **专注度分配**：用户可以选择只阅读上方文本获取理解，或向下查看原文进行对比学习
+4. **提高效率**：在快速观看时，减少眼球移动和认知切换的次数
+
+#### 技术实现
+优化通过修改`handleSubtitleUpdate`函数中的文本组合逻辑实现：
+```typescript
+// 优化前
+textToShow = `${sourceText}\n${targetText}`;
+
+// 优化后
+textToShow = `${targetText}\n${sourceText}`;
+```
+
+#### 用户体验提升
+- **即时理解**：首先阅读能理解的语言，不必先经过陌生语言的干扰
+- **语言学习**：在理解内容后，可以参考下方原文进行语言学习
+- **减少认知负担**：避免在不熟悉的语言和熟悉的语言之间来回切换注意力
+
+这项改进虽然看似简单，但对整体用户体验有显著提升，特别是在快速浏览或需要同时理解内容与学习语言的场景中。
+
+### 最近更新：字幕模式切换功能
+
+已实现侧边栏中"双语显示"与"仅目标语言显示"模式切换与实际字幕呈现的同步：
+
+1. **字幕模式实现原理**：
+   - 使用全局变量 `currentSubtitleMode` 在内容脚本中跟踪当前模式
+   - 通过 `chrome.storage.sync` 在侧边栏与内容脚本间同步模式设置
+   - 实现了两种模式：`bilingual`（双语显示）和 `targetOnly`（仅目标语言）
+
+2. **侧边栏交互**：
+   - 用户可通过侧边栏中的切换开关选择字幕显示模式
+   - `saveSettings` 函数将设置保存到存储并向内容脚本发送消息
+
+3. **内容脚本处理**：
+   - `applySubtitleMode` 函数根据指定模式更新文档类和全局状态
+   - `handleSubtitleUpdate` 函数根据当前模式决定字幕文本的组合方式
+   - 通过两种方式响应模式变化：
+     - 监听来自侧边栏的 `subtitleModeUpdated` 消息
+     - 监听 `chrome.storage.onChanged` 事件
+
+4. **页面导航处理**：
+   - 在页面导航后通过 `handleYoutubeNavigation` 函数重新应用字幕模式
+   - 确保在导航到新视频时保持用户选择的字幕模式
+
+5. **初始化流程**：
+   - `initializeSubtitleMode` 函数在内容脚本加载时从存储读取初始模式
+   - 在 `initialize` 函数的末尾调用，确保在播放器UI加载后应用字幕模式
+
+### 代码架构和数据流
 
 1.  **Content Script 初始化 (`initialize`):**
     *   从 `chrome.storage.sync` 读取 `translateActive` 状态。
@@ -124,59 +189,34 @@
     *   设置 `MutationObserver` 监听 DOM 变化，等待播放器控件加载。
     *   设置 `message` 监听器以接收来自 Main World Script (`CAPTION_TRACKS_RESPONSE`, `MAIN_WORLD_READY`) 和 Background Script (`youtubeNavigationOccurred`) 的响应/广播。
     *   设置 `yt-navigate-finish` 监听器处理页面导航。
-2.  **控件注入 (`injectControls` - 由 `MutationObserver` 触发):**
-    *   进行**双重检查** (检查 `controlsInjected` 标志和按钮元素 ID 是否已存在于 DOM)。
-    *   找到播放器右侧控件 (`.ytp-right-controls`)。
-    *   调用 `createControlButton` 创建按钮（翻译、设置）。
-    *   将按钮直接注入到控件栏 (`insertBefore`)。
-    *   创建或确保字幕叠加层存在 (`createSubtitleOverlay`)。
-    *   设置 `controlsInjected = true`。
-    *   如果 `translateActive` 为 true，调用 `startTranslationProcess` 自动启动翻译。
-3.  **获取字幕轨道信息 (点击翻译按钮开启时或 Side Panel 请求时触发 - `fetchAndProcessTracksInfo`):**
-    *   如果信息未缓存 (`!tracksInfoFetched`)：
-        *   Content Script 向 Main World Script 发送 `REQUEST_CAPTION_TRACKS` 消息 (`window.postMessage`)。
-        *   Main World Script 监听到消息，调用 `getPlayerResponse()` 获取播放器数据。
-        *   Main World Script 将 `captionTracks` 数组（或错误）通过 `CAPTION_TRACKS_RESPONSE` 消息 (`window.postMessage`) 发回。
-        *   Content Script 监听到响应，解析 Promise，处理并缓存轨道信息 (`processedAvailableTracks`, `cachedCaptionTracks`)，设置 `tracksInfoFetched = true`。
-    *   返回缓存或新获取的处理后的轨道信息 (`processedAvailableTracks`)。
-4.  **Side Panel 请求可用轨道 (`requestAndFillSourceLanguages` in Sidepanel):**
-    *   Side Panel 打开或收到 `youtubeNavigationOccurred` 广播时，向 Content Script 发送 `requestAvailableTracks` 消息 (`chrome.tabs.sendMessage`)。
-    *   Content Script 收到消息，调用 `fetchAndProcessTracksInfo` 并将结果 (`processedAvailableTracks`) 返回给 Side Panel。
-    *   Side Panel 收到轨道列表并填充 UI。
-5.  **翻译按钮点击 (`startTranslationProcess` / `stopSubtitleUpdates`):**
-    *   更新 `translateActive` 状态和图标。
-    *   保存状态到 `chrome.storage.sync`。
-    *   如果开启翻译:
-        *   调用 `startTranslationProcess`：
-            *   确保 video 元素存在。
-            *   调用 `fetchAndProcessTracksInfo` 获取轨道。
-            *   选择默认轨道。
-            *   根据轨道信息调用 `fetchSubtitleData` 获取原始字幕。
-            *   调用 `processAndStoreSubtitles` 处理字幕。
-            *   如果成功，启动 `updateSubtitleLoop`。
-            *   处理各种错误情况并回滚状态。
-    *   如果关闭翻译: 调用 `stopSubtitleUpdates`。
-6.  **设置按钮点击:**
-    *   (立即) 向 Background Script 发送 `openSidePanel` 消息 (`chrome.runtime.sendMessage`) 以保留用户手势。
-    *   (异步) 调用 `fetchAndProcessTracksInfo` 确保轨道信息可用，以便 Side Panel 请求时能快速响应。
-    *   Background Script 收到消息，调用 `chrome.sidePanel.open()`。
-7.  **设置更改 (Side Panel):**
-    *   用户在 Side Panel 中更改设置 (例如选择不同的源语言或目标语言)。
-    *   Side Panel 将新设置保存到 `chrome.storage.sync`。
-    *   (未来) Side Panel 可能需要通知 Content Script 重新获取或翻译字幕。
-8.  **字幕显示 (`updateSubtitleLoop` -> `handleSubtitleUpdate`):**
-    *   获取当前视频时间 (`videoElement.currentTime`)。
-    *   在 `processedSubtitleEvents` 中查找当前时间对应的字幕文本。
-    *   更新 `subtitleOverlayElement` 的内容和可见性。
-9.  **页面导航 (`yt-navigate-finish` 触发 `handleYoutubeNavigation`):**
-    *   停止字幕循环。
-    *   重置与视频相关的状态（轨道缓存、字幕数据、video 引用等）。
-    *   **主动移除** DOM 中旧的按钮元素 (`.remove()`)。
-    *   重置 `controlsInjected = false`。
-    *   向 Background Script 发送 `youtubeNavigationFinished` 消息。
-10. **导航时侧边栏更新:**
-    *   Background Script 收到 `youtubeNavigationFinished` 消息后，向所有扩展上下文广播 `youtubeNavigationOccurred` 消息，并携带发生导航的 `tabId`。
-    *   Side Panel 监听到广播消息，如果 `tabId` 与自身匹配，则重新调用 `requestAndFillSourceLanguages` 函数，向当前 Content Script 请求新的可用轨道列表。
+    *   调用 `initializeSubtitleMode` 初始化字幕模式。
+
+2.  **字幕模式初始化和应用:**
+    *   `initializeSubtitleMode` 从 `chrome.storage.sync` 读取 `subtitleMode` 设置。
+    *   如果存在，调用 `applySubtitleMode` 应用该模式；如果不存在，默认使用 `bilingual` 模式。
+    *   `applySubtitleMode` 设置 `currentSubtitleMode` 全局变量，并更新文档类以便CSS样式调整。
+    *   如果翻译功能已激活，立即调用 `handleSubtitleUpdate` 更新当前字幕显示。
+
+3.  **字幕显示处理 (`handleSubtitleUpdate`):**
+    *   根据 `currentSubtitleMode` 全局变量决定如何组合源语言和目标语言字幕。
+    *   `bilingual` 模式：如果源字幕和目标字幕不同，显示 `${sourceText}\n${targetText}`；否则显示可用的那一个。
+    *   `targetOnly` 模式：优先显示目标语言字幕，如果不可用则回退到源语言字幕。
+
+4.  **侧边栏设置保存 (`saveSettings` in sidepanel.ts):**
+    *   根据切换开关状态设置 `subtitleMode`：开启时为 `bilingual`，关闭时为 `targetOnly`。
+    *   将设置保存到 `chrome.storage.sync`。
+    *   向当前标签页的内容脚本发送 `subtitleModeUpdated` 消息，包含新模式。
+
+5.  **内容脚本响应模式变化:**
+    *   监听 `chrome.runtime.onMessage`，处理 `subtitleModeUpdated` 消息。
+    *   监听 `chrome.storage.onChanged`，监测 `subtitleMode` 变化。
+    *   两种方式都会调用 `applySubtitleMode` 应用新模式。
+
+6.  **导航时保持一致性:**
+    *   `handleYoutubeNavigation` 在页面导航后重新应用当前字幕模式或初始化模式。
+    *   确保用户在切换视频时保持选择的字幕显示偏好。
+
+### 后续计划
 
 ## 依赖库
 
@@ -208,6 +248,9 @@
 *   [x] **修复 YouTube 页面导航后字幕不自动启动问题 (详细见"导航与稳定性修复"部分)**
 *   [x] **修复 YouTube 页面导航时按钮重复注入问题 (详细见"导航与稳定性修复"部分)**
 *   [x] **优化字幕容器样式，精确匹配YouTube原生字幕 (使用Flexbox布局+动态宽度)**
+*   [x] **实现字幕显示模式切换功能 (双语/仅目标语言)**
+*   [x] **优化字幕显示顺序 (目标语言在上，源语言在下)**
+*   [x] **修复构建问题：删除文件末尾非法HTML标记**
 *   [ ] 完善 Sidepanel 功能 (选择目标语言, 保存设置等)
 *   [ ] 接入实际的翻译 API
 *   [ ] UI 开发 (Popup)
@@ -245,4 +288,7 @@
 *   **YYYY-MM-DD:** 修复自定义按钮垂直对齐问题 (调整 CSS)。
 *   **YYYY-MM-DD:** 实现 Side Panel 在 YouTube 导航后自动更新源语言列表 (通过 Background 广播)。
 *   **YYYY-MM-DD:** **详细修复导航相关的稳定性问题** (字幕自动启动 & 按钮重复注入，涉及 `startTranslationProcess`, `handleYoutubeNavigation` 主动清理旧按钮, `injectControls` 双重检查)。
-*   **YYYY-MM-DD:** **优化字幕容器样式** (采用双层结构与自动宽度计算，确保字幕容器行为与YouTube原生字幕一致)。 
+*   **YYYY-MM-DD:** **优化字幕容器样式** (采用双层结构与自动宽度计算，确保字幕容器行为与YouTube原生字幕一致)。
+*   **2023-07-01:** 实现字幕显示模式切换功能（双语/仅目标语言）。
+*   **2023-07-07:** 优化双语字幕显示顺序（目标语言在上，源语言在下），提升阅读体验。
+*   **2023-07-07:** 修复构建问题：删除文件末尾非法HTML标记 

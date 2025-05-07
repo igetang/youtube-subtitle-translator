@@ -67,29 +67,46 @@ function isLanguageRelevantToUI(langCode: string, uiLangCode: string): boolean {
 function findMatchingTargetLanguage(codeToMatch: string): Language | undefined {
     if (!codeToMatch) return undefined;
 
+    console.log(`[findMatchingTargetLanguage] 尝试匹配语言代码: ${codeToMatch}`);
     let matchedLang: Language | undefined = undefined;
     const normalizedCodeToMatch = codeToMatch.toLowerCase(); // Normalize for comparison
 
     // Priority 1: Exact Match (case-insensitive)
     matchedLang = targetLanguages.find(lang => lang.code.toLowerCase() === normalizedCodeToMatch);
-    if (matchedLang) return matchedLang;
+    if (matchedLang) {
+        console.log(`[findMatchingTargetLanguage] 精确匹配: ${matchedLang.code}`);
+        return matchedLang;
+    }
 
     // Priority 2: Handle Chinese Script/Region Variants explicitly
     const baseLang = normalizedCodeToMatch.split(/[-_]/)[0];
+    console.log(`[findMatchingTargetLanguage] 基础语言代码: ${baseLang}`);
+    
     if (baseLang === 'zh') {
+        console.log(`[findMatchingTargetLanguage] 处理中文变体. 完整代码: ${normalizedCodeToMatch}`);
         const regionOrScript = normalizedCodeToMatch.split(/[-_]/)[1];
+        console.log(`[findMatchingTargetLanguage] 区域/脚本代码: ${regionOrScript}`);
+        
+        // 强化中文匹配: 所有中国大陆区域代码使用简体中文
         // Prefer Hans for CN/SG UI, Hant for TW/HK UI
-        if (regionOrScript === 'cn' || regionOrScript === 'sg') {
+        if (regionOrScript === 'cn' || regionOrScript === 'sg' || regionOrScript === 'hans') {
+            console.log('[findMatchingTargetLanguage] 匹配简体中文 (zh-Hans)');
             matchedLang = targetLanguages.find(lang => lang.code === 'zh-Hans');
         } else if (regionOrScript === 'tw' || regionOrScript === 'hk' || regionOrScript === 'hant') {
-             matchedLang = targetLanguages.find(lang => lang.code === 'zh-Hant');
-        } else if (regionOrScript === 'hans') { // Explicit request for Hans
-             matchedLang = targetLanguages.find(lang => lang.code === 'zh-Hans');
+            console.log('[findMatchingTargetLanguage] 匹配繁体中文 (zh-Hant)');
+            matchedLang = targetLanguages.find(lang => lang.code === 'zh-Hant');
         }
-        // If UI is just 'zh', maybe default to Hans?
+        // If UI is just 'zh', default to Hans
         else if (normalizedCodeToMatch === 'zh') {
-             matchedLang = targetLanguages.find(lang => lang.code === 'zh-Hans') || targetLanguages.find(lang => lang.code === 'zh-Hant');
+            console.log('[findMatchingTargetLanguage] 纯zh代码，默认使用简体中文');
+            matchedLang = targetLanguages.find(lang => lang.code === 'zh-Hans') || targetLanguages.find(lang => lang.code === 'zh-Hant');
         }
+        // 添加默认中文处理
+        else {
+            console.log('[findMatchingTargetLanguage] 未知中文变体，默认使用简体中文');
+            matchedLang = targetLanguages.find(lang => lang.code === 'zh-Hans');
+        }
+        
         if (matchedLang) return matchedLang; 
     }
 
@@ -99,14 +116,23 @@ function findMatchingTargetLanguage(codeToMatch: string): Language | undefined {
         normalizedCodeToMatch.startsWith(lang.code.toLowerCase() + '-') || 
         normalizedCodeToMatch.startsWith(lang.code.toLowerCase() + '_')
     );
-     if (matchedLang) return matchedLang;
+    if (matchedLang) {
+        console.log(`[findMatchingTargetLanguage] 匹配前缀(特定到通用): ${matchedLang.code}`);
+        return matchedLang;
+    }
 
     // Priority 4: Target is General, List has Specific (e.g., target 'en', list has 'en-us')
     // Check if target code is a prefix of list code (followed by a separator)
-     matchedLang = targetLanguages.find(lang =>
-         lang.code.toLowerCase().startsWith(normalizedCodeToMatch + '-') || 
-         lang.code.toLowerCase().startsWith(normalizedCodeToMatch + '_')
-     );
+    matchedLang = targetLanguages.find(lang =>
+        lang.code.toLowerCase().startsWith(normalizedCodeToMatch + '-') || 
+        lang.code.toLowerCase().startsWith(normalizedCodeToMatch + '_')
+    );
+    
+    if (matchedLang) {
+        console.log(`[findMatchingTargetLanguage] 匹配前缀(通用到特定): ${matchedLang.code}`);
+    } else {
+        console.log(`[findMatchingTargetLanguage] 未找到匹配`);
+    }
     
     return matchedLang; // Return whatever was found, or undefined
 }
@@ -191,17 +217,52 @@ function populateTargetLanguages(searchTerm: string = '') {
     updateTargetLangOptionsState(); 
 }
 
+/**
+ * 为给定的源语言选择一个合适的备选目标语言。
+ * @param sourceLangCode 源语言代码。
+ * @returns 备选目标语言代码。
+ */
+function getFallbackTargetLang(sourceLangCode: string): string {
+    // 不同语言族的代表语言优先级
+    const fallbackPriorities = [
+        'zh-Hans',  // 中文简体
+        'fr',       // 法语
+        'ja',       // 日语
+        'de',       // 德语
+        'es',       // 西班牙语
+        'ru',       // 俄语
+        'ar',       // 阿拉伯语
+        'en-GB'     // 英国英语 (如果源语言是美式英语)
+    ];
+    
+    // 返回第一个不与源语言相同的语言
+    for (const langCode of fallbackPriorities) {
+        if (langCode !== sourceLangCode) {
+            return langCode;
+        }
+    }
+    
+    // 极端情况下的最终备选
+    return 'fr';
+}
+
 // --- 加载设置 --- 
 function loadSettings() {
+    console.log('===== loadSettings开始执行 =====');
     // 获取 UI 语言，如果尚未获取
     if (!uiLangCode) {
         uiLangCode = chrome.i18n.getUILanguage();
-        console.log(`[Diag] Fetched UI Language Code: ${uiLangCode}`); 
+        console.log(`[Debug] 获取UI语言: ${uiLangCode}`); 
+    } else {
+        console.log(`[Debug] 使用已缓存UI语言: ${uiLangCode}`);
     }
 
+    console.log('[Debug] 开始从storage加载设置...');
     chrome.storage.sync.get(['sourceLang', 'targetLang', 'subtitleMode'], (result) => {
+        console.log('[Debug] storage.get回调执行, 结果:', result);
         if (chrome.runtime.lastError) {
-            console.error('加载设置时出错:', chrome.runtime.lastError);
+            console.error('!!!!!!!!!! STORAGE ACCESS ERROR PATH TAKEN !!!!!!!!!', chrome.runtime.lastError);
+            console.error('[Error] 加载设置时出错:', chrome.runtime.lastError);
             // 出错时使用默认值
             currentSelectedTargetLang = defaultSettings.targetLang;
             updateTargetLanguageTriggerDisplay(currentSelectedTargetLang);
@@ -214,45 +275,61 @@ function loadSettings() {
         // 处理 sourceLang (逻辑不变)
         if (result.sourceLang && typeof result.sourceLang === 'string') {
             loadedSettings.sourceLang = result.sourceLang;
+            console.log(`[Debug] 从storage加载源语言: ${result.sourceLang}`);
+        } else {
+            loadedSettings.sourceLang = defaultSettings.sourceLang;
+            console.log(`[Debug] 源语言未保存，使用默认值: ${defaultSettings.sourceLang}`);
         }
 
-        // --- 处理 targetLang (实现默认匹配 UI 语言) ---
+        // --- 处理 targetLang (改进：确保与源语言不同) ---
         if (result.targetLang) {
             // 用户已保存设置，使用它
             loadedTargetLang = result.targetLang;
-            console.log(`[loadSettings] Using saved targetLang: ${loadedTargetLang}`);
+            console.log(`[Debug] 从storage加载目标语言: ${loadedTargetLang}`);
         } else {
             // 没有保存的值，尝试匹配 UI 语言
-            console.log(`[loadSettings] No saved targetLang. Trying to match UI lang: ${uiLangCode}`);
+            console.log(`[Debug] 目标语言未保存. 尝试匹配UI语言: ${uiLangCode}`);
             const matchedLang = findMatchingTargetLanguage(uiLangCode!);
-            if (matchedLang) {
+            
+            console.log(`[Debug] 源语言: ${loadedSettings.sourceLang}, UI语言匹配结果:`, matchedLang ? `${matchedLang.code}: ${matchedLang.name}` : "无匹配");
+            
+            if (matchedLang && matchedLang.code !== loadedSettings.sourceLang) {
+                // 找到匹配的UI语言，且与源语言不同，可以使用
                 loadedTargetLang = matchedLang.code;
-                console.log(`[Diag] Matched UI lang (${uiLangCode}) to targetLanguage code: ${matchedLang.code}`, matchedLang);
+                console.log(`[Debug] UI语言匹配成功，且与源语言不同，使用: ${matchedLang.code}`);
             } else {
-                // 找不到匹配的 UI 语言，使用硬编码的默认值
-                loadedTargetLang = defaultSettings.targetLang;
-                console.log(`[Diag] UI lang (${uiLangCode}) did NOT match any targetLanguage entry. Using default: ${loadedTargetLang}`);
+                // 如果匹配的语言与源语言相同或未找到匹配语言，则选择备选语言
+                loadedTargetLang = getFallbackTargetLang(loadedSettings.sourceLang);
+                console.log(`[Debug] UI语言匹配源语言或未找到匹配。使用备选语言: ${loadedTargetLang}`);
             }
+            
             // 将首次确定的默认值存起来，避免每次都重新计算
-             chrome.storage.sync.set({ targetLang: loadedTargetLang }, () => {
+            console.log(`[Debug] 保存初始目标语言到storage: ${loadedTargetLang}`);
+            chrome.storage.sync.set({ targetLang: loadedTargetLang }, () => {
                 if (chrome.runtime.lastError) {
-                    console.error('保存初始默认目标语言时出错:', chrome.runtime.lastError);
+                    console.error('[Error] 保存初始默认目标语言时出错:', chrome.runtime.lastError);
                 } else {
-                    console.log('初始默认目标语言已保存:', loadedTargetLang);
+                    console.log('[Debug] 初始默认目标语言已保存成功:', loadedTargetLang);
                 }
             });
         }
         // --- 结束 targetLang 处理 ---
 
+        console.log(`[Debug] 设置当前选中的目标语言: ${loadedTargetLang}`);
         currentSelectedTargetLang = loadedTargetLang; // 设置当前选中状态
         updateTargetLanguageTriggerDisplay(currentSelectedTargetLang); // 更新触发器显示
-        // 注意：populateTargetLanguages 现在依赖 uiLangCode，会在 requestAndFillSourceLanguages 成功后或出错时被调用
 
         // 处理 subtitleMode
-        if (result.subtitleMode) loadedSettings.subtitleMode = result.subtitleMode;
+        if (result.subtitleMode) {
+            loadedSettings.subtitleMode = result.subtitleMode;
+            console.log(`[Debug] 从storage加载字幕模式: ${result.subtitleMode}`);
+        } else {
+            console.log(`[Debug] 字幕模式未保存，将使用默认值: ${defaultSettings.subtitleMode}`);
+        }
 
-        console.log('[loadSettings] Calling updateUI with initial source/mode settings:', loadedSettings);
+        console.log('[Debug] 调用updateUI更新界面元素:', loadedSettings);
         updateUI(loadedSettings); // 更新源语言和开关
+        console.log('===== loadSettings执行完成 =====');
     });
 }
 
@@ -296,6 +373,27 @@ function saveSettings() {
             console.error('保存设置时出错:', chrome.runtime.lastError);
         } else {
             console.log('设置已保存:', settingsToSave);
+            // 当设置保存成功后，向内容脚本发送消息更新字幕模式
+            if (currentTabId) { //确保 currentTabId 有效
+                chrome.tabs.sendMessage(
+                    currentTabId,
+                    {
+                        action: 'subtitleModeUpdated',
+                        mode: settingsToSave.subtitleMode
+                    },
+                    (response) => {
+                        if (chrome.runtime.lastError) {
+                            // 在这里处理错误，例如目标标签页不存在或内容脚本没有监听
+                            // 对于 "Could not establish connection..." 错误，这通常意味着内容脚本没有对应的 listener
+                            // 或者 currentTabId 指向的标签页没有成功注入内容脚本或已关闭
+                            console.warn('向内容脚本发送字幕模式更新消息失败:', chrome.runtime.lastError.message);
+                        } else {
+                            // 处理来自内容脚本的成功响应 (可选)
+                            console.log('内容脚本响应subtitleModeUpdated:', response);
+                        }
+                    }
+                );
+            }
         }
     });
 }
@@ -383,6 +481,8 @@ function updateTargetLangOptionsState() {
 async function requestAndFillSourceLanguages(tabId: number) {
     if (!sourceLangSelect) {
         console.error("[SP] Source language select element not found.");
+        // 即使 sourceLangSelect 为空，也应该尝试加载用户可能已保存的其他设置
+        loadSettings();
         return;
     }
     console.log(`[SP] Requesting available tracks for Tab ${tabId}...`);
@@ -391,7 +491,10 @@ async function requestAndFillSourceLanguages(tabId: number) {
     try {
         const response = await chrome.tabs.sendMessage(tabId, { action: 'requestAvailableTracks' });
         console.log("[SP] Received tracks response:", response);
-        sourceLangSelect.innerHTML = '';
+        sourceLangSelect.innerHTML = ''; // 清空 "Loading tracks..."
+
+        let initialSourceLangToSave: string | null = null;
+
         if (response && Array.isArray(response.availableTracks)) {
             const availableTracks: { languageCode: string, languageName: string, kind: string }[] = response.availableTracks;
             if (availableTracks.length === 0) {
@@ -400,6 +503,7 @@ async function requestAndFillSourceLanguages(tabId: number) {
                  option.textContent = 'No subtitles available';
                  option.disabled = true;
                  sourceLangSelect.appendChild(option);
+                 sourceLangSelect.disabled = true; // 保持禁用，因为没有可选轨道
             } else {
                 let defaultSelectedLangCode: string | null = null;
                 const englishNonAsrTrack = availableTracks.find(t => t.languageCode.startsWith('en') && t.kind !== 'asr');
@@ -414,6 +518,7 @@ async function requestAndFillSourceLanguages(tabId: number) {
                     option.textContent = trackInfo.languageName;
                     sourceLangSelect.appendChild(option);
                 });
+
                 if (defaultSelectedLangCode) {
                      if (Array.from(sourceLangSelect.options).some(opt => opt.value === defaultSelectedLangCode)) {
                         sourceLangSelect.value = defaultSelectedLangCode;
@@ -422,28 +527,38 @@ async function requestAndFillSourceLanguages(tabId: number) {
                          if(sourceLangSelect.options.length > 0) sourceLangSelect.selectedIndex = 0;
                      }
                 } else if (sourceLangSelect.options.length > 0) {
-                     sourceLangSelect.selectedIndex = 0;
+                     sourceLangSelect.selectedIndex = 0; // 确保有选中项
                 }
+                // 只有在成功填充并选择了有效轨道后，才认为它是可以保存的初始源语言
+                if (sourceLangSelect.value) {
+                    initialSourceLangToSave = sourceLangSelect.value;
+                }
+                sourceLangSelect.disabled = false;
             }
-             sourceLangSelect.disabled = false;
-
-            // --- 新增：立即保存初始默认源语言 --- 
-            console.log(`[SP] Initial source language selected: ${sourceLangSelect.value}. Saving settings...`);
-            saveSettings();
-            // --- 结束新增 ---
-
         } else {
-            console.error("[SP] Invalid response received:", response);
+            console.error("[SP] Invalid response received or no availableTracks array:", response);
             const option = document.createElement('option');
             option.value = '';
             option.textContent = 'Error loading tracks';
             option.disabled = true;
             sourceLangSelect.appendChild(option);
-             sourceLangSelect.disabled = true; // 出错时保持禁用
+            sourceLangSelect.disabled = true; // 出错时保持禁用
         }
-         // 加载并应用用户保存的设置（现在应该能正确读取或覆盖刚保存的默认源语言）
-         console.log('[SP] Calling loadSettings() after filling languages and potentially saving default source...');
-        loadSettings(); 
+
+        // 现在决定是否以及如何调用 loadSettings
+        if (initialSourceLangToSave) {
+            // 检查存储中是否已有源语言设置，如果与当前推荐的不同或不存在，则保存
+            // 这一步是为了确保 loadSettings 能拿到最新的"推荐"源语言
+            // 但更核心的逻辑是让 loadSettings 自己去决定最终用哪个源语言并保存
+            console.log(`[SP] Initial source language selected: ${initialSourceLangToSave}. Ensuring it is considered by loadSettings.`);
+            // 我们不再在这里直接保存源语言，而是让 loadSettings 去处理默认源语言的逻辑。
+            // loadSettings 将会检查 storage，如果 sourceLang 未设置，
+            // 它会参考 sourceLangSelect.value (我们在这里已经设置好了)
+        }
+        
+        // 无论是否成功获取轨道，都调用 loadSettings 来加载或初始化所有设置
+        console.log('[SP] Calling loadSettings() after processing available tracks...');
+        loadSettings();
 
     } catch (error) {
         console.error(`[SP] Error requesting tracks for Tab ${tabId}:`, error);
@@ -453,7 +568,8 @@ async function requestAndFillSourceLanguages(tabId: number) {
         option.textContent = 'Error loading tracks';
         option.disabled = true;
         sourceLangSelect.appendChild(option);
-         sourceLangSelect.disabled = true; 
+        sourceLangSelect.disabled = true; 
+        console.log('[SP] Error requesting tracks. Calling loadSettings() to load other settings...');
         loadSettings(); // 即使出错也加载其他设置
     }
 }
@@ -462,6 +578,17 @@ async function requestAndFillSourceLanguages(tabId: number) {
 function addEventListeners() {
     // 源语言选择
     sourceLangSelect?.addEventListener('change', () => {
+        // 检查当前选中的目标语言是否与新的源语言相同
+        if (currentSelectedTargetLang === sourceLangSelect?.value) {
+            console.log(`[Event] Source language changed to match current target language (${currentSelectedTargetLang}). Selecting a different target.`);
+            
+            // 选择一个不同的目标语言
+            currentSelectedTargetLang = getFallbackTargetLang(sourceLangSelect.value);
+            
+            // 更新UI显示
+            updateTargetLanguageTriggerDisplay(currentSelectedTargetLang);
+        }
+        
         saveSettings();
         populateTargetLanguages(targetLangSearch?.value || '');
     });
@@ -480,38 +607,63 @@ function addEventListeners() {
 
 // --- 初始化 ---
 document.addEventListener('DOMContentLoaded', () => {
-    console.log("DOMContentLoaded event fired.");
+    console.log("===== 侧边栏DOMContentLoaded开始 =====");
     // 1. 获取 UI 语言
     uiLangCode = chrome.i18n.getUILanguage();
-    console.log(`[Init] Fetched UI Language: ${uiLangCode}`);
+    console.log(`[Debug] 获取UI语言: ${uiLangCode}`);
+    
+    // --- 打印所有受支持的语言 ---
+    console.log(`[Debug] 支持的目标语言列表:`, targetLanguages.map(l => `${l.code}:${l.name}`).join(', '));
+    
+    // --- 诊断信息：测试UI语言匹配 ---
+    const uiLangMatch = findMatchingTargetLanguage(uiLangCode);
+    console.log(`[Debug] UI语言(${uiLangCode})匹配结果:`, uiLangMatch ? `找到匹配 - ${uiLangMatch.code}: ${uiLangMatch.name}` : "没有找到匹配");
+    
+    // --- 诊断信息：各种中文变体匹配测试 ---
+    console.log("===== 各种中文变体匹配测试 =====");
+    const chineseVariants = ['zh-CN', 'zh-Hans', 'zh-TW', 'zh-Hant', 'zh'];
+    chineseVariants.forEach(code => {
+        const match = findMatchingTargetLanguage(code);
+        console.log(`测试'${code}'匹配结果:`, match ? `找到匹配 - ${match.code}: ${match.name}` : "没有找到匹配");
+    });
+    
     // 2. 添加事件监听器 (包括自定义下拉框的)
+    console.log("[Debug] 添加事件监听器");
     addEventListeners();
+    
     // 3. 先填充目标语言列表 (使用 UI 语言排序)
+    // 这一步现在会在 loadSettings 内部被再次调用，以确保基于最终的源语言更新禁用状态
+    console.log("[Debug] 初步填充目标语言列表 (将在loadSettings后根据源语言刷新状态)");
     populateTargetLanguages(); 
+    
     // 4. 获取当前标签页 ID 并请求源语言轨道 (成功后调用 loadSettings)
+    console.log("[Debug] 开始查询当前标签页");
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-         if (chrome.runtime.lastError) {
-            console.error("[SP] Error querying tabs:", chrome.runtime.lastError);
+        if (chrome.runtime.lastError) {
+            console.error("[Error] 查询标签页失败:", chrome.runtime.lastError);
             if (sourceLangSelect) {
                 sourceLangSelect.innerHTML = '<option value="" disabled>Error</option>';
                 sourceLangSelect.disabled = true;
             }
+            console.log("[Debug] 查询标签页失败，直接调用loadSettings");
             loadSettings(); 
             return;
         }
         if (tabs.length > 0 && tabs[0].id) {
             currentTabId = tabs[0].id;
-            console.log(`[SP] Associated with Tab ${currentTabId}`);
-            requestAndFillSourceLanguages(currentTabId); // 请求轨道，成功后调用 loadSettings
+            console.log(`[Debug] 关联标签页ID ${currentTabId}，开始请求轨道信息`);
+            requestAndFillSourceLanguages(currentTabId); // 此函数内部会调用 loadSettings
         } else {
-            console.error("[SP] Could not determine active tab ID.");
-              if (sourceLangSelect) {
+            console.error("[Error] 无法确定活动标签页ID");
+            if (sourceLangSelect) {
                 sourceLangSelect.innerHTML = '<option value="" disabled>Error</option>';
                 sourceLangSelect.disabled = true;
-             }
-             loadSettings(); 
+            }
+            console.log("[Debug] 无法确定标签页ID，直接调用loadSettings");
+            loadSettings(); 
         }
     });
+    console.log("===== 侧边栏DOMContentLoaded完成 =====");
 });
 
 // --- 监听来自背景脚本的导航通知 --- 
@@ -524,8 +676,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             if (targetLangSearch) targetLangSearch.value = '';
             // 获取最新的 UI 语言以防改变 (虽然不太可能在会话中改变)
             uiLangCode = chrome.i18n.getUILanguage(); 
-            populateTargetLanguages(); 
-            requestAndFillSourceLanguages(currentTabId);
+            // populateTargetLanguages(); // loadSettings 会处理这个
+            requestAndFillSourceLanguages(currentTabId); // 这会重新填充源并调用 loadSettings
         }
         return false;
     }

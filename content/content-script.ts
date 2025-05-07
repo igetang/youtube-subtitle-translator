@@ -401,42 +401,31 @@ async function handleSubtitleUpdate() {
   );
 
   if (activeEvent) {
-    // 从存储中获取当前的字幕显示模式
-    let subtitleMode = 'bilingual'; // 默认值
-    try {
-      // 注意：storage.sync 可能有延迟，如果需要绝对实时，考虑用 message 或 storage.local
-      const settings = await chrome.storage.sync.get(['subtitleMode']);
-      subtitleMode = settings.subtitleMode || 'bilingual';
-    } catch (e) {
-      console.error("获取 subtitleMode 失败:", e);
-      // 出错时继续使用默认值
-    }
-
+    // 使用全局变量而不是每次从存储读取
+    const subtitleMode = currentSubtitleMode || 'bilingual'; // 默认值
+    
     // 根据模式组合要显示的文本
     const sourceText = activeEvent.sourceText || ''; // Fallback to empty string if null
     const targetText = activeEvent.targetText || ''; // Fallback to empty string if null
 
-    // NEW LOGIC based on sourceText and targetText
-     switch (subtitleMode) {
-         case 'bilingual':
-             if (sourceText && targetText && sourceText !== targetText) {
-                 textToShow = `${sourceText}\n${targetText}`; // Show both if different
-             } else {
-                 textToShow = targetText || sourceText; // Show whichever is available if one is missing or they are same
-             }
-             break;
-         case 'target':
-              textToShow = targetText || sourceText; // Prioritize target, fallback to source
-              break;
-         case 'source':
-             textToShow = sourceText || targetText; // Prioritize source, fallback to target
-             break;
-         default: // Fallback to bilingual for unknown modes
-             if (sourceText && targetText && sourceText !== targetText) {
-                 textToShow = `${sourceText}\n${targetText}`;
-             } else {
-                 textToShow = targetText || sourceText;
-             }
+    // 使用 bilingual 和 targetOnly 作为模式名称，与侧边栏保持一致
+    switch (subtitleMode) {
+      case 'bilingual':
+        if (sourceText && targetText && sourceText !== targetText) {
+          textToShow = `${targetText}\n${sourceText}`; // 目标语言在上，源语言在下
+        } else {
+          textToShow = targetText || sourceText; // Show whichever is available if one is missing or they are same
+        }
+        break;
+      case 'targetOnly':
+        textToShow = targetText || sourceText; // Prioritize target, fallback to source
+        break;
+      default: // Fallback to bilingual for unknown modes
+        if (sourceText && targetText && sourceText !== targetText) {
+          textToShow = `${targetText}\n${sourceText}`; // 目标语言在上，源语言在下
+        } else {
+          textToShow = targetText || sourceText;
+        }
     }
   }
 
@@ -1153,6 +1142,11 @@ function initialize() {
   } else {
        console.log('yt-navigate-finish 监听器已存在，跳过添加。');
   }
+  
+  // 初始化字幕显示模式
+  initializeSubtitleMode();
+  
+  console.log('内容脚本初始化完成。');
 }
 
 /**
@@ -1320,63 +1314,53 @@ async function fetchAndProcessTracksInfo(): Promise<{ languageCode: string, lang
  * 重置与特定视频相关的状态。
  */
 function handleYoutubeNavigation(): void {
-    console.log('YouTube navigation detected (yt-navigate-finish). Resetting state...');
-
-    // 1. 停止当前字幕并清除状态
+    console.log('检测到 YouTube 页面导航，准备清理并重置状态...');
+    // 停止任何正在运行的字幕更新循环
     stopSubtitleUpdates();
-    processedSubtitleEvents = [];
-    if (subtitleOverlayElement) {
-        subtitleOverlayElement.textContent = '';
-        subtitleOverlayElement.style.opacity = '0';
-        subtitleOverlayElement.style.visibility = 'hidden';
-    }
 
-    // 2. 重置与轨道获取和处理相关的状态
+    // 重置与当前视频相关的状态
+    cachedCaptionTracks = null;
     tracksInfoFetched = false;
     processedAvailableTracks = null;
-    cachedCaptionTracks = null;
-    captionTracksRequestSent = false; // <--- 允许为新页面重新请求
-    // 如果有正在进行的请求，取消它
-    if (rejectCaptionTracksPromise) {
-        console.log('[Navigation] Aborting pending caption track request due to navigation.');
-        rejectCaptionTracksPromise(new Error('Navigation occurred')); // 会触发 Promise 的 catch 和清理
-    }
-    resolveCaptionTracksPromise = null; // 确保清理
-    rejectCaptionTracksPromise = null; // 确保清理
-
-    // 3. 重置 video 元素引用
+    processedSubtitleEvents = [];
     videoElement = null;
-    // 重置按钮图标引用 (它会在 injectControls 中重新获取)
-    translateToggleButtonIcon = null;
+    // 注意：不重置 translateActive，因为我们希望在导航后保持状态
 
-    // --- 4. NEW: Explicitly remove old button elements --- 
-    try {
-        const oldTranslateButton = document.getElementById('vid-translate-toggle-button');
-        if (oldTranslateButton) {
-            console.log('[Navigation] Removing old translate button element.');
-            oldTranslateButton.remove();
-        }
-        const oldSettingsButton = document.getElementById('vid-translate-settings-button');
-        if (oldSettingsButton) {
-            console.log('[Navigation] Removing old settings button element.');
-            oldSettingsButton.remove();
-        }
-    } catch (error: unknown) {
-        console.error('[Navigation] Error removing old buttons:', error);
+    // 移除任何现有的按钮（在重置标志前）
+    // 主动清理步骤：查找并移除旧按钮元素。
+    const existingTranslateButton = document.getElementById('vid-translate-toggle-button');
+    const existingSettingsButton = document.getElementById('vid-translate-settings-button');
+    if (existingTranslateButton) {
+        existingTranslateButton.remove();
+        console.log('已移除旧的翻译按钮。');
     }
-    // --- End button removal ---
+    if (existingSettingsButton) {
+        existingSettingsButton.remove();
+        console.log('已移除旧的设置按钮。');
+    }
 
-    // 5. 重置注入标志，允许 MutationObserver 重新注入控件
+    // 现在重置注入标志
     controlsInjected = false;
+    console.log('重置控件注入标志。');
 
-    // 6. 通知背景脚本 (如果需要)
-    console.log('[Navigation] Notifying background script...');
-    chrome.runtime.sendMessage({ action: 'youtubeNavigationFinished' });
-
-    console.log('Video state reset complete. Waiting for DOM updates to potentially re-inject controls.');
-    // 注意：这里不再需要手动调用 injectControls 或 startTranslationProcess
-    // MutationObserver 会检测到变化并调用 injectControls，
-    // 而 injectControls 会根据 translateActive 状态决定是否调用 startTranslationProcess
+    // 向后台脚本发送导航完成通知
+    // 后台脚本会广播这个消息，让 Side Panel 能够更新其轨道列表
+    chrome.runtime.sendMessage({ action: 'youtubeNavigationFinished' }, response => {
+        if (chrome.runtime.lastError) {
+            console.warn('发送页面导航消息时出错:', chrome.runtime.lastError);
+        } else {
+            console.log('页面导航消息发送成功，响应:', response);
+        }
+    });
+    
+    // 在页面导航后重新应用当前字幕模式，确保一致性
+    if (currentSubtitleMode) {
+        console.log(`[ContentScript] 页面导航后重新应用字幕模式: ${currentSubtitleMode}`);
+        applySubtitleMode(currentSubtitleMode);
+    } else {
+        // 如果当前没有设置字幕模式，初始化它
+        initializeSubtitleMode();
+    }
 }
 
 /**
@@ -1603,3 +1587,134 @@ function updateOverlayWidth(): void {
   
   console.log(`字幕容器宽度设为自动，无最大宽度限制`);
 }
+
+// --- 字幕模式处理逻辑 ---
+/** 存储当前应用的字幕模式 */
+let currentSubtitleMode: string | null = null;
+
+/**
+ * 根据指定的模式调整字幕的显示。
+ * @param {string} mode - 字幕模式 ('bilingual' 或 'targetOnly')。
+ */
+function applySubtitleMode(mode: string): void {
+    if (mode === currentSubtitleMode && document.body.classList.contains(`subtitle-mode-${mode}`)) {
+        console.log(`[ContentScript] 字幕模式已经是 ${mode}，无需重复应用。`);
+        return;
+    }
+    console.log(`[ContentScript] 应用字幕模式: ${mode}`);
+    
+    // 更新全局变量
+    currentSubtitleMode = mode;
+    
+    // 更新文档类以支持可能的CSS样式调整
+    if (mode === 'bilingual') {
+        document.body.classList.add('subtitle-mode-bilingual');
+        document.body.classList.remove('subtitle-mode-targetOnly');
+    } else if (mode === 'targetOnly') {
+        document.body.classList.remove('subtitle-mode-bilingual');
+        document.body.classList.add('subtitle-mode-targetOnly');
+    }
+    
+    // 如果当前有活动字幕，立即更新显示
+    if (translateActive && subtitleOverlayElement) {
+        handleSubtitleUpdate();
+    }
+}
+
+/**
+ * 初始化时加载并应用当前字幕模式。
+ */
+function initializeSubtitleMode(): void {
+    chrome.storage.sync.get('subtitleMode', (data) => {
+        if (chrome.runtime.lastError) {
+            console.error('[ContentScript] 初始化字幕模式时无法读取存储:', chrome.runtime.lastError);
+            applySubtitleMode('bilingual'); // 发生错误时默认使用双语
+            return;
+        }
+        const initialMode = data.subtitleMode || 'bilingual'; // 如果未设置，默认为双语
+        console.log(`[ContentScript] 从存储初始化字幕模式为: ${initialMode}`);
+        applySubtitleMode(initialMode);
+    });
+}
+
+// --- 结束字幕模式处理逻辑 ---
+
+
+// --- 消息监听器应该在顶层作用域 --- 
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    console.log('[ContentScript] 收到消息:', request);
+    if (request.action === 'subtitleModeUpdated') {
+        console.log(`[ContentScript] 收到字幕模式更新消息: ${request.mode}`);
+        applySubtitleMode(request.mode);
+        sendResponse({ status: '字幕模式已在内容脚本中接收并应用', newMode: request.mode });
+        return true; // 指示异步响应
+    }
+    // ... 处理其他消息，例如 requestAvailableTracks
+    if (request.action === 'requestAvailableTracks') {
+        console.log('[CS] 收到了 requestAvailableTracks 请求');
+        if (processedAvailableTracks) {
+            console.log('[CS] 直接使用缓存的轨道信息响应', processedAvailableTracks);
+            sendResponse({ availableTracks: processedAvailableTracks });
+        } else {
+            fetchAndProcessTracksInfo().then(tracks => {
+                console.log('[CS] 异步获取轨道信息后响应', tracks);
+                sendResponse({ availableTracks: tracks });
+            }).catch(error => {
+                console.error('[CS] 获取轨道信息失败:', error);
+                sendResponse({ availableTracks: null, error: error.message });
+            });
+            return true; // 异步响应
+        }
+    }
+    return false; // 对于同步消息，或者如果此监听器未处理该消息
+});
+
+chrome.storage.onChanged.addListener((changes, namespace) => {
+    if (namespace === 'sync' && changes.subtitleMode) {
+        const newMode = changes.subtitleMode.newValue;
+        if (newMode) {
+            console.log(`[ContentScript] 检测到存储中的 subtitleMode 变化: ${newMode}`);
+            applySubtitleMode(newMode);
+        }
+    }
+});
+
+
+// 在 initialize 函数的末尾或者一个合适的早期阶段调用 initializeSubtitleMode
+// 例如，在你的 initialize 函数找到后，可以这样修改：
+/*
+function initialize() {
+  // ... 你现有的 initialize 代码 ...
+  initializeSubtitleMode(); // 在这里初始化字幕模式
+  console.log('内容脚本初始化完成。');
+}
+*/
+
+// 确保 DOMContentLoaded 后或在 MutationObserver 发现播放器后调用 initialize
+// (根据你现有逻辑)
+// 如果 initialize 是通过 MutationObserver 调用的，那么 initializeSubtitleMode 也会在播放器准备好后执行
+
+console.log('[ContentScript] YouTube 双字幕内容脚本逻辑已定义。');
+// 确保 initializeSubtitleMode 在合适的时机被调用，例如在你的主初始化函数 initialize() 内部的末尾。
+// 如果 initialize() 是在检测到播放器后才调用的，那就很好。
+// 如果不是，你可能需要将 initializeSubtitleMode() 的调用移到 initialize() 函数内部的末尾，
+// 或者确保它在 subtitleOverlayElement 可能被创建和访问之前执行。
+// 伪代码：
+// someInitializationFunctionThatEnsuresPlayerIsReady().then(() => {
+//   initialize(); // 你现有的初始化
+//   initializeSubtitleMode(); // 在播放器和你的UI元素初始化之后获取初始模式
+// });
+
+// 找到你的 initialize 函数，在其末尾调用 initializeSubtitleMode();
+// 我将假设你的 initialize 函数在文件后面某处定义并被调用
+// ... many lines of existing code ...
+
+// 找到类似下面的 initialize 调用点，或者 initialize 函数定义本身
+//  window.addEventListener('DOMContentLoaded', initialize);
+//  OR in a MutationObserver that calls initialize()
+
+// For now, I'll place the call here, but you should move it into your actual initialize() function
+// or right after your initialize() is called.
+// BEST PLACE: Inside your `initialize` function, towards the end.
+// initializeSubtitleMode(); // TEMPORARY PLACEMENT - MOVE THIS
+
