@@ -16,6 +16,29 @@ const targetLangSearch = document.getElementById('target-language-search') as HT
 const targetLangOptionsContainer = document.getElementById('target-language-options') as HTMLDivElement; // Container for language items
 // --- End Target Language Elements ---
 const subtitleTypeSwitch = document.getElementById('subtitle-type-switch') as HTMLInputElement;
+// --- 新增: 翻译API相关元素 ---
+const translationApiSelect = document.getElementById('translation-api') as HTMLSelectElement;
+const apiKeyPanel = document.getElementById('api-key-panel') as HTMLDivElement;
+const apiKeyInput = document.getElementById('api-key') as HTMLInputElement;
+const apiInfoLink = document.getElementById('api-info-link') as HTMLAnchorElement;
+const customApiPanel = document.getElementById('custom-api-panel') as HTMLDivElement;
+const customApiUrl = document.getElementById('custom-api-url') as HTMLInputElement;
+const customApiMethod = document.getElementById('custom-api-method') as HTMLSelectElement;
+const customApiHeaders = document.getElementById('custom-api-headers') as HTMLTextAreaElement;
+const customApiBody = document.getElementById('custom-api-body') as HTMLTextAreaElement;
+const customApiResponsePath = document.getElementById('custom-api-response-path') as HTMLInputElement;
+// 新增: 测试按钮相关元素
+const testApiKeyButton = document.getElementById('test-api-key') as HTMLButtonElement;
+const testResultSpan = document.getElementById('test-result') as HTMLSpanElement;
+// 新增: 服务类型选择相关元素
+const serviceTypePanel = document.getElementById('service-type-panel') as HTMLDivElement;
+const serviceTypeMembership = document.getElementById('service-type-membership') as HTMLInputElement;
+const serviceTypeApiKey = document.getElementById('service-type-api-key') as HTMLInputElement;
+// 新增: 会员登录相关元素
+const membershipPanel = document.getElementById('membership-panel') as HTMLDivElement;
+const socialLoginButtons = document.querySelectorAll('.social-login-btn') as NodeListOf<HTMLButtonElement>;
+const loginResultSpan = document.getElementById('login-result') as HTMLSpanElement;
+// --- End 新增: 翻译API元素 ---
 
 /** 存储当前侧边栏关联的标签页 ID */
 let currentTabId: number | null = null;
@@ -26,11 +49,149 @@ let currentSelectedTargetLang: string | null = null;
 /** 缓存浏览器 UI 语言 */
 let uiLangCode: string | null = null;
 
+// --- 新增: API相关信息 ---
+interface ApiInfo {
+    name: string;
+    infoUrl: string;
+    requiresKey: boolean;
+    customConfig: boolean;
+}
+
+/** API配置和信息映射 */
+const apiInfoMap: Record<string, ApiInfo> = {
+    'google-free': {
+        name: 'Google翻译',
+        infoUrl: 'https://cloud.google.com/translate/docs/getting-started',
+        requiresKey: false,
+        customConfig: false
+    },
+    'microsoft-free': {
+        name: '微软翻译',
+        infoUrl: 'https://www.microsoft.com/zh-cn/translator/',
+        requiresKey: false,
+        customConfig: false
+    }
+};
+// --- End 新增: API相关信息 ---
+
+// --- 新增: 会员登录相关函数和类型 ---
+
+/**
+ * 支持的第三方登录提供商
+ */
+type LoginProvider = 'google' | 'apple' | 'twitter' | 'facebook' | 'wechat';
+
+/**
+ * 第三方登录状态
+ */
+interface LoginState {
+    loggedIn: boolean;
+    provider?: LoginProvider;
+    userId?: string;
+}
+
+/**
+ * 处理第三方账号登录
+ * @param provider 登录提供商
+ */
+async function handleSocialLogin(provider: LoginProvider): Promise<void> {
+    if (!loginResultSpan) {
+        return;
+    }
+    
+    const apiType = translationApiSelect?.value || defaultSettings.translationApi;
+    
+    // 更新登录状态显示
+    loginResultSpan.textContent = '正在登录...';
+    loginResultSpan.className = 'result-text';
+    
+    try {
+        // 发送登录请求到后台脚本
+        const result = await new Promise<{success: boolean, message: string}>((resolve, reject) => {
+            chrome.runtime.sendMessage(
+                {
+                    action: 'testMembershipLogin',
+                    payload: { 
+                        apiType: apiType,
+                        provider: provider
+                    }
+                },
+                (response) => {
+                    if (chrome.runtime.lastError) {
+                        reject(new Error(chrome.runtime.lastError.message));
+                    } else {
+                        resolve(response);
+                    }
+                }
+            );
+        });
+        
+        if (result.success) {
+            loginResultSpan.textContent = result.message || `已通过${getProviderDisplayName(provider)}登录`;
+            loginResultSpan.className = 'result-text success';
+            
+            // 保存登录状态
+            const loginState: LoginState = {
+                loggedIn: true,
+                provider: provider,
+                userId: `user_${Math.floor(Math.random() * 10000)}` // 模拟用户ID
+            };
+            
+            chrome.storage.sync.set({ 
+                membershipCredentials: loginState
+            }, () => {
+                if (chrome.runtime.lastError) {
+                    console.error('保存登录状态时出错:', chrome.runtime.lastError);
+                } else {
+                    console.log('登录状态已保存:', loginState);
+                }
+            });
+        } else {
+            loginResultSpan.textContent = result.message || '登录失败，请重试';
+            loginResultSpan.className = 'result-text error';
+        }
+    } catch (error) {
+        console.error('第三方登录出错:', error);
+        loginResultSpan.textContent = error instanceof Error ? error.message : '登录过程中发生错误';
+        loginResultSpan.className = 'result-text error';
+    }
+}
+
+/**
+ * 获取登录提供商的显示名称
+ */
+function getProviderDisplayName(provider: LoginProvider): string {
+    const nameMap: Record<LoginProvider, string> = {
+        'google': '谷歌账号',
+        'apple': '苹果账号',
+        'twitter': '推特账号',
+        'facebook': '脸书账号',
+        'wechat': '微信账号'
+    };
+    
+    return nameMap[provider] || provider;
+}
+
 // --- 默认设置 ---
 const defaultSettings = {
     sourceLang: 'en', // 默认源语言：英语
     targetLang: 'en', // 默认目标语言：英语 (会尝试被 UI 语言覆盖)
-    subtitleMode: 'bilingual' // 默认模式：双语 ('bilingual' 或 'targetOnly')
+    subtitleMode: 'bilingual', // 默认模式：双语 ('bilingual' 或 'targetOnly')
+    translationApi: 'google-free', // 默认翻译API: Google翻译
+    apiKey: '', // 新增: API密钥默认为空
+    serviceType: 'api-key', // 新增: 默认服务类型为自有API密钥
+    membershipCredentials: { // 新增: 会员登录状态默认为未登录
+        loggedIn: false,
+        provider: undefined as LoginProvider | undefined,
+        userId: ''
+    },
+    customApiConfig: { // 新增: 自定义API配置默认值
+        url: '',
+        method: 'POST',
+        headers: '{"Content-Type": "application/json"}',
+        body: '{"text": "{text}", "source": "{source}", "target": "{target}"}',
+        responsePath: 'data.translations[0].text'
+    }
 };
 
 /**
@@ -246,91 +407,193 @@ function getFallbackTargetLang(sourceLangCode: string): string {
     return 'fr';
 }
 
-// --- 加载设置 --- 
-function loadSettings() {
-    console.log('===== loadSettings开始执行 =====');
-    // 获取 UI 语言，如果尚未获取
-    if (!uiLangCode) {
-        uiLangCode = chrome.i18n.getUILanguage();
-        console.log(`[Debug] 获取UI语言: ${uiLangCode}`); 
-    } else {
-        console.log(`[Debug] 使用已缓存UI语言: ${uiLangCode}`);
+/**
+ * 根据选择的API类型更新界面显示的面板
+ * @param apiType 当前选择的API类型
+ */
+function updateApiPanels(apiType: string) {
+    // 获取API信息
+    const apiInfo = apiInfoMap[apiType] || {
+        name: '未知API',
+        infoUrl: '',
+        requiresKey: false,
+        customConfig: false
+    };
+    
+    // 隐藏所有API相关面板
+    if (apiKeyPanel) apiKeyPanel.style.display = 'none';
+    if (serviceTypePanel) serviceTypePanel.style.display = 'none';
+    if (membershipPanel) membershipPanel.style.display = 'none';
+    if (customApiPanel) customApiPanel.style.display = 'none';
+    
+    // 设置API信息链接
+    if (apiInfoLink && apiInfo.infoUrl) {
+        apiInfoLink.href = apiInfo.infoUrl;
+        apiInfoLink.parentElement!.style.display = 'block';
+    } else if (apiInfoLink) {
+        apiInfoLink.parentElement!.style.display = 'none';
     }
+    
+    // 对于当前只保留的免费API选项，不需要显示API密钥或服务类型面板
+    // 只有模拟翻译、Google翻译、微软翻译
+    
+    // 更新测试按钮文本
+    if (testApiKeyButton) {
+        testApiKeyButton.textContent = `测试连接`;
+    }
+    
+    // 清除测试结果
+    if (testResultSpan) {
+        testResultSpan.textContent = '';
+        testResultSpan.className = 'test-result';
+    }
+}
 
+/**
+ * 根据当前选择的服务类型更新会员登录和API密钥面板的显示状态
+ */
+function updateAuthPanels() {
+    const apiType = translationApiSelect?.value || defaultSettings.translationApi;
+    const isPaidService = apiType.endsWith('-paid');
+    const currentServiceType = serviceTypeMembership?.checked ? 'membership' : 'api-key';
+    
+    // 处理会员登录面板
+    if (membershipPanel) {
+        if (isPaidService && currentServiceType === 'membership') {
+            membershipPanel.classList.add('visible');
+            membershipPanel.style.display = 'flex';
+        } else {
+            membershipPanel.classList.remove('visible');
+            setTimeout(() => {
+                if (!isPaidService || currentServiceType !== 'membership') {
+                    membershipPanel.style.display = 'none';
+                }
+            }, 300);
+        }
+    }
+    
+    // 处理API密钥面板
+    if (apiKeyPanel) {
+        const needsApiKey = (isPaidService && currentServiceType === 'api-key') || 
+                           apiType === 'custom' || 
+                           (apiInfoMap[apiType]?.requiresKey && !isPaidService);
+        
+        if (needsApiKey) {
+            apiKeyPanel.classList.add('visible');
+            apiKeyPanel.style.display = 'flex';
+        } else {
+            apiKeyPanel.classList.remove('visible');
+            setTimeout(() => {
+                const currentApiType = translationApiSelect?.value || defaultSettings.translationApi;
+                const currentIsPaidService = currentApiType.endsWith('-paid');
+                const currentServiceTypeValue = serviceTypeMembership?.checked ? 'membership' : 'api-key';
+                
+                const shouldHide = !(
+                    (currentIsPaidService && currentServiceTypeValue === 'api-key') || 
+                    currentApiType === 'custom' || 
+                    (apiInfoMap[currentApiType]?.requiresKey && !currentIsPaidService)
+                );
+                
+                if (shouldHide) {
+                    apiKeyPanel.style.display = 'none';
+                }
+            }, 300);
+        }
+    }
+}
+
+/**
+ * 从chrome.storage加载设置
+ */
+function loadSettings() {
     console.log('[Debug] 开始从storage加载设置...');
-    chrome.storage.sync.get(['sourceLang', 'targetLang', 'subtitleMode'], (result) => {
+    chrome.storage.sync.get(['sourceLang', 'targetLang', 'subtitleMode', 'translationApi', 'apiKey', 'serviceType', 'membershipCredentials', 'customApiConfig'], (result) => {
         console.log('[Debug] storage.get回调执行, 结果:', result);
         if (chrome.runtime.lastError) {
-            console.error('!!!!!!!!!! STORAGE ACCESS ERROR PATH TAKEN !!!!!!!!!', chrome.runtime.lastError);
-            console.error('[Error] 加载设置时出错:', chrome.runtime.lastError);
-            // 出错时使用默认值
-            currentSelectedTargetLang = defaultSettings.targetLang;
-            updateTargetLanguageTriggerDisplay(currentSelectedTargetLang);
-            populateTargetLanguages(); // 填充列表
-            updateUI({ subtitleMode: defaultSettings.subtitleMode }); // 更新其他UI
+            console.error('[Error] 从storage加载设置时出错:', chrome.runtime.lastError);
             return;
         }
+
+        // 合并获取的设置与默认值
+        let loadedSettings = {
+            sourceLang: result.sourceLang || defaultSettings.sourceLang,
+            targetLang: result.targetLang || defaultSettings.targetLang,
+            subtitleMode: result.subtitleMode || defaultSettings.subtitleMode
+        };
+
+        // 加载API相关设置
+        const loadedApiSettings = {
+            translationApi: defaultSettings.translationApi,
+            apiKey: defaultSettings.apiKey,
+            serviceType: defaultSettings.serviceType,
+            membershipCredentials: defaultSettings.membershipCredentials,
+            customApiConfig: defaultSettings.customApiConfig
+        };
+
+        if (result.translationApi) {
+            loadedApiSettings.translationApi = result.translationApi;
+            console.log(`[Debug] 从storage加载翻译API: ${result.translationApi}`);
+        }
+
+        if (result.apiKey) {
+            loadedApiSettings.apiKey = result.apiKey;
+            console.log(`[Debug] 从storage加载API密钥`);
+        }
+
+        if (result.serviceType) {
+            loadedApiSettings.serviceType = result.serviceType;
+            console.log(`[Debug] 从storage加载服务类型: ${result.serviceType}`);
+        }
+
+        if (result.membershipCredentials) {
+            loadedApiSettings.membershipCredentials = result.membershipCredentials;
+            console.log(`[Debug] 从storage加载会员登录凭据`);
+        }
+
+        if (result.customApiConfig) {
+            loadedApiSettings.customApiConfig = result.customApiConfig;
+            console.log(`[Debug] 从storage加载自定义API配置`);
+        }
+
+        // 显示设置到UI
+        currentSelectedTargetLang = loadedSettings.targetLang; // 记录当前选择的目标语言
+        displaySettings(loadedSettings);
         
-        const loadedSettings: Partial<typeof defaultSettings> = {};
-        // 处理 sourceLang (逻辑不变)
-        if (result.sourceLang && typeof result.sourceLang === 'string') {
-            loadedSettings.sourceLang = result.sourceLang;
-            console.log(`[Debug] 从storage加载源语言: ${result.sourceLang}`);
-        } else {
-            loadedSettings.sourceLang = defaultSettings.sourceLang;
-            console.log(`[Debug] 源语言未保存，使用默认值: ${defaultSettings.sourceLang}`);
-        }
-
-        // --- 处理 targetLang (改进：确保与源语言不同) ---
-        if (result.targetLang) {
-            // 用户已保存设置，使用它
-            loadedTargetLang = result.targetLang;
-            console.log(`[Debug] 从storage加载目标语言: ${loadedTargetLang}`);
-        } else {
-            // 没有保存的值，尝试匹配 UI 语言
-            console.log(`[Debug] 目标语言未保存. 尝试匹配UI语言: ${uiLangCode}`);
-            const matchedLang = findMatchingTargetLanguage(uiLangCode!);
-            
-            console.log(`[Debug] 源语言: ${loadedSettings.sourceLang}, UI语言匹配结果:`, matchedLang ? `${matchedLang.code}: ${matchedLang.name}` : "无匹配");
-            
-            if (matchedLang && matchedLang.code !== loadedSettings.sourceLang) {
-                // 找到匹配的UI语言，且与源语言不同，可以使用
-                loadedTargetLang = matchedLang.code;
-                console.log(`[Debug] UI语言匹配成功，且与源语言不同，使用: ${matchedLang.code}`);
-            } else {
-                // 如果匹配的语言与源语言相同或未找到匹配语言，则选择备选语言
-                loadedTargetLang = getFallbackTargetLang(loadedSettings.sourceLang);
-                console.log(`[Debug] UI语言匹配源语言或未找到匹配。使用备选语言: ${loadedTargetLang}`);
-            }
-            
-            // 将首次确定的默认值存起来，避免每次都重新计算
-            console.log(`[Debug] 保存初始目标语言到storage: ${loadedTargetLang}`);
-            chrome.storage.sync.set({ targetLang: loadedTargetLang }, () => {
-                if (chrome.runtime.lastError) {
-                    console.error('[Error] 保存初始默认目标语言时出错:', chrome.runtime.lastError);
-                } else {
-                    console.log('[Debug] 初始默认目标语言已保存成功:', loadedTargetLang);
-                }
-            });
-        }
-        // --- 结束 targetLang 处理 ---
-
-        console.log(`[Debug] 设置当前选中的目标语言: ${loadedTargetLang}`);
-        currentSelectedTargetLang = loadedTargetLang; // 设置当前选中状态
-        updateTargetLanguageTriggerDisplay(currentSelectedTargetLang); // 更新触发器显示
-
-        // 处理 subtitleMode
-        if (result.subtitleMode) {
-            loadedSettings.subtitleMode = result.subtitleMode;
-            console.log(`[Debug] 从storage加载字幕模式: ${result.subtitleMode}`);
-        } else {
-            console.log(`[Debug] 字幕模式未保存，将使用默认值: ${defaultSettings.subtitleMode}`);
-        }
-
-        console.log('[Debug] 调用updateUI更新界面元素:', loadedSettings);
-        updateUI(loadedSettings); // 更新源语言和开关
-        console.log('===== loadSettings执行完成 =====');
+        // 显示API设置到UI
+        displayApiSettings(loadedApiSettings);
     });
+}
+
+/**
+ * 更新API相关UI元素
+ */
+function updateApiUI(settings: {
+    translationApi: string;
+    apiKey: string;
+    serviceType: string;
+    membershipCredentials: typeof defaultSettings.membershipCredentials;
+    customApiConfig: typeof defaultSettings.customApiConfig;
+}) {
+    // 更新翻译API选择
+    if (translationApiSelect && settings.translationApi) {
+        translationApiSelect.value = settings.translationApi;
+        // 根据选择更新面板显示
+        updateApiPanels(settings.translationApi);
+    }
+
+    // 更新API密钥
+    if (apiKeyInput && settings.apiKey) {
+        apiKeyInput.value = settings.apiKey;
+    }
+
+    // 更新自定义API配置
+    if (settings.customApiConfig) {
+        if (customApiUrl) customApiUrl.value = settings.customApiConfig.url;
+        if (customApiMethod) customApiMethod.value = settings.customApiConfig.method;
+        if (customApiHeaders) customApiHeaders.value = settings.customApiConfig.headers;
+        if (customApiBody) customApiBody.value = settings.customApiConfig.body;
+        if (customApiResponsePath) customApiResponsePath.value = settings.customApiConfig.responsePath;
+    }
 }
 
 // --- 更新 UI (除了目标语言显示) --- 
@@ -358,15 +621,45 @@ function updateUI(settings: Partial<typeof defaultSettings>) {
     if (subtitleTypeSwitch && settings.subtitleMode !== undefined) {
         subtitleTypeSwitch.checked = settings.subtitleMode === 'bilingual';
     }
+
+    // 新增：更新API相关设置
+    if (settings.translationApi !== undefined) {
+        if (translationApiSelect) {
+            translationApiSelect.value = settings.translationApi;
+            updateApiPanels(settings.translationApi);
+        }
+    }
 }
 
-// --- 保存设置 --- 
+/**
+ * 保存设置到chrome.storage
+ */
 function saveSettings() {
+    // 获取自定义API配置
+    const customApiConfigValue = {
+        url: customApiUrl?.value || defaultSettings.customApiConfig.url,
+        method: customApiMethod?.value || defaultSettings.customApiConfig.method,
+        headers: customApiHeaders?.value || defaultSettings.customApiConfig.headers,
+        body: customApiBody?.value || defaultSettings.customApiConfig.body,
+        responsePath: customApiResponsePath?.value || defaultSettings.customApiConfig.responsePath
+    };
+
+    // 获取当前登录状态
+    const currentLoginState: LoginState = chrome.storage.sync.get('membershipCredentials')
+        .then(result => result.membershipCredentials) 
+        .catch(() => defaultSettings.membershipCredentials) as unknown as LoginState;
+
     const selectedTargetValue = currentSelectedTargetLang || defaultSettings.targetLang;
     const settingsToSave = {
         sourceLang: sourceLangSelect?.value || defaultSettings.sourceLang,
         targetLang: selectedTargetValue,
-        subtitleMode: subtitleTypeSwitch?.checked ? 'bilingual' : 'targetOnly'
+        subtitleMode: subtitleTypeSwitch?.checked ? 'bilingual' : 'targetOnly',
+        // 新增：保存API相关设置
+        translationApi: translationApiSelect?.value || defaultSettings.translationApi,
+        apiKey: apiKeyInput?.value || '',
+        serviceType: serviceTypeMembership?.checked ? 'membership' : 'api-key',
+        membershipCredentials: currentLoginState,
+        customApiConfig: customApiConfigValue
     };
     chrome.storage.sync.set(settingsToSave, () => {
         if (chrome.runtime.lastError) {
@@ -574,6 +867,81 @@ async function requestAndFillSourceLanguages(tabId: number) {
     }
 }
 
+/**
+ * 测试API连接是否有效
+ * @param apiType API类型
+ * @param apiKey API密钥（对于免费API不需要）
+ * @param customConfig 自定义API配置（不需要）
+ * @returns 测试结果
+ */
+async function testApiKey(
+    apiType: string, 
+    apiKey: string = '', 
+    customConfig?: typeof defaultSettings.customApiConfig
+): Promise<{success: boolean, message: string}> {
+    try {
+        // 准备测试数据
+        const testText = "Hello, world!"; // 简单测试文本
+        
+        // 获取源语言和目标语言
+        const language = sourceLangSelect?.value || 'en';
+        const targetLang = currentSelectedTargetLang || loadedTargetLang || 'zh-Hans';
+        
+        console.log(`[Test API] Testing ${apiType} with source=${language}, target=${targetLang}`);
+        
+        // 显示测试中状态
+        if (testResultSpan) {
+            testResultSpan.textContent = '正在测试连接...';
+            testResultSpan.className = 'test-result';
+        }
+        
+        // 发送测试请求到后台脚本
+        return await new Promise<{success: boolean, message: string}>((resolve, reject) => {
+            chrome.runtime.sendMessage(
+                {
+                    action: 'testApiKey',
+                    payload: {
+                        apiType,
+                        apiKey,
+                        testText,
+                        sourceLang: language,
+                        targetLang: targetLang,
+                        customConfig
+                    }
+                },
+                (response) => {
+                    if (chrome.runtime.lastError) {
+                        reject(new Error(chrome.runtime.lastError.message));
+                    } else {
+                        resolve(response);
+                    }
+                }
+            );
+        });
+    } catch (error) {
+        console.error('测试API时出错:', error);
+        return {
+            success: false,
+            message: error instanceof Error ? error.message : '未知错误'
+        };
+    }
+}
+
+/**
+ * 显示测试结果
+ * @param result 测试结果对象
+ */
+function displayTestResult(result: {success: boolean, message: string}) {
+    if (!testResultSpan) return;
+    
+    testResultSpan.textContent = result.message;
+    if (result.success) {
+        testResultSpan.className = 'test-result success';
+    } else {
+        testResultSpan.className = 'test-result error';
+    }
+}
+
 // --- 添加事件监听器 --- 
 function addEventListeners() {
     // 源语言选择
@@ -603,6 +971,94 @@ function addEventListeners() {
     });
     // 字幕类型切换
     subtitleTypeSwitch?.addEventListener('change', saveSettings);
+
+    // 新增: 翻译API选择更改事件
+    if (translationApiSelect) {
+        translationApiSelect.addEventListener('change', () => {
+            updateApiPanels(translationApiSelect.value);
+            saveSettings();
+        });
+    }
+
+    // 新增: API密钥输入变化事件 (使用防抖)
+    if (apiKeyInput) {
+        let apiKeyTimeout: number | null = null;
+        apiKeyInput.addEventListener('input', () => {
+            if (apiKeyTimeout) clearTimeout(apiKeyTimeout);
+            apiKeyTimeout = window.setTimeout(() => {
+                saveSettings();
+                apiKeyTimeout = null;
+            }, 500); // 500ms防抖
+        });
+    }
+    
+    // 初始化测试API密钥按钮事件
+    if (testApiKeyButton) {
+        testApiKeyButton.addEventListener('click', async () => {
+            // 对于免费API，不需要API密钥，直接测试连接
+            const apiType = translationApiSelect?.value || 'google-free';
+            
+            try {
+                testApiKeyButton.textContent = '测试中...';
+                testApiKeyButton.disabled = true;
+                
+                // 测试API连接
+                const result = await testApiKey(apiType);
+                
+                // 显示测试结果
+                displayTestResult(result);
+            } catch (error) {
+                console.error('测试API连接失败:', error);
+                displayTestResult({
+                    success: false,
+                    message: error instanceof Error ? error.message : '未知错误'
+                });
+            } finally {
+                testApiKeyButton.textContent = '测试连接';
+                testApiKeyButton.disabled = false;
+            }
+        });
+    }
+
+    // 新增: 服务类型单选按钮变化事件
+    if (serviceTypeMembership && serviceTypeApiKey) {
+        serviceTypeMembership.addEventListener('change', () => {
+            updateAuthPanels();
+            saveSettings();
+        });
+        
+        serviceTypeApiKey.addEventListener('change', () => {
+            updateAuthPanels();
+            saveSettings();
+        });
+    }
+    
+    // 新增: 社交登录按钮点击事件
+    if (socialLoginButtons) {
+        socialLoginButtons.forEach(button => {
+            const provider = button.dataset.provider as LoginProvider;
+            if (provider) {
+                button.addEventListener('click', async () => {
+                    await handleSocialLogin(provider);
+                });
+            }
+        });
+    }
+
+    // 新增: 自定义API配置变化事件 (使用防抖)
+    const customApiInputs = [customApiUrl, customApiMethod, customApiHeaders, customApiBody, customApiResponsePath];
+    customApiInputs.forEach(input => {
+        if (!input) return;
+        
+        let timeout: number | null = null;
+        input.addEventListener('input', () => {
+            if (timeout) clearTimeout(timeout);
+            timeout = window.setTimeout(() => {
+                saveSettings();
+                timeout = null;
+            }, 500); // 500ms防抖
+        });
+    });
 }
 
 // --- 初始化 ---
@@ -687,3 +1143,88 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // TODO:
 // 5. (可选) 向 Content Script 或 Background Script 发送消息通知设置更改
 // 6. 动态填充语言列表 
+
+/**
+ * 将API设置显示到表单中
+ * @param settings API设置对象
+ */
+function displayApiSettings(settings: {
+    translationApi: string;
+    apiKey: string;
+    serviceType: string;
+    membershipCredentials: typeof defaultSettings.membershipCredentials;
+    customApiConfig: typeof defaultSettings.customApiConfig;
+}) {
+    // 设置翻译API选择器
+    if (translationApiSelect) {
+        translationApiSelect.value = settings.translationApi;
+        // 根据选择更新面板显示
+        updateApiPanels(settings.translationApi);
+    }
+    
+    // 设置API密钥
+    if (apiKeyInput) {
+        apiKeyInput.value = settings.apiKey;
+    }
+    
+    // 设置服务类型单选按钮
+    if (serviceTypeMembership && serviceTypeApiKey) {
+        if (settings.serviceType === 'membership') {
+            serviceTypeMembership.checked = true;
+            serviceTypeApiKey.checked = false;
+        } else {
+            serviceTypeMembership.checked = false;
+            serviceTypeApiKey.checked = true;
+        }
+        // 更新相关面板
+        updateAuthPanels();
+    }
+    
+    // 设置会员登录状态
+    if (loginResultSpan && settings.membershipCredentials) {
+        // 如果是第三方登录
+        if (settings.membershipCredentials.loggedIn && settings.membershipCredentials.provider) {
+            loginResultSpan.textContent = `已通过${getProviderDisplayName(settings.membershipCredentials.provider as LoginProvider)}登录`;
+            loginResultSpan.className = 'result-text success';
+        }
+        // 兼容旧数据结构
+        else if (settings.membershipCredentials.loggedIn) {
+            loginResultSpan.textContent = '已登录';
+            loginResultSpan.className = 'result-text success';
+        }
+    }
+    
+    // 设置自定义API配置
+    if (settings.customApiConfig) {
+        if (customApiUrl) customApiUrl.value = settings.customApiConfig.url;
+        if (customApiMethod) customApiMethod.value = settings.customApiConfig.method;
+        if (customApiHeaders) customApiHeaders.value = settings.customApiConfig.headers;
+        if (customApiBody) customApiBody.value = settings.customApiConfig.body;
+        if (customApiResponsePath) customApiResponsePath.value = settings.customApiConfig.responsePath;
+    }
+}
+
+/**
+ * 将基本设置显示到表单中
+ * @param settings 基本设置对象
+ */
+function displaySettings(settings: {
+    sourceLang: string;
+    targetLang: string;
+    subtitleMode: string;
+}) {
+    // 设置源语言选择器
+    if (sourceLangSelect) {
+        sourceLangSelect.value = settings.sourceLang;
+    }
+    
+    // 设置目标语言显示
+    currentSelectedTargetLang = settings.targetLang;
+    updateTargetLanguageTriggerDisplay(currentSelectedTargetLang);
+    populateTargetLanguages(''); // 更新目标语言列表
+    
+    // 设置字幕模式
+    if (subtitleTypeSwitch) {
+        subtitleTypeSwitch.checked = settings.subtitleMode === 'bilingual';
+    }
+} 

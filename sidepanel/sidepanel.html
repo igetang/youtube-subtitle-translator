@@ -49,6 +49,101 @@
         </div>
     </div>
 
+    <!-- 新增：翻译API选择 -->
+    <div class="setting-item">
+        <label for="translation-api">翻译API:</label>
+        <select id="translation-api" name="translation-api">
+            <option value="google-free">Google翻译 (免费)</option>
+            <option value="microsoft-free">微软翻译 (免费)</option>
+        </select>
+    </div>
+
+    <!-- 修改：API测试按钮，新布局 -->
+    <div class="setting-item test-api-container">
+        <div class="test-button-container">
+            <button id="test-api-key" class="test-button">测试连接</button>
+            <p class="test-tip">点击测试将同时测试两条翻译路径</p>
+        </div>
+        <div class="test-result-container">
+            <span id="test-result" class="test-result"></span>
+        </div>
+    </div>
+
+    <!-- 服务类型选择面板，默认隐藏 -->
+    <div id="service-type-panel" class="setting-item" style="display: none;">
+        <label for="service-type">服务类型:</label>
+        <div class="radio-group">
+            <label class="radio-option">
+                <input type="radio" name="service-type" value="membership" id="service-type-membership">
+                <span>会员账号</span>
+            </label>
+            <label class="radio-option">
+                <input type="radio" name="service-type" value="api-key" id="service-type-api-key">
+                <span>自有API密钥</span>
+            </label>
+        </div>
+    </div>
+
+    <!-- 会员登录面板，默认隐藏 -->
+    <div id="membership-panel" class="setting-item" style="display: none;">
+        <p class="login-title">选择登录方式:</p>
+        <div class="social-login-container">
+            <button class="social-login-btn google-btn" data-provider="google">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path fill="#EA4335" d="M5.266 9.765A7.077 7.077 0 0 1 12 4.909c1.69 0 3.218.6 4.418 1.582L19.91 3C17.782 1.145 15.065 0 12 0 7.27 0 3.198 2.698 1.24 6.65l4.026 3.115Z"/><path fill="#34A853" d="M16.04 18.013c-1.09.703-2.474 1.078-4.04 1.078a7.077 7.077 0 0 1-6.723-4.823l-4.04 3.067A11.965 11.965 0 0 0 12 24c2.933 0 5.735-1.043 7.834-3l-3.793-2.987Z"/><path fill="#4A90E2" d="M19.834 21c2.195-2.048 3.62-5.096 3.62-9 0-.71-.109-1.473-.272-2.182H12v4.637h6.436c-.317 1.559-1.17 2.766-2.395 3.558L19.834 21Z"/><path fill="#FBBC05" d="M5.277 14.268A7.12 7.12 0 0 1 4.909 12c0-.782.125-1.533.357-2.235L1.24 6.65A11.934 11.934 0 0 0 0 12c0 1.92.445 3.73 1.237 5.335l4.04-3.067Z"/></svg>
+                <span>谷歌账号</span>
+            </button>
+            <button class="social-login-btn apple-btn" data-provider="apple">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.2 2.3-.88 3.46-.75 1.47.17 2.58.8 3.3 1.98-3.03 1.83-2.24 5.75.73 6.89-.8 1.71-1.83 3.36-2.57 4.05zm-3.14-15.5c-.12 1.86 1.38 3.21 3.09 3.05.12-1.77-1.39-3.16-3.09-3.05-3.05z" fill="#000"/></svg>
+                <span>苹果账号</span>
+            </button>
+            <button class="social-login-btn twitter-btn" data-provider="twitter">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" fill="#1DA1F2"/></svg>
+                <span>推特账号</span>
+            </button>
+            <button class="social-login-btn facebook-btn" data-provider="facebook">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" fill="#1877F2"/></svg>
+                <span>脸书账号</span>
+            </button>
+            <button class="social-login-btn wechat-btn" data-provider="wechat">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.328.328 0 0 0 .186-.059l2.114-1.23a.79.79 0 0 1 .376-.097c.092 0 .165.019.236.039a9.903 9.903 0 0 0 2.712.376c.33 0 .656-.019.978-.057-.978-2.953.99-5.661 4.21-6.604 1.29-.38 2.712-.376 4.002.058-.33-4.054-4.221-7.36-8.99-7.36Zm10.572 7.36c0-.749-.61-1.36-1.36-1.36-.748 0-1.36.611-1.36 1.36 0 .749.612 1.36 1.36 1.36.75 0 1.36-.611 1.36-1.36Zm-5.8 0c0-.749-.61-1.36-1.36-1.36-.748 0-1.359.611-1.359 1.36 0 .749.61 1.36 1.36 1.36.749 0 1.36-.611 1.36-1.36ZM24 14.471c0-3.423-3.334-6.206-7.44-6.206-4.109 0-7.442 2.783-7.442 6.206 0 3.424 3.333 6.206 7.442 6.206.843 0 1.666-.14 2.423-.376a.36.36 0 0 1 .165-.037.8.8 0 0 1 .376.097l1.853 1.08a.33.33 0 0 0 .186.056c.16 0 .29-.13.29-.294 0-.07-.03-.141-.048-.213l-.342-1.295a.59.59 0 0 1 .213-.664A6.19 6.19 0 0 0 24 14.471Zm-9.982.68c-.61 0-1.104-.494-1.104-1.103 0-.61.494-1.104 1.104-1.104.609 0 1.103.494 1.103 1.104 0 .609-.494 1.103-1.103 1.103Zm4.89 0c-.61 0-1.104-.494-1.104-1.103 0-.61.494-1.104 1.104-1.104.609 0 1.103.494 1.103 1.104 0 .609-.494 1.103-1.103 1.103Z" fill="#07C160"/></svg>
+                <span>微信账号</span>
+            </button>
+        </div>
+        <div class="login-status">
+            <span id="login-result" class="result-text"></span>
+        </div>
+    </div>
+
+    <!-- API密钥配置面板，默认隐藏 -->
+    <div id="api-key-panel" class="setting-item" style="display: none;">
+        <label for="api-key">API密钥:</label>
+        <input type="text" id="api-key" name="api-key" placeholder="输入API密钥...">
+        <div class="api-info">
+            <a href="#" id="api-info-link" target="_blank">如何获取API密钥？</a>
+        </div>
+    </div>
+
+    <!-- 自定义API配置面板，默认隐藏 -->
+    <div id="custom-api-panel" class="setting-item" style="display: none;">
+        <label for="custom-api-url">API地址:</label>
+        <input type="text" id="custom-api-url" name="custom-api-url" placeholder="https://your-api-endpoint.com">
+        
+        <label for="custom-api-method">请求方法:</label>
+        <select id="custom-api-method" name="custom-api-method">
+            <option value="POST">POST</option>
+            <option value="GET">GET</option>
+        </select>
+        
+        <label for="custom-api-headers">请求头 (JSON):</label>
+        <textarea id="custom-api-headers" name="custom-api-headers" placeholder='{"Content-Type": "application/json"}'></textarea>
+        
+        <label for="custom-api-body">请求体格式 (JSON模板):</label>
+        <textarea id="custom-api-body" name="custom-api-body" placeholder='{"text": "{text}", "source": "{source}", "target": "{target}"}'></textarea>
+        
+        <label for="custom-api-response-path">响应结果路径 (例如: "data.translations[0].text"):</label>
+        <input type="text" id="custom-api-response-path" name="custom-api-response-path" placeholder="data.translations[0].text">
+    </div>
+
     <!-- 可以添加保存按钮等 -->
     <!-- <button id="save-settings">保存设置</button> -->
 

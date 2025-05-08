@@ -2,7 +2,7 @@
 
 ## 项目目标
 
-本扩展旨在为 YouTube 视频提供实时字幕翻译功能，允许用户选择可用的字幕轨道，并将其翻译（目前为直接显示所选字幕）显示在视频播放器上。
+本扩展旨在为 YouTube 视频提供实时字幕翻译功能，允许用户选择可用的字幕轨道，并将其翻译显示在视频播放器上，支持多种免费翻译API，为用户提供流畅的双语字幕体验。
 
 ## 功能模块
 
@@ -13,14 +13,18 @@
     *   在视频上叠加显示处理后的字幕 (`createSubtitleOverlay`, `updateSubtitleLoop`)。
     *   处理 YouTube 的页面导航 (`handleYoutubeNavigation`)，监听 `yt-navigate-finish` 事件，确保状态同步和 UI 清理（包括主动移除旧按钮）。
     *   提供工具提示 (Tooltip) 功能。
+    *   支持多种免费翻译API的调用和错误处理。
+    *   提供双语和仅目标语言两种字幕显示模式。
 *   **Main World 脚本 (`content/main-world.ts`)**: 注入到页面主世界（通过 `web_accessible_resources` 配置），负责监听 Content Script 的请求，调用页面级 API (`document.getElementById('movie_player').getPlayerResponse()`) 获取字幕轨道信息，并通过 `window.postMessage` 将结果安全地传回 Content Script。
 *   **背景脚本/Service Worker (`background/background.ts`)**: 
     *   监听 Content Script 的 `openSidePanel` 消息，调用 `chrome.sidePanel.open()` 打开侧边栏（需要用户手势上下文）。
     *   监听 Content Script 的 `youtubeNavigationFinished` 消息，并广播 `youtubeNavigationOccurred` 消息给所有上下文（尤其是 Side Panel），通知页面导航发生。
     *   使用 `chrome.tabs.onUpdated` 监听 YouTube 标签页加载完成事件，动态启用/禁用 Side Panel 并设置其路径。
-*   **侧边栏 (`sidepanel/`)**: 使用 React 构建设置界面。
+    *   处理翻译请求，调用不同的免费翻译API进行文本翻译。
+*   **侧边栏 (`sidepanel/`)**: 使用HTML/CSS/TS构建设置界面。
     *   初始化时及收到 `youtubeNavigationOccurred` 广播时，向 Content Script 发送 `requestAvailableTracks` 消息请求当前视频的可用轨道列表。
     *   填充并管理"源语言"等设置选项。
+    *   提供翻译API选择和字幕模式切换功能。
     *   监听用户设置更改，并通过 `chrome.storage.sync` 保存。
 *   **图标 (`icons/`)**: 包含扩展所需的各种图标。
 *   **Popup/Options**: (已创建基础文件，功能待实现)
@@ -29,10 +33,10 @@
 
 *   TypeScript
 *   Manifest V3 (MV3)
-*   React (用于 Sidepanel)
+*   HTML/CSS (用于 Sidepanel)
 *   CSS / 内联样式
 *   Web API (Fetch, DOMParser, postMessage, MutationObserver, requestAnimationFrame)
-*   Chrome Extension APIs (runtime, storage, action, sidePanel, i18n, tabs, webNavigation - 虽然未使用，但曾考虑)
+*   Chrome Extension APIs (runtime, storage, action, sidePanel, i18n, tabs)
 *   Vite (开发和构建工具，配置多入口构建)
 *   `vite-plugin-static-copy` (用于复制 manifest 和 icons)
 
@@ -65,7 +69,7 @@
 *   实现 Side Panel 请求 Content Script 获取当前视频的可用字幕轨道，并填充 UI。
 *   实现**导航时 Side Panel 自动更新机制**: Content Script (`yt-navigate-finish`) -> Background Script (广播 `youtubeNavigationOccurred`) -> Side Panel (接收广播并重新请求轨道)。
 
-### 导航与稳定性修复 (近期完成)
+### 导航与稳定性修复 (2023-08)
 
 #### Bug 1：导航后字幕不自动启动
 
@@ -88,14 +92,14 @@
     3.  **(最终方案)** 认识到必须主动清理旧按钮。修改 `handleYoutubeNavigation` 函数，在重置 `controlsInjected` 标志**之前**，增加通过 `getElementById` 查找并调用 `.remove()` 来移除旧按钮的代码。同时，保持 `injectControls` 的双重检查作为最终保障。
 *   **最终方案**: 在导航处理函数中主动移除旧按钮，并结合注入函数入口处的双重检查（状态标志+DOM检查），彻底解决了重复注入问题，同时保证了字幕的自动启动。
 
-### 其他 Bug 修复 (近期完成)
+### 其他 Bug 修复 (2023-09)
 
 *   **Side Panel 打开权限错误**: 修复了因 `await` 阻塞导致丢失用户手势上下文，无法调用 `chrome.sidePanel.open()` 的问题。调整为先发送消息再异步获取数据。
 *   **原生按钮消失问题**: 修复了因注入自定义按钮时使用了额外 `div` 容器，干扰 YouTube 布局导致原生按钮消失的问题。改为直接注入 `<button>` 元素。
 *   **按钮垂直对齐问题**: 修复了自定义按钮在控制栏中垂直位置偏低的问题。通过调整按钮 `<button>` 的 CSS (`display: inline-flex`, `align-items: center`) 并移除冲突样式解决。
 *   **字幕容器样式匹配问题**: 解决了自定义字幕叠加层在宽度和换行行为上与YouTube原生字幕不一致的问题。采用双层结构（包装容器+内容容器）并精确匹配原生字幕样式（`max-width: 93%`、`white-space: pre-wrap`等），使字幕容器能够根据字幕内容长度自动伸缩。
 
-### 最近完成的字幕模式功能优化
+### 字幕模式功能优化 (2023-10)
 
 在实现"双语显示"与"仅目标语言显示"功能过程中，我们完成了以下优化：
 
@@ -120,103 +124,122 @@
    - 在适当的时机初始化字幕模式
    - 确保模式能在播放器UI加载后正确应用
 
-这些优化确保了字幕模式设置能在YouTube视频导航和播放过程中保持一致，提升了用户体验。
+### 多种免费翻译API支持 (2023-11)
 
-### 字幕显示顺序优化详情
+扩展集成了多种免费翻译API，为用户提供更多选择：
 
-为提升用户观看体验，我们对双语字幕的显示顺序进行了重要优化：
+1. **已支持的免费翻译API**：
+   - Google翻译API：稳定可靠，支持众多语言，无需API密钥
+     - 实现双路径备选策略：路径A使用`/translate_a/single`端点，路径B使用`/translate_a/t`端点
+     - 简化的URL参数：优化必要参数（client=gtx, sl, tl, dt=t, q），提高API兼容性
+   - 有道翻译API：对中文支持良好，无需API密钥
+   - 微软/Bing翻译API：翻译质量高，无需API密钥
+   - 模拟翻译：用于测试和开发，无需网络连接
 
-#### 优化前后对比
-- **优化前**：源语言（原视频语言）在上，目标语言（翻译后语言）在下
-- **优化后**：目标语言（用户理解的语言）在上，源语言（原视频语言）在下
+2. **翻译API实现细节**：
+   - 所有API都使用批处理方式翻译，避免请求过大
+   - 添加合理的请求延迟，防止API限流
+   - 实现了详细的错误处理和日志记录
+   - 自动故障转移机制：当一个API路径失败时自动尝试备选路径
 
-#### 优化理由
-1. **认知流畅性**：将用户熟悉的语言放在上方，减少认知负担，让用户可以快速理解内容
-2. **符合阅读习惯**：自上而下的阅读顺序意味着用户首先接触到的是最重要的信息
-3. **专注度分配**：用户可以选择只阅读上方文本获取理解，或向下查看原文进行对比学习
-4. **提高效率**：在快速观看时，减少眼球移动和认知切换的次数
+3. **翻译API测试功能**：
+   - 集成API测试功能，用户可以验证API连接是否正常
+   - 专门处理CORS和网络错误，提供友好的错误提示
 
-#### 技术实现
-优化通过修改`handleSubtitleUpdate`函数中的文本组合逻辑实现：
-```typescript
-// 优化前
-textToShow = `${sourceText}\n${targetText}`;
+4. **用户界面集成**：
+   - 在侧边栏中添加API选择下拉菜单
+   - 设置Google翻译为默认选项
+   - 针对每种API提供相关的信息链接
 
-// 优化后
-textToShow = `${targetText}\n${sourceText}`;
-```
+### 翻译API切换优化 (2023-11)
 
-#### 用户体验提升
-- **即时理解**：首先阅读能理解的语言，不必先经过陌生语言的干扰
-- **语言学习**：在理解内容后，可以参考下方原文进行语言学习
-- **减少认知负担**：避免在不熟悉的语言和熟悉的语言之间来回切换注意力
+实现了翻译API自动重新翻译功能：
 
-这项改进虽然看似简单，但对整体用户体验有显著提升，特别是在快速浏览或需要同时理解内容与学习语言的场景中。
+1. **功能说明**：
+   - 用户切换翻译API后，字幕会自动使用新API重新翻译
+   - 无需用户手动关闭再开启翻译功能
+   - 保持视频观看体验的连贯性
 
-### 最近更新：字幕模式切换功能
+2. **实现细节**：
+   - 在内容脚本中监听`translationApi`设置变化
+   - 当API变化且翻译功能已激活时，自动重新启动翻译流程
+   - 重用现有处理函数，保证代码结构清晰
 
-已实现侧边栏中"双语显示"与"仅目标语言显示"模式切换与实际字幕呈现的同步：
+### 错误处理优化 (2023-12)
 
-1. **字幕模式实现原理**：
-   - 使用全局变量 `currentSubtitleMode` 在内容脚本中跟踪当前模式
-   - 通过 `chrome.storage.sync` 在侧边栏与内容脚本间同步模式设置
-   - 实现了两种模式：`bilingual`（双语显示）和 `targetOnly`（仅目标语言）
+改进了翻译服务失败时的用户体验：
 
-2. **侧边栏交互**：
-   - 用户可通过侧边栏中的切换开关选择字幕显示模式
-   - `saveSettings` 函数将设置保存到存储并向内容脚本发送消息
+1. **翻译失败显示源字幕**：
+   - 当翻译API请求失败时，显示错误提示同时保留源语言字幕
+   - 确保即使翻译失败，用户仍能继续观看视频内容
 
-3. **内容脚本处理**：
-   - `applySubtitleMode` 函数根据指定模式更新文档类和全局状态
-   - `handleSubtitleUpdate` 函数根据当前模式决定字幕文本的组合方式
-   - 通过两种方式响应模式变化：
-     - 监听来自侧边栏的 `subtitleModeUpdated` 消息
-     - 监听 `chrome.storage.onChanged` 事件
+2. **错误消息样式优化**：
+   - 错误消息显示为红色，与正常字幕区分
+   - 源语言字幕保持正常样式，提高可读性
+   - 通过DOM元素分别控制不同文本的样式
 
-4. **页面导航处理**：
-   - 在页面导航后通过 `handleYoutubeNavigation` 函数重新应用字幕模式
-   - 确保在导航到新视频时保持用户选择的字幕模式
+3. **错误类型处理**：
+   - 针对网络错误、API限制、格式错误等不同情况提供具体提示
+   - 实现错误重试机制，提高翻译成功率
 
-5. **初始化流程**：
-   - `initializeSubtitleMode` 函数在内容脚本加载时从存储读取初始模式
-   - 在 `initialize` 函数的末尾调用，确保在播放器UI加载后应用字幕模式
+### 微软翻译API优化 (2023-12)
 
-### 代码架构和数据流
+我们对微软翻译API进行了双路径优化，提高了翻译服务的可靠性：
 
-1.  **Content Script 初始化 (`initialize`):**
-    *   从 `chrome.storage.sync` 读取 `translateActive` 状态。
-    *   注入 Main World Script (`content/main-world.ts`) 到页面。
-    *   设置 `MutationObserver` 监听 DOM 变化，等待播放器控件加载。
-    *   设置 `message` 监听器以接收来自 Main World Script (`CAPTION_TRACKS_RESPONSE`, `MAIN_WORLD_READY`) 和 Background Script (`youtubeNavigationOccurred`) 的响应/广播。
-    *   设置 `yt-navigate-finish` 监听器处理页面导航。
-    *   调用 `initializeSubtitleMode` 初始化字幕模式。
+1. **双路径策略实现**：
+   - 路径A：使用`api.cognitive.microsofttranslator.com`端点，通过`Authorization: Bearer`方式传递令牌
+   - 路径B：使用`api-edge.cognitive.microsofttranslator.com`端点，同样通过`Authorization: Bearer`方式传递令牌
+   - 当一条路径失败时，系统自动切换到另一条路径，确保服务连续性
 
-2.  **字幕模式初始化和应用:**
-    *   `initializeSubtitleMode` 从 `chrome.storage.sync` 读取 `subtitleMode` 设置。
-    *   如果存在，调用 `applySubtitleMode` 应用该模式；如果不存在，默认使用 `bilingual` 模式。
-    *   `applySubtitleMode` 设置 `currentSubtitleMode` 全局变量，并更新文档类以便CSS样式调整。
-    *   如果翻译功能已激活，立即调用 `handleSubtitleUpdate` 更新当前字幕显示。
+2. **认证机制测试与优化**：
+   - 通过严格测试确认两条路径的正确认证方式
+   - 增强令牌获取过程的可靠性
+   - 优化请求头以模拟Edge浏览器特征
 
-3.  **字幕显示处理 (`handleSubtitleUpdate`):**
-    *   根据 `currentSubtitleMode` 全局变量决定如何组合源语言和目标语言字幕。
-    *   `bilingual` 模式：如果源字幕和目标字幕不同，显示 `${sourceText}\n${targetText}`；否则显示可用的那一个。
-    *   `targetOnly` 模式：优先显示目标语言字幕，如果不可用则回退到源语言字幕。
+3. **批处理策略差异化**：
+   - 路径A采用较大批量（10条/批）和较短延迟（500ms）
+   - 路径B采用较小批量（3条/批）和较长延迟（1500ms）
+   - 这种差异化设计增加了整体成功率
 
-4.  **侧边栏设置保存 (`saveSettings` in sidepanel.ts):**
-    *   根据切换开关状态设置 `subtitleMode`：开启时为 `bilingual`，关闭时为 `targetOnly`。
-    *   将设置保存到 `chrome.storage.sync`。
-    *   向当前标签页的内容脚本发送 `subtitleModeUpdated` 消息，包含新模式。
+4. **错误处理增强**：
+   - 增加详细的错误捕获和日志记录
+   - 提供更具体的失败原因信息
+   - 完善自动故障转移机制
 
-5.  **内容脚本响应模式变化:**
-    *   监听 `chrome.runtime.onMessage`，处理 `subtitleModeUpdated` 消息。
-    *   监听 `chrome.storage.onChanged`，监测 `subtitleMode` 变化。
-    *   两种方式都会调用 `applySubtitleMode` 应用新模式。
+这些优化显著提高了微软翻译API的可靠性和稳定性，为用户提供更好的翻译体验。
 
-6.  **导航时保持一致性:**
-    *   `handleYoutubeNavigation` 在页面导航后重新应用当前字幕模式或初始化模式。
-    *   确保用户在切换视频时保持选择的字幕显示偏好。
+## 代码架构和数据流
 
-### 后续计划
+1. **Content Script 初始化 (`initialize`):**
+   - 从 `chrome.storage.sync` 读取 `translateActive` 状态和翻译API设置
+   - 注入 Main World Script (`content/main-world.ts`) 到页面
+   - 设置 `MutationObserver` 监听 DOM 变化，等待播放器控件加载
+   - 设置消息监听器处理来自各组件的请求和响应
+   - 设置 `yt-navigate-finish` 监听器处理页面导航
+   - 调用 `initializeSubtitleMode` 初始化字幕模式
+
+2. **字幕翻译流程:**
+   - 获取字幕轨道信息 (`fetchAndProcessTracksInfo`)
+   - 下载选定字幕轨道数据 (`fetchSubtitleData`)
+   - 处理字幕数据为内部格式 (`processAndStoreSubtitles`)
+   - 根据当前设置调用相应翻译API (`translateSubtitles`)
+   - 创建字幕显示叠加层 (`createSubtitleOverlay`)
+   - 启动字幕更新循环 (`updateSubtitleLoop`)
+
+3. **字幕显示处理:**
+   - 根据当前字幕模式决定显示格式 (`handleSubtitleUpdate`)
+   - 在双语模式下，按"目标语言在上，源语言在下"的顺序显示
+   - 在仅目标语言模式下，只显示翻译后的字幕
+
+4. **错误处理机制:**
+   - 当翻译失败时，显示错误提示并保留源字幕
+   - 使用不同样式区分错误消息和正常字幕
+   - 提供具体错误原因和可能的解决方案
+
+5. **侧边栏设置保存与同步:**
+   - 保存用户选择的翻译API和字幕模式到 `chrome.storage.sync`
+   - 通过消息和存储变化事件实现组件间的设置同步
+   - 确保设置变化能即时应用到视频播放体验
 
 ## 依赖库
 
@@ -224,8 +247,6 @@ textToShow = `${targetText}\n${sourceText}`;
 *   `typescript`: 提供类型检查和现代 JavaScript 特性。
 *   `@types/chrome`: Chrome 扩展 API 的 TypeScript 类型定义。
 *   `@types/node`: Node.js API 的 TypeScript 类型定义 (用于 `vite.config.ts`)。
-*   `@types/react`, `@types/react-dom`: React 类型定义 (用于 Sidepanel)。
-*   `react`, `react-dom`: React 库 (用于 Sidepanel)。
 *   `vite-plugin-static-copy`: Vite 插件，用于在构建时复制静态资源。
 
 ## 开发计划与进度
@@ -250,11 +271,15 @@ textToShow = `${targetText}\n${sourceText}`;
 *   [x] **优化字幕容器样式，精确匹配YouTube原生字幕 (使用Flexbox布局+动态宽度)**
 *   [x] **实现字幕显示模式切换功能 (双语/仅目标语言)**
 *   [x] **优化字幕显示顺序 (目标语言在上，源语言在下)**
+*   [x] **实现多种免费翻译API支持 (Google翻译、有道翻译、微软翻译)**
+*   [x] **实现翻译API测试功能**
+*   [x] **优化API切换体验 (自动重新翻译)**
+*   [x] **改进翻译失败时的用户体验 (显示源字幕+错误提示)**
 *   [x] **修复构建问题：删除文件末尾非法HTML标记**
-*   [ ] 完善 Sidepanel 功能 (选择目标语言, 保存设置等)
-*   [ ] 接入实际的翻译 API
-*   [ ] UI 开发 (Popup)
-*   [ ] UI 开发 (Options Page)
+*   [x] **优化侧边栏UI，简化API选项，将Google翻译设为默认API**
+*   [ ] 实现字幕样式自定义功能
+*   [ ] 添加字幕位置调整功能
+*   [ ] 实现字幕翻译缓存机制
 *   [ ] 添加键盘快捷键支持
 *   [ ] 优化错误处理和日志
 *   [ ] 添加测试 (单元/集成)
@@ -274,21 +299,11 @@ textToShow = `${targetText}\n${sourceText}`;
 
 ## 关键变更记录
 
-*   **YYYY-MM-DD:** 初始化项目，选择 Vite + TypeScript 技术栈。
-*   **YYYY-MM-DD:** 配置 `vite.config.ts` 支持多入口构建。
-*   **YYYY-MM-DD:** 引入 `vite-plugin-static-copy` 复制静态资源。
-*   **YYYY-MM-DD:** 修正 `manifest.json` 脚本路径。
-*   **YYYY-MM-DD:** 实现 Content Script 按钮注入和状态同步。
-*   **YYYY-MM-DD:** 更新按钮边框实现。
-*   **YYYY-MM-DD:** 实现自定义提示框。
-*   **YYYY-MM-DD:** 调整注入控制按钮到右侧控件栏。
-*   **YYYY-MM-DD:** **重构字幕轨道获取方式**: 从解析 `<script>` 标签改为注入 Main World Script 调用 `getPlayerResponse()` 并通过 `postMessage` 通信。
-*   **YYYY-MM-DD:** 修复 Side Panel 打开权限错误 (保留用户手势)。
-*   **YYYY-MM-DD:** 修复按钮注入导致原生按钮消失的问题 (移除额外 wrapper div)。
-*   **YYYY-MM-DD:** 修复自定义按钮垂直对齐问题 (调整 CSS)。
-*   **YYYY-MM-DD:** 实现 Side Panel 在 YouTube 导航后自动更新源语言列表 (通过 Background 广播)。
-*   **YYYY-MM-DD:** **详细修复导航相关的稳定性问题** (字幕自动启动 & 按钮重复注入，涉及 `startTranslationProcess`, `handleYoutubeNavigation` 主动清理旧按钮, `injectControls` 双重检查)。
-*   **YYYY-MM-DD:** **优化字幕容器样式** (采用双层结构与自动宽度计算，确保字幕容器行为与YouTube原生字幕一致)。
-*   **2023-07-01:** 实现字幕显示模式切换功能（双语/仅目标语言）。
-*   **2023-07-07:** 优化双语字幕显示顺序（目标语言在上，源语言在下），提升阅读体验。
-*   **2023-07-07:** 修复构建问题：删除文件末尾非法HTML标记 
+*   **2023-07**: 初始化项目，搭建基本结构，实现字幕获取与显示。
+*   **2023-08**: 解决导航相关的稳定性问题，改进用户界面。
+*   **2023-09**: 修复按钮注入和样式问题，优化字幕容器。
+*   **2023-10**: 实现字幕显示模式切换功能，优化字幕显示顺序。
+*   **2023-11**: 实现多种免费翻译API支持，添加API测试功能。
+*   **2023-12**: 改进错误处理，优化翻译失败时的用户体验。
+*   **2024-01**: 优化侧边栏UI，简化API选项，设置Google翻译为默认API。 
+*   **2024-06**: 优化Google翻译API实现，修复API路径B问题，提高翻译可靠性。 

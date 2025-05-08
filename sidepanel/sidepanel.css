@@ -6,6 +6,7 @@ body {
     margin: 0;
     height: 100vh; /* 尝试占满侧边栏高度 */
     box-sizing: border-box;
+    overflow-y: auto; /* 添加滚动条，确保所有内容可见 */
 }
 
 h1 {
@@ -199,4 +200,294 @@ input:checked + .slider:before {
 
 .slider.round:before {
     border-radius: 50%; /* 使滑块变圆 */
+}
+
+/* 新增：API相关样式 */
+#api-key-panel, #custom-api-panel {
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+#api-key-panel label, #custom-api-panel label {
+    margin-bottom: 5px;
+    display: block;
+    color: #aaa;
+    font-size: 0.9em;
+    flex-basis: auto;
+    margin-right: 0;
+}
+
+input[type="text"], textarea {
+    width: 100%;
+    padding: 8px;
+    background-color: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: 0.9em;
+    margin-bottom: 10px;
+    box-sizing: border-box;
+}
+
+textarea {
+    height: 80px;
+    font-family: monospace;
+    resize: vertical;
+}
+
+/* 新增：测试按钮和结果显示样式 */
+.test-api-container {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    margin-top: 5px;
+    margin-bottom: 20px;
+}
+
+.test-button-container {
+    width: 100%;
+    margin-bottom: 5px;
+}
+
+.test-result-container {
+    width: 100%;
+    min-height: 20px;
+}
+
+.test-button {
+    background-color: #2196F3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 15px;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: background-color 0.2s;
+    width: 100%; /* 让按钮占满容器宽度 */
+}
+
+.test-button:hover {
+    background-color: #0d6efd;
+}
+
+.test-button:active {
+    background-color: #0a58ca;
+}
+
+.test-button.loading {
+    background-color: #666;
+    cursor: wait;
+}
+
+.test-result {
+    margin-left: 10px;
+    font-size: 0.9em;
+}
+
+.test-result.success {
+    color: #4caf50;
+}
+
+.test-result.error {
+    color: #f44336;
+}
+
+.api-info {
+    margin-top: 5px;
+    font-size: 0.8em;
+}
+
+.api-info a {
+    color: #3ea6ff;
+    text-decoration: none;
+}
+
+.api-info a:hover {
+    text-decoration: underline;
+}
+
+/* 新增：服务类型选择样式 */
+.radio-group {
+    display: flex;
+    gap: 15px;
+    margin-top: 5px;
+}
+
+.radio-option {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+}
+
+.radio-option input[type="radio"] {
+    margin-right: 5px;
+    accent-color: #2196F3; /* 自定义单选按钮颜色 */
+}
+
+.radio-option span {
+    font-size: 0.9em;
+}
+
+/* 新增：会员登录面板样式 */
+#membership-panel {
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+#membership-panel label {
+    margin-bottom: 5px;
+    display: block;
+    color: #aaa;
+    font-size: 0.9em;
+    flex-basis: auto;
+    margin-right: 0;
+}
+
+input[type="password"] {
+    width: 100%;
+    padding: 8px;
+    background-color: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: 0.9em;
+    margin-bottom: 10px;
+    box-sizing: border-box;
+}
+
+.button-container {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.action-button {
+    background-color: #2196F3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 15px;
+    font-size: 0.9em;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.action-button:hover {
+    background-color: #0d6efd;
+}
+
+.action-button:active {
+    background-color: #0a58ca;
+}
+
+.action-button.loading {
+    background-color: #666;
+    cursor: wait;
+}
+
+.result-text {
+    margin-left: 10px;
+    font-size: 0.9em;
+}
+
+.result-text.success {
+    color: #4caf50;
+}
+
+.result-text.error {
+    color: #f44336;
+}
+
+/* 动画效果扩展 */
+#service-type-panel, #membership-panel, #api-key-panel, #custom-api-panel {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out, opacity 0.3s ease-out, margin 0.3s ease-out;
+    opacity: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+#service-type-panel.visible, #membership-panel.visible, #api-key-panel.visible, #custom-api-panel.visible {
+    max-height: 500px; /* 足够大的高度以适应内容 */
+    opacity: 1;
+    margin-top: 10px;
+    margin-bottom: 20px;
+}
+
+/* 新增：会员登录面板样式 */
+#membership-panel {
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.login-title {
+    font-size: 0.9em;
+    color: #aaa;
+    margin-top: 0;
+    margin-bottom: 10px;
+}
+
+.social-login-container {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    width: 100%;
+    margin-bottom: 15px;
+}
+
+.social-login-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 5px;
+    border-radius: 4px;
+    border: 1px solid #555;
+    background-color: #333;
+    color: white;
+    font-size: 0.9em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.social-login-btn:hover {
+    background-color: #444;
+    border-color: #777;
+}
+
+.social-login-btn svg {
+    margin-right: 5px;
+}
+
+.social-login-btn span {
+    white-space: nowrap;
+}
+
+/* 特定社交平台按钮样式 */
+.google-btn:hover {
+    background-color: rgba(234, 67, 53, 0.1);
+}
+
+.apple-btn:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.twitter-btn:hover {
+    background-color: rgba(29, 161, 242, 0.1);
+}
+
+.facebook-btn:hover {
+    background-color: rgba(24, 119, 242, 0.1);
+}
+
+.wechat-btn:hover {
+    background-color: rgba(7, 193, 96, 0.1);
+}
+
+.login-status {
+    width: 100%;
+    text-align: center;
+    margin-top: 5px;
 } 

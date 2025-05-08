@@ -394,6 +394,7 @@ async function handleSubtitleUpdate() {
 
   const currentTime = videoElement.currentTime;
   let textToShow = '';
+  let isErrorMessage = false;  // 标记是否是错误消息
 
   // 查找当前时间对应的字幕事件
   const activeEvent = processedSubtitleEvents.find(
@@ -407,42 +408,76 @@ async function handleSubtitleUpdate() {
     // 根据模式组合要显示的文本
     const sourceText = activeEvent.sourceText || ''; // Fallback to empty string if null
     const targetText = activeEvent.targetText || ''; // Fallback to empty string if null
-
-    // 使用 bilingual 和 targetOnly 作为模式名称，与侧边栏保持一致
-    switch (subtitleMode) {
-      case 'bilingual':
-        if (sourceText && targetText && sourceText !== targetText) {
-          textToShow = `${targetText}\n${sourceText}`; // 目标语言在上，源语言在下
-        } else {
-          textToShow = targetText || sourceText; // Show whichever is available if one is missing or they are same
-        }
-        break;
-      case 'targetOnly':
-        textToShow = targetText || sourceText; // Prioritize target, fallback to source
-        break;
-      default: // Fallback to bilingual for unknown modes
-        if (sourceText && targetText && sourceText !== targetText) {
-          textToShow = `${targetText}\n${sourceText}`; // 目标语言在上，源语言在下
-        } else {
-          textToShow = targetText || sourceText;
-        }
+    
+    // 检查targetText是否是错误消息
+    isErrorMessage = targetText.includes('使用') && targetText.includes('翻译服务失败');
+    
+    // 处理错误消息的特殊情况
+    if (isErrorMessage) {
+      // 使用DOM元素创建带有独立样式的内容
+      subtitleOverlayElement.innerHTML = ''; // 清空已有内容
+      
+      // 创建错误消息元素
+      const errorElement = document.createElement('div');
+      errorElement.textContent = targetText;
+      errorElement.style.color = '#ff6b6b'; // 红色文本
+      subtitleOverlayElement.appendChild(errorElement);
+      
+      // 如果有源文本并且处于需要显示的模式，添加源文本元素
+      if (sourceText && (subtitleMode === 'bilingual' || subtitleMode === 'targetOnly')) {
+        const sourceElement = document.createElement('div');
+        sourceElement.textContent = sourceText;
+        sourceElement.style.color = 'white'; // 保持正常颜色
+        subtitleOverlayElement.appendChild(sourceElement);
+      }
+      
+      // 已经使用innerHTML设置了内容，不需要再设置textToShow
+      textToShow = '';
+    } else {
+      // 使用 bilingual 和 targetOnly 作为模式名称，与侧边栏保持一致
+      switch (subtitleMode) {
+        case 'bilingual':
+          if (sourceText && targetText && sourceText !== targetText) {
+            textToShow = `${targetText}\n${sourceText}`; // 目标语言在上，源语言在下
+          } else {
+            textToShow = targetText || sourceText; // Show whichever is available if one is missing or they are same
+          }
+          break;
+        case 'targetOnly':
+          textToShow = targetText || sourceText; // Prioritize target, fallback to source
+          break;
+        default: // Fallback to bilingual for unknown modes
+          if (sourceText && targetText && sourceText !== targetText) {
+            textToShow = `${targetText}\n${sourceText}`; // 目标语言在上，源语言在下
+          } else {
+            textToShow = targetText || sourceText;
+          }
+      }
+      
+      // 非错误情况下，使用普通文本
+      subtitleOverlayElement.innerHTML = '';
+      subtitleOverlayElement.innerText = textToShow;
     }
   }
 
   // 更新叠加层内容和可见性
-  if (textToShow) {
-    if (subtitleOverlayElement.innerText !== textToShow) {
-      subtitleOverlayElement.innerText = textToShow;
-      
-      // 添加延迟触发自动宽度调整，确保文本渲染完成
-      setTimeout(() => {
-        // 强制一次宽度重新计算
-        if (subtitleOverlayElement) {
-          // 调用新函数动态调整宽度
-          updateOverlayWidth();
-        }
-      }, 0);
+  if (textToShow || subtitleOverlayElement.hasChildNodes()) {
+    // 设置全局样式（背景色等）
+    if (isErrorMessage) {
+      subtitleOverlayElement.style.backgroundColor = 'rgba(0, 0, 0, 0.85)'; // 更深的背景
+    } else {
+      subtitleOverlayElement.style.color = 'rgb(255, 255, 255)'; // 恢复正常颜色
+      subtitleOverlayElement.style.backgroundColor = 'rgba(8, 8, 8, 0.75)'; // 恢复正常背景
     }
+    
+    // 添加延迟触发自动宽度调整，确保文本渲染完成
+    setTimeout(() => {
+      // 强制一次宽度重新计算
+      if (subtitleOverlayElement) {
+        // 调用新函数动态调整宽度
+        updateOverlayWidth();
+      }
+    }, 0);
     
     if (subtitleOverlayElement.style.display === 'none' || subtitleOverlayElement.style.visibility === 'hidden') {
       subtitleOverlayElement.style.display = 'inline-block'; // 改为inline-block确保自动宽度
@@ -453,13 +488,13 @@ async function handleSubtitleUpdate() {
     if (subtitleOverlayElement.style.display !== 'none') {
       subtitleOverlayElement.style.opacity = '0';
       // 在淡出动画后隐藏
-       setTimeout(() => {
-           if (subtitleOverlayElement && subtitleOverlayElement.style.opacity === '0') {
-               subtitleOverlayElement.style.display = 'none';
-               subtitleOverlayElement.style.visibility = 'hidden';
-               subtitleOverlayElement.innerText = ''; // 清空内容
-           }
-       }, 200); // 匹配 CSS transition 时间
+      setTimeout(() => {
+        if (subtitleOverlayElement && subtitleOverlayElement.style.opacity === '0') {
+          subtitleOverlayElement.style.display = 'none';
+          subtitleOverlayElement.style.visibility = 'hidden';
+          subtitleOverlayElement.innerHTML = ''; // 清空内容
+        }
+      }, 200); // 匹配 CSS transition 时间
     }
   }
 }
@@ -724,6 +759,7 @@ async function startTranslationProcess(): Promise<void> {
 
   // --- 6. 执行翻译 (如果需要) ---
   let translationResults: { [id: string]: string } | null = null;
+  let translationError: string | null = null;  // 新增：用于存储翻译错误信息
         if (needsTranslation) {
        console.log(`[翻译] 需要翻译 ${sourceEvents.length} 条源字幕 (${sourceTrackInfo.languageCode} -> ${targetLang})`);
        // 发送简化结构以减少数据量
@@ -733,6 +769,23 @@ async function startTranslationProcess(): Promise<void> {
        }));
 
        try {
+           // 获取当前的翻译API类型
+           const apiSettings = await chrome.storage.sync.get(['translationApi']);
+           const apiType = apiSettings.translationApi || 'google-free';
+           
+           // 根据API类型获取显示名称
+           let apiDisplayName = "翻译服务";
+           switch(apiType) {
+               case 'google-free': apiDisplayName = "Google翻译"; break;
+               case 'microsoft-free': apiDisplayName = "微软翻译"; break;
+               case 'baidu-paid': apiDisplayName = "百度翻译"; break;
+               case 'tencent-paid': apiDisplayName = "腾讯翻译"; break;
+               case 'azure-paid': apiDisplayName = "Azure翻译"; break;
+               case 'deepl-paid': apiDisplayName = "DeepL翻译"; break;
+               case 'openai-paid': apiDisplayName = "OpenAI翻译"; break;
+               case 'custom': apiDisplayName = "自定义翻译"; break;
+           }
+       
            const response: any = await new Promise((resolve, reject) => {
                 chrome.runtime.sendMessage(
                     {
@@ -754,13 +807,36 @@ async function startTranslationProcess(): Promise<void> {
            console.log(`[翻译] 成功收到翻译结果 (${Object.keys(translationResults || {}).length} 条)`);
        } catch (error) {
            console.error('[翻译] 翻译请求失败:', error);
-           // 翻译失败，但我们仍然可以显示源语言
-           // translationResults 保持为 null
-            // TODO: Notify user about translation failure?
+           // 获取当前使用的翻译API名称
+           const apiSettings = await chrome.storage.sync.get(['translationApi']);
+           const apiType = apiSettings.translationApi || 'google-free';
+           
+           // 根据API类型获取显示名称
+           let apiDisplayName = "翻译服务";
+           switch(apiType) {
+               case 'google-free': apiDisplayName = "Google翻译"; break;
+               case 'microsoft-free': apiDisplayName = "微软翻译"; break;
+               default: apiDisplayName = "翻译服务"; break;
+           }
+           
+           // 设置错误消息
+           translationError = `使用${apiDisplayName}翻译服务失败，请切换翻译服务`;
+           console.error(`[翻译] ${translationError}`);
        }
    }
 
    // --- 7. 合并数据 ---
+   // 如果翻译失败，则处理错误消息
+   if (needsTranslation && translationError && !translationResults) {
+       // 为每个源字幕创建一个带有错误消息的目标字幕
+       const errorTranslations: { [id: string]: string } = {};
+       sourceEvents.forEach((event, index) => {
+           const id = `${event.start}-${event.end}-${index}`;
+           errorTranslations[id] = translationError!;  // 非空断言，因为我们已经检查了translationError不为null
+       });
+       translationResults = errorTranslations;
+   }
+   
    processedSubtitleEvents = mergeSubtitleData(
        sourceEvents,
        needsTranslation ? translationResults : nativeTargetEvents,
@@ -1092,6 +1168,21 @@ function initialize() {
               startTranslationProcess().catch(error => {
                   console.error('[CS Storage Listener] 因 sourceLang 改变重新启动翻译流程时出错:', error);
               });
+         }
+     }
+     // 新增：监听翻译API类型变化
+     if (namespace === 'sync' && changes.translationApi) {
+         const newApi = changes.translationApi.newValue;
+         const oldApi = changes.translationApi.oldValue;
+         console.log(`[CS Storage Listener] 检测到 translationApi 变化: 从 ${oldApi} 到 ${newApi}`);
+         
+         // 当翻译API改变并且翻译功能已激活时，重新启动翻译流程
+         if (translateActive && processedSubtitleEvents.length > 0) {
+             console.log('[CS Storage Listener] 翻译API已变更，重新获取翻译...');
+             // 重新执行翻译流程
+             startTranslationProcess().catch(error => {
+                 console.error('[CS Storage Listener] 因API变更重新翻译时出错:', error);
+             });
          }
      }
   });
