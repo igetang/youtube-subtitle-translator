@@ -448,7 +448,174 @@ textToShow = `${targetText}\n${sourceText}`;
 
 ## 3. 问题排查与修复
 
-### 3.1 构建错误：非法HTML标记
+### 3.1 翻译API测试后字幕不显示问题
+
+#### 问题描述
+
+在实现多种翻译API支持并提供测试功能后，发现当用户测试完谷歌和微软翻译API后，会出现视频字幕完全不显示的问题。具体表现为：
+
+1. 翻译按钮保持"开启"状态（按钮图标显示正确）
+2. 屏幕上没有任何字幕显示（即使视频中有对话）
+3. 用户需要手动关闭后再开启翻译按钮才能恢复字幕显示
+
+#### 排查过程
+
+1. **问题复现**：首先确认了问题的可复现性，通过以下步骤可稳定复现：
+   - 打开YouTube视频并开启翻译功能（字幕正常显示）
+   - 打开侧边栏并测试微软翻译API
+   - 测试谷歌翻译API
+   - 返回视频，发现字幕不再显示，但翻译开关仍为开启状态
+
+2. **日志分析**：检查控制台日志，发现以下关键信息：
+   ```
+   [Debug] Processed 0 subtitle events. Listing below:
+   字幕数据处理和合并完成，启动显示循环。
+   启动字幕显示循环 (requestAnimationFrame)
+   ```
+   
+   这表明系统确实试图启动字幕显示循环，但处理后的字幕事件列表为空。
+
+3. **代码检查**：检查了关键函数的实现，发现了几个潜在问题点：
+   
+   a. `startTranslationProcess` 函数中获取翻译结果后处理：
+   ```typescript
+   try {
+     // API调用代码...
+     translationResults = response.translatedSubtitles;
+   } catch (error) {
+     // 设置错误信息，但translationResults维持为null
+     translationError = `使用${apiDisplayName}翻译服务失败，请切换翻译服务`;
+   }
+   
+   // 后续直接使用可能为null的translationResults
+   processedSubtitleEvents = mergeSubtitleData(
+     sourceEvents,
+     needsTranslation ? translationResults : nativeTargetEvents,
+     targetLang
+   );
+   ```
+
+   b. `mergeSubtitleData` 函数缺少对null输入的严格处理：
+   ```typescript
+   function mergeSubtitleData(sourceEvents, targetEventsOrTranslations, targetLangCode) {
+     // 没有检查sourceEvents是否为空
+     // 没有检查targetEventsOrTranslations是否为null
+     
+     const isTargetNative = Array.isArray(targetEventsOrTranslations);
+     const translations = isTargetNative ? null : targetEventsOrTranslations;
+     
+     // 如果translations为null，这里会出现问题
+   }
+   ```
+
+   c. `setTranslateActive` 函数在切换状态时缺乏清理机制：
+   ```typescript
+   async function setTranslateActive(active: boolean): Promise<void> {
+     translateActive = active;
+     // 更新图标...
+     // 保存到存储...
+     // 缺少对processedSubtitleEvents的清理
+   }
+   ```
+
+4. **根本原因确认**：通过插入调试日志，确认当翻译API测试失败时，`translationResults`变量为null，导致`mergeSubtitleData`无法正确合并字幕数据，生成的`processedSubtitleEvents`数组为空，即便有可用的源字幕也不会显示。
+
+#### 解决方案
+
+实现了多层次的防护机制，确保即使翻译失败也能保持字幕显示：
+
+1. **确保翻译结果不为null**：
+```typescript
+// 确保translationResults变量不为null
+if (needsTranslation && !translationResults) {
+  console.warn('[警告] translationResults为null，创建空对象避免后续处理错误');
+  translationResults = {};
+}
+```
+
+2. **添加字幕数据保底机制**：
+```typescript
+// 添加额外检查以确保字幕事件有效
+if (processedSubtitleEvents.length === 0 && sourceEvents.length > 0) {
+  console.warn('[警告] 合并后的字幕事件为空但源字幕存在，直接使用源字幕');
+  // 如果合并后的事件为空但源事件存在，直接使用源事件
+  processedSubtitleEvents = sourceEvents.map(event => ({
+    start: event.start,
+    end: event.end,
+    sourceText: event.text,
+    targetText: null,
+    sourceLangCode: event.langCode,
+    targetLangCode: targetLang
+  }));
+}
+```
+
+3. **优化合并函数代码**：
+```typescript
+function mergeSubtitleData(
+  sourceEvents: { start: number; end: number; text: string; langCode: string }[],
+  targetEventsOrTranslations: { start: number; end: number; text: string; langCode: string }[] | { [id: string]: string } | null,
+  targetLangCode: string
+): SubtitleEvent[] {
+  // 如果源事件为空，直接返回空数组
+  if (!sourceEvents || sourceEvents.length === 0) {
+    console.warn("源字幕事件为空，无法合并");
+    return [];
+  }
+
+  // 添加日志输出
+  if (!targetEventsOrTranslations) {
+    console.warn("目标字幕/翻译为null，将只使用源字幕");
+  }
+  
+  // 其余合并逻辑...
+}
+```
+
+4. **完善状态切换函数**：
+```typescript
+async function setTranslateActive(active: boolean): Promise<void> {
+  // 获取之前的状态，以便执行适当的清理
+  const wasActive = translateActive;
+  translateActive = active;
+  
+  // 更新图标...
+  
+  // 如果是从开启状态切换到关闭状态，执行必要的清理
+  if (wasActive && !active) {
+    // 停止字幕更新循环
+    stopSubtitleUpdates();
+    // 清空字幕数据
+    processedSubtitleEvents = [];
+    console.log('翻译关闭，已清理字幕显示和数据');
+  }
+  
+  // 保存到存储...
+}
+```
+
+5. **优化字幕显示逻辑**：
+```typescript
+// 非错误情况下，使用普通文本
+subtitleOverlayElement.innerHTML = '';
+if (textToShow) { // 添加空字符串检查
+  subtitleOverlayElement.innerText = textToShow;
+}
+```
+
+#### 验证结果
+
+优化后再次进行测试，确认了以下改进：
+
+1. 即使翻译API测试失败，字幕功能也能继续工作
+2. 当翻译服务出现问题时，会自动降级到显示原始字幕
+3. 翻译开关状态变化时能正确清理旧状态
+4. 添加了详细的日志输出，便于问题排查
+5. 提高了整个字幕系统的鲁棒性
+
+通过这次问题修复，不仅解决了特定场景下的字幕显示问题，也提升了整个字幕处理流程的容错能力，为用户提供了更稳定的体验。
+
+### 3.2 构建错误：非法HTML标记
 
 **问题**：构建时出现错误，文件末尾存在非法HTML标记`</rewritten_file>`。
 **解决**：使用命令行工具提取有效内容并覆盖原文件。
@@ -457,14 +624,14 @@ head -n 1720 content/content-script.ts > content/content-script-fixed.ts &&
 mv content/content-script-fixed.ts content/content-script.ts
 ```
 
-### 3.2 按钮注入和重复问题
+### 3.3 按钮注入和重复问题
 
 **问题**：页面导航后，控制按钮会重复注入。
 **解决**：
 * 在导航处理函数中主动查找并移除旧按钮
 * 保持`injectControls`中的双重检查（状态标志 + DOM检查）
 
-### 3.3 字幕自动恢复问题
+### 3.4 字幕自动恢复问题
 
 **问题**：在视频间导航时，即使翻译开关为"开启"状态，也不会自动显示字幕。
 **解决**：
@@ -472,7 +639,7 @@ mv content/content-script-fixed.ts content/content-script.ts
 * 在按钮注入成功后根据`translateActive`状态自动调用此函数
 * 清理观察者中的冗余逻辑
 
-### 3.4 翻译API切换问题
+### 3.5 翻译API切换问题
 
 **问题**：切换翻译API后，字幕不会自动更新使用新API。
 **解决**：
@@ -489,7 +656,7 @@ chrome.storage.onChanged.addListener((changes) => {
 });
 ```
 
-### 3.5 侧边栏UI简化
+### 3.6 侧边栏UI简化
 
 **问题**：侧边栏中显示了太多API选项，包括付费和自定义API，使界面复杂且混乱。
 **解决**：

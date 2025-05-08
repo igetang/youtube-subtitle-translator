@@ -208,6 +208,66 @@
 
 这些优化显著提高了微软翻译API的可靠性和稳定性，为用户提供更好的翻译体验。
 
+### 翻译API测试与错误处理优化 (2024-05)
+
+在测试多种翻译API过程中，发现了一个影响用户体验的重要问题，并进行了全面优化：
+
+1. **问题现象**：
+   - 在使用谷歌微软翻译API的测试功能后，视频字幕不再显示
+   - 翻译按钮仍显示为"开启"状态，但屏幕上没有字幕出现
+   - 需要用户手动关闭后再开启翻译才能恢复显示
+
+2. **根本原因分析**：
+   - 翻译API测试过程中可能出现错误，导致翻译结果为null
+   - 字幕合并逻辑(`mergeSubtitleData`函数)缺少对空值和异常情况的处理
+   - 当错误情况未被妥善处理时，导致最终处理后的字幕事件数组为空
+   - 即使存在原始源字幕，也无法显示在屏幕上
+
+3. **实现的解决方案**：
+   - **完善空值处理**：确保`translationResults`变量即使在翻译失败时也不会为null
+   ```typescript
+   if (needsTranslation && !translationResults) {
+     translationResults = {}; // 使用空对象代替null
+   }
+   ```
+   - **添加保底机制**：当合并后的字幕事件为空但源字幕存在时，直接使用源字幕
+   ```typescript
+   if (processedSubtitleEvents.length === 0 && sourceEvents.length > 0) {
+     processedSubtitleEvents = sourceEvents.map(event => ({
+       start: event.start,
+       end: event.end,
+       sourceText: event.text,
+       targetText: null,
+       sourceLangCode: event.langCode,
+       targetLangCode: targetLang
+     }));
+   }
+   ```
+   - **改进合并函数**：在`mergeSubtitleData`添加对源事件和目标翻译的全面验证
+   ```typescript
+   if (!sourceEvents || sourceEvents.length === 0) {
+     return []; // 源事件为空时直接返回空数组
+   }
+   if (!targetEventsOrTranslations) {
+     console.warn("目标字幕/翻译为null，将只使用源字幕");
+   }
+   ```
+   - **优化状态切换**：完善`setTranslateActive`函数，确保从开启状态切换到关闭状态时正确清理资源
+   ```typescript
+   if (wasActive && !active) {
+     stopSubtitleUpdates();
+     processedSubtitleEvents = [];
+   }
+   ```
+
+4. **用户体验提升**：
+   - 即使在翻译API失败的情况下，保证至少显示原始字幕，不中断视频观看体验
+   - 翻译开关状态变化时能正确清理或重建字幕显示
+   - 添加详细的日志记录，便于问题诊断和追踪
+   - 提供友好的错误信息，指导用户切换到其他可用的翻译API
+
+通过这些优化，无论哪种翻译API发生问题，字幕系统都能优雅降级，确保基本功能可用，大大提高了扩展的鲁棒性。
+
 ## 代码架构和数据流
 
 1. **Content Script 初始化 (`initialize`):**
@@ -277,6 +337,7 @@
 *   [x] **改进翻译失败时的用户体验 (显示源字幕+错误提示)**
 *   [x] **修复构建问题：删除文件末尾非法HTML标记**
 *   [x] **优化侧边栏UI，简化API选项，将Google翻译设为默认API**
+*   [x] **修复翻译API测试后字幕不显示问题 (详细见"翻译API测试与错误处理优化"部分)**
 *   [ ] 实现字幕样式自定义功能
 *   [ ] 添加字幕位置调整功能
 *   [ ] 实现字幕翻译缓存机制

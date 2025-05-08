@@ -456,7 +456,9 @@ async function handleSubtitleUpdate() {
       
       // 非错误情况下，使用普通文本
       subtitleOverlayElement.innerHTML = '';
-      subtitleOverlayElement.innerText = textToShow;
+      if (textToShow) {
+        subtitleOverlayElement.innerText = textToShow;
+      }
     }
   }
 
@@ -835,6 +837,13 @@ async function startTranslationProcess(): Promise<void> {
            errorTranslations[id] = translationError!;  // 非空断言，因为我们已经检查了translationError不为null
        });
        translationResults = errorTranslations;
+       console.log(`[翻译错误] 已创建 ${Object.keys(errorTranslations).length} 条错误消息替代翻译`);
+   }
+
+   // 确保translationResults变量不为null
+   if (needsTranslation && !translationResults) {
+       console.warn('[警告] translationResults为null，创建空对象避免后续处理错误');
+       translationResults = {};
    }
    
    processedSubtitleEvents = mergeSubtitleData(
@@ -842,6 +851,20 @@ async function startTranslationProcess(): Promise<void> {
        needsTranslation ? translationResults : nativeTargetEvents,
        targetLang // Pass the target language code we aimed for
    );
+
+   // 添加额外检查以确保字幕事件有效
+   if (processedSubtitleEvents.length === 0 && sourceEvents.length > 0) {
+       console.warn('[警告] 合并后的字幕事件为空但源字幕存在，直接使用源字幕');
+       // 如果合并后的事件为空但源事件存在，直接使用源事件
+       processedSubtitleEvents = sourceEvents.map(event => ({
+           start: event.start,
+           end: event.end,
+           sourceText: event.text,
+           targetText: null,
+           sourceLangCode: event.langCode,
+           targetLangCode: targetLang
+       }));
+   }
 
    // --- 8. 启动显示 ---
    // --- 添加调试日志：打印处理后的字幕事件 ---
@@ -1459,7 +1482,10 @@ function handleYoutubeNavigation(): void {
  * @param {boolean} active - 新的翻译状态。
  */
 async function setTranslateActive(active: boolean): Promise<void> {
+  // 获取之前的状态，以便执行适当的清理
+  const wasActive = translateActive;
   translateActive = active;
+  
   // 更新图标
   if (translateToggleButtonIcon) {
     translateToggleButtonIcon.src = active ? ON_ICON_URL : OFF_ICON_URL;
@@ -1469,6 +1495,16 @@ async function setTranslateActive(active: boolean): Promise<void> {
         button.dataset.tooltipText = active ? '关闭翻译' : '开启翻译';
     }
   }
+  
+  // 如果是从开启状态切换到关闭状态，执行必要的清理
+  if (wasActive && !active) {
+    // 停止字幕更新循环
+    stopSubtitleUpdates();
+    // 清空字幕数据
+    processedSubtitleEvents = [];
+    console.log('翻译关闭，已清理字幕显示和数据');
+  }
+  
   // 保存到存储
   try {
     await chrome.storage.sync.set({ translateActive: active });
@@ -1498,8 +1534,19 @@ function mergeSubtitleData(
     console.log("开始合并字幕数据...");
     const mergedEvents: SubtitleEvent[] = [];
 
+    // 如果源事件为空，直接返回空数组
+    if (!sourceEvents || sourceEvents.length === 0) {
+        console.warn("源字幕事件为空，无法合并");
+        return [];
+    }
+
     const isTargetNative = Array.isArray(targetEventsOrTranslations);
     const translations = isTargetNative ? null : targetEventsOrTranslations as { [id: string]: string } | null;
+
+    // 添加日志输出
+    if (!targetEventsOrTranslations) {
+        console.warn("目标字幕/翻译为null，将只使用源字幕");
+    }
 
     for (const sourceEvent of sourceEvents) {
         let targetText: string | null = null;
@@ -1510,34 +1557,32 @@ function mergeSubtitleData(
             const matchingTargetEvent = (targetEventsOrTranslations as { start: number; end: number; text: string; }[]).find(
                 targetEvent => targetEvent.start >= sourceEvent.start && targetEvent.start < sourceEvent.end
             );
-             // If no direct overlap, maybe find the one starting closest *after* the source start?
-             /* if (!matchingTargetEvent) {
-                  matchingTargetEvent = targetEventsOrTranslations
-                     .filter(te => te.start >= sourceEvent.start)
-                     .sort((a, b) => a.start - b.start)[0];
-             } */
             targetText = matchingTargetEvent ? matchingTargetEvent.text : null;
-            // console.log(`Source[${sourceEvent.start.toFixed(2)}]: ${sourceEvent.text.substring(0,10)} -> Native Target[${matchingTargetEvent?.start.toFixed(2)}]: ${targetText?.substring(0,10)}`);
-
         } else if (translations) {
             // 从翻译结果中查找 (使用 ID)
             // ID generation MUST match the one used when sending the request in startTranslationProcess
             const eventId = `${sourceEvent.start}-${sourceEvent.end}-${sourceEvents.indexOf(sourceEvent)}`;
             targetText = translations[eventId] || null;
-             // console.log(`Source[${sourceEvent.start.toFixed(2)}] ID:${eventId}: ${sourceEvent.text.substring(0,10)} -> Translated Target: ${targetText?.substring(0,10)}`);
-             if (!targetText && Object.keys(translations).length > 0) { // Only warn if translations exist but ID missing
-                 // console.warn(`未找到 ID ${eventId} 的翻译结果。`);
-             }
+            if (!targetText && Object.keys(translations).length > 0) { // Only warn if translations exist but ID missing
+                console.warn(`未找到 ID ${eventId} 的翻译结果。`);
+            }
         }
 
+        // 无论是否有目标文本，都添加合并事件
         mergedEvents.push({
             start: sourceEvent.start,
             end: sourceEvent.end,
             sourceText: sourceEvent.text,
             targetText: targetText,
             sourceLangCode: sourceEvent.langCode,
-            targetLangCode: targetLangCode, // Target language code is fixed for this batch
+            targetLangCode: targetLangCode
         });
+    }
+
+    // 确保合并后的数组不为空
+    if (mergedEvents.length === 0) {
+        console.warn("合并后的字幕事件为空，这可能是个异常情况");
+        // 应当至少有源事件的转换
     }
 
     console.log(`合并完成，生成了 ${mergedEvents.length} 条双语字幕事件。`);
