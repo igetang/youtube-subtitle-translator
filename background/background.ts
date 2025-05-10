@@ -195,33 +195,87 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   // --- 新增：处理API密钥测试请求 ---
   else if (message.action === 'testApiKey') {
-    console.log('Background received API key test request:', message.payload);
-    const { apiType, apiKey, testText, sourceLang, targetLang, customConfig } = message.payload;
-
-    if (!apiType || !testText || !sourceLang || !targetLang) {
-        console.error("Invalid payload for testApiKey action");
-        sendResponse({ 
-            success: false, 
-            message: '无效的测试参数' 
-        });
-        return false; // 同步响应错误
-    }
-
-    // 调用测试API密钥函数
-    testApiKeyFunction(apiType, apiKey, testText, sourceLang, targetLang, customConfig)
+    console.log('Testing API key:', message.apiType);
+    
+    // 进行异步API测试
+    const testText = 'Hello, this is a test message.';
+    const sourceLang = 'en';
+    const targetLang = 'zh-Hans';
+    
+    testApiKeyFunction(message.apiType, message.apiKey, testText, sourceLang, targetLang, message.customConfig)
         .then(result => {
-            console.log('API key test result:', result);
+            console.log('API test result:', result);
             sendResponse(result);
         })
         .catch(error => {
-            console.error('API key test failed:', error);
-            sendResponse({ 
-                success: false, 
-                message: error instanceof Error ? error.message : '未知错误'
+            console.error('API test error:', error);
+            sendResponse({
+                success: false,
+                message: `测试失败: ${error.message || '未知错误'}`
             });
         });
-
-    return true; // 表明我们将异步响应
+    
+    return true; // 异步响应
+  }
+  // --- 新增：处理OpenAI模型测试请求 ---
+  else if (message.action === 'testOpenAIModel') {
+    console.log('Testing OpenAI model:', message.model);
+    
+    testOpenAIModel(message.apiKey, message.model)
+        .then(result => {
+            console.log('OpenAI model test result:', result);
+            sendResponse(result);
+        })
+        .catch(error => {
+            console.error('OpenAI model test error:', error);
+            sendResponse({
+                success: false,
+                message: `测试失败: ${error instanceof Error ? error.message : '未知错误'}`
+            });
+        });
+    
+    return true; // 异步响应
+  }
+  // 处理免费API测试请求
+  else if (message.action === 'testFreeTranslation') {
+    console.log('Testing free translation:', message.apiType);
+    
+    const testText = 'Hello, this is a test message.';
+    const sourceLang = 'en';
+    const targetLang = 'zh-Hans';
+    
+    // 根据API类型选择测试函数
+    let testFunction: (text: string, source: string, target: string) => Promise<string>;
+    
+    if (message.apiType === 'google-free') {
+        testFunction = testGoogleTranslateFunction;
+    } else if (message.apiType === 'microsoft-free') {
+        testFunction = testMicrosoftTranslateFunction;
+    } else {
+        sendResponse({
+            success: false,
+            message: `不支持的API类型: ${message.apiType}`
+        });
+        return true;
+    }
+    
+    testFunction(testText, sourceLang, targetLang)
+        .then(result => {
+            console.log('Free translation test result:', result);
+            sendResponse({
+                success: true,
+                message: result
+            });
+        })
+        .catch(error => {
+            console.error('Free translation test error:', error);
+            sendResponse({
+                success: false,
+                message: `测试失败: ${error instanceof Error ? error.message : '未知错误'}`
+            });
+        });
+    
+    return true; // 异步响应
   }
   // --- 新增：处理会员账号测试登录请求 ---
   else if (message.action === 'testMembershipLogin') {
@@ -252,6 +306,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     return true; // 表明我们将异步响应
   }
+  // --- 新增：处理OpenAI API调用并获取限流信息 ---
+  else if (message.action === 'callOpenAI') {
+    const { apiKey, endpoint, payload } = message;
+    console.log(`[Background] 收到调用OpenAI API请求: ${endpoint}`);
+    
+    callOpenAIWithRateLimitInfo(apiKey, endpoint, payload)
+      .then(result => {
+        console.log('[Background] OpenAI API调用成功，获取到限流信息');
+        sendResponse({ success: true, info: result });
+      })
+      .catch(error => {
+        console.error('[Background] OpenAI API调用失败:', error);
+        // 发送结构化错误信息
+        const errorInfo = {
+          status: error.status || null,
+          message: error.message,
+          type: error.type || null,
+          code: error.code || null,
+          param: error.param || null
+        };
+        sendResponse({ success: false, error: errorInfo });
+      });
+      
+    return true; // 保持通道开放，延迟回应
+  }
   // --- 结束处理 ---
 
   // 可以添加其他消息处理逻辑...
@@ -263,13 +342,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 /**
- * 测试API连接是否有效
+ * 测试API密钥功能
  * @param apiType API类型
  * @param apiKey API密钥
  * @param testText 测试文本
  * @param sourceLang 源语言
  * @param targetLang 目标语言
- * @param customConfig 自定义API配置（如果适用）
+ * @param customConfig 自定义配置
  * @returns 测试结果
  */
 async function testApiKeyFunction(
@@ -280,64 +359,56 @@ async function testApiKeyFunction(
     targetLang: string,
     customConfig?: any
 ): Promise<{success: boolean, message: string}> {
+    console.log(`测试API密钥: ${apiType}`);
+    
     try {
-        // 根据不同API类型进行测试
-        switch(apiType) {
-            case 'google-free':
-                // 测试Google免费翻译API的两条路径
-                try {
-                    const googleTestResult = await testGoogleTranslateFunction(testText, sourceLang, targetLang);
-                    return {
-                        success: true,
-                        message: googleTestResult
-                    };
-                } catch (error) {
-                    // 如果测试中有一条路径成功，仍然返回成功
-                    if ((error as Error).message.includes('路径A成功') || (error as Error).message.includes('路径B成功')) {
-                        return {
-                            success: true,
-                            message: (error as Error).message
-                        };
-                    }
-                    
-                    return {
-                        success: false,
-                        message: `Google翻译API连接失败: ${error instanceof Error ? error.message : String(error)}`
-                    };
-                }
-                
-            case 'microsoft-free':
-                // 测试微软免费翻译API的两条路径
-                try {
-                    const microsoftTestResult = await testMicrosoftTranslateFunction(testText, sourceLang, targetLang);
-                    return {
-                        success: true,
-                        message: microsoftTestResult
-                    };
-                } catch (error) {
-                    // 如果测试中有一条路径成功，仍然返回成功
-                    if ((error as Error).message.includes('路径A成功') || (error as Error).message.includes('路径B成功')) {
-                            return {
-                                success: true,
-                            message: (error as Error).message
-                            };
-                        }
-                    
-                        return {
-                            success: false,
-                            message: `微软翻译API连接失败: ${error instanceof Error ? error.message : String(error)}`
-                        };
-                }
-                
-            // ... 其他API类型的测试
-            default:
-                return {
-                    success: false,
-                    message: `未知的API类型: ${apiType}`
-                };
+        // 针对不同API类型进行测试处理
+        if (apiType === 'openai') {
+            // 测试OpenAI API连接
+            const modelResult = await testOpenAIModel(apiKey, 'gpt-3.5-turbo');
+            return modelResult;
+        }
+        else if (apiType === 'deepl') {
+            // 测试DeepL API连接
+            // TODO: 实现DeepL API测试
+            return {
+                success: false,
+                message: 'DeepL API测试功能尚未实现'
+            };
+        }
+        else if (apiType === 'gemini') {
+            // 测试Gemini API连接
+            // TODO: 实现Gemini API测试
+            return {
+                success: false,
+                message: 'Gemini API测试功能尚未实现'
+            };
+        }
+        else if (apiType === 'deepseek') {
+            // 测试DeepSeek API连接
+            // TODO: 实现DeepSeek API测试
+            return {
+                success: false,
+                message: 'DeepSeek API测试功能尚未实现'
+            };
+        }
+        else if (apiType === 'qwen') {
+            // 测试阿里Qwen API连接
+            // TODO: 实现阿里Qwen API测试
+            return {
+                success: false,
+                message: '阿里Qwen API测试功能尚未实现'
+            };
+        }
+        else {
+            // 其他API类型，使用原有的测试逻辑
+            return {
+                success: false,
+                message: `API类型 ${apiType} 测试功能尚未实现`
+            };
         }
     } catch (error) {
-        console.error('测试API时出错:', error);
+        console.error(`测试API密钥失败: ${apiType}`, error);
         return {
             success: false,
             message: error instanceof Error ? error.message : '未知错误'
@@ -1037,6 +1108,10 @@ async function microsoftTranslatePathB(
         
         const response = await enhancedFetch(translationUrl, translationOptions);
         
+        // 调试：打印所有响应头，检查 rate limit 头是否存在
+        console.log('[Background] OpenAI 响应头:');
+        response.headers.forEach((value, key) => console.log(`${key}: ${value}`));
+
         if (!response.ok) {
           // 尝试获取详细错误信息
           let errorDetail = '';
@@ -1229,6 +1304,123 @@ async function testMicrosoftTranslateFunction(
     }
   } else {
     return `${resultMessage}\n❌ 所有微软翻译路径均不可用!`;
+  }
+}
+
+/**
+ * 调用OpenAI API并获取限流信息
+ * @param apiKey 用户的OpenAI API Key
+ * @param endpoint OpenAI接口路径，例如'/v1/chat/completions'
+ * @param payload 请求体对象
+ * @returns 包含限流信息和响应体的对象
+ * @throws 网络或接口异常时抛出错误
+ */
+async function callOpenAIWithRateLimitInfo(apiKey: string, endpoint: string, payload: any) {
+  const url = `https://api.openai.com${endpoint}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify(payload)
+  });
+
+  // 调试：打印所有响应头，检查 rate limit 头是否存在
+  console.log('[Background] OpenAI 响应头:');
+  response.headers.forEach((value, key) => console.log(`${key}: ${value}`));
+
+  if (!response.ok) {
+    let errorData;
+    try {
+      errorData = await response.json();
+    } catch (parseErr) {
+      const errText = await response.text();
+      throw new Error(`OpenAI 接口调用失败: ${response.status} ${errText}`);
+    }
+    const { message, type, code, param } = errorData.error || {};
+    const error = new Error(`OpenAI 接口调用失败: ${message}`);
+    Object.assign(error, { status: response.status, type, code, param });
+    throw error;
+  }
+
+  // 获取限流相关响应头
+  const rateLimitRequests = response.headers.get('x-ratelimit-limit-requests');
+  const rateLimitTokens = response.headers.get('x-ratelimit-limit-tokens');
+  const remainingRequests = response.headers.get('x-ratelimit-remaining-requests');
+  const remainingTokens = response.headers.get('x-ratelimit-remaining-tokens');
+  const resetRequests = response.headers.get('x-ratelimit-reset-requests');
+  const resetTokens = response.headers.get('x-ratelimit-reset-tokens');
+
+  const data = await response.json();
+  // 更新限流信息：若 header 缺失则返回 undefined
+  return {
+    rateLimitRequests: rateLimitRequests !== null ? Number(rateLimitRequests) : undefined,
+    rateLimitTokens: rateLimitTokens !== null ? Number(rateLimitTokens) : undefined,
+    remainingRequests: remainingRequests !== null ? Number(remainingRequests) : undefined,
+    remainingTokens: remainingTokens !== null ? Number(remainingTokens) : undefined,
+    resetRequests: resetRequests !== null ? resetRequests : undefined,
+    resetTokens: resetTokens !== null ? resetTokens : undefined,
+    responseBody: data
+  };
+}
+
+/**
+ * 测试OpenAI模型连接并获取限流信息
+ * @param apiKey API密钥
+ * @param model 模型名称
+ * @returns 测试结果，包含成功状态、消息和可能的限流信息
+ */
+async function testOpenAIModel(
+  apiKey: string,
+  model: string
+): Promise<{
+  success: boolean, 
+  message: string, 
+  limits?: {
+    maxTokens?: number, 
+    maxRequests?: number, 
+    remainingTokens?: number,
+    remainingRequests?: number,
+    resetTokens?: string,
+    resetRequests?: string
+  }
+}> {
+  try {
+    console.log(`测试OpenAI模型: ${model}`);
+    
+    // 构建简单的chat completions请求
+    const payload = {
+      model: model,
+      messages: [
+        { role: "system", content: "You are a helpful assistant." },
+        { role: "user", content: "Hello, this is a test message. Please respond with 'OK'." }
+      ],
+      max_tokens: 5
+    };
+    
+    // 使用新的函数调用API并获取限流信息
+    const result = await callOpenAIWithRateLimitInfo(apiKey, "/v1/chat/completions", payload);
+    console.log("OpenAI API测试成功，获取到限流信息:", result);
+    
+    return {
+      success: true,
+      message: "API连接成功！",
+      limits: {
+        maxTokens: result.rateLimitTokens,
+        maxRequests: result.rateLimitRequests,
+        remainingTokens: result.remainingTokens,
+        remainingRequests: result.remainingRequests,
+        resetTokens: result.resetTokens,
+        resetRequests: result.resetRequests
+      }
+    };
+  } catch (error) {
+    console.error("OpenAI模型测试失败:", error);
+    return {
+      success: false,
+      message: `测试失败: ${(error as Error).message}`
+    };
   }
 }
 

@@ -206,6 +206,16 @@ input:checked + .slider:before {
 #api-key-panel, #custom-api-panel {
     flex-direction: column;
     align-items: flex-start;
+    width: 100%;
+    margin-top: 5px;
+}
+
+#custom-api-panel {
+    display: none; /* 默认隐藏 */
+}
+
+#api-key-panel.visible, #custom-api-panel.visible {
+    display: block; /* 在添加visible类时显示 */
 }
 
 #api-key-panel label, #custom-api-panel label {
@@ -490,4 +500,194 @@ input[type="password"] {
     width: 100%;
     text-align: center;
     margin-top: 5px;
+}
+
+/* 添加高级设置相关样式 */
+.advanced-toggle {
+    cursor: pointer;
+    margin-bottom: 5px;
+}
+
+.advanced-toggle-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 0;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.toggle-btn {
+    background: none;
+    border: none;
+    color: #666;
+    cursor: pointer;
+    font-size: 14px;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s ease;
+}
+
+.toggle-btn.expanded .toggle-icon {
+    transform: rotate(90deg);
+}
+
+.advanced-panel {
+    margin-top: 0;
+    padding-top: 5px;
+    transition: max-height 0.3s ease, opacity 0.2s ease;
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+}
+
+.advanced-panel.expanded {
+    max-height: 1000px;
+    opacity: 1;
+}
+
+.advanced-setting-item {
+    margin-bottom: 15px;
+    padding-left: 10px;
+    border-left: 2px solid #e0e0e0;
+}
+
+.setting-description {
+    font-size: 12px;
+    color: #666;
+    margin-top: 2px;
+}
+
+.slider-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.slider-container input[type="range"] {
+    flex: 1;
+}
+
+#openai-custom-model {
+    margin-top: 5px;
+    width: 100%;
+}
+
+/* API面板动画 */
+#openai-basic-panel, #openai-advanced-toggle, #openai-advanced-panel {
+    transition: opacity 0.3s ease, height 0.3s ease;
+}
+
+/* 添加限流信息面板样式 */
+.ratelimit-panel {
+    margin-top: 15px;
+    padding: 10px;
+    background-color: #f8f9fa;
+    border-radius: 6px;
+    border: 1px solid #e0e0e0;
+}
+
+.ratelimit-panel h3 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    font-size: 14px;
+    color: #333;
+}
+
+.ratelimit-info {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.ratelimit-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    padding: 3px 0;
+}
+
+.ratelimit-label {
+    color: #555;
+    font-weight: 500;
+}
+
+.ratelimit-value {
+    font-weight: 600;
+    color: #1a73e8;
+    font-family: 'Roboto Mono', monospace;
+}
+
+/* 添加特别样式 */
+.ratelimit-value.warning {
+    color: #f57c00; /* 橙色警告 */
+}
+
+.ratelimit-value.danger {
+    color: #d32f2f; /* 红色危险 */
+}
+
+.ratelimit-value.good {
+    color: #388e3c; /* 绿色良好 */
+}
+
+/* 密码输入框和显示/隐藏按钮样式 */
+.password-container {
+    position: relative;
+    width: 100%;
+    display: flex;
+}
+
+.password-container input[type="password"],
+.password-container input[type="text"] {
+    flex: 1;
+    padding-right: 35px; /* 留出按钮空间 */
+}
+
+.toggle-password {
+    position: absolute;
+    right: 5px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #aaa;
+    padding: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.toggle-password:hover {
+    color: #fff;
+}
+
+/* 简单设置项样式 */
+.simple-setting-item {
+    margin-top: 15px;
+    padding: 10px;
+    background-color: #2a2a2a;
+    border-radius: 6px;
+    border: 1px solid #444;
+}
+
+.simple-setting-item label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: #ddd;
+}
+
+/* 确保API密钥面板始终显示 */
+#api-key-panel {
+    display: flex !important;
+    margin-top: 15px !important;
+    margin-bottom: 15px !important;
+    max-height: 500px !important;
+    opacity: 1 !important;
+    overflow: visible !important;
 } 

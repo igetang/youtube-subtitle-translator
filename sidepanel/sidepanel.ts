@@ -38,7 +38,28 @@ const serviceTypeApiKey = document.getElementById('service-type-api-key') as HTM
 const membershipPanel = document.getElementById('membership-panel') as HTMLDivElement;
 const socialLoginButtons = document.querySelectorAll('.social-login-btn') as NodeListOf<HTMLButtonElement>;
 const loginResultSpan = document.getElementById('login-result') as HTMLSpanElement;
+// 新增: OpenAI相关元素
+const openaiBasicPanel = document.getElementById('openai-basic-panel') as HTMLDivElement;
+const openaiModelSelect = document.getElementById('openai-model') as HTMLSelectElement;
+const openaiCustomModel = document.getElementById('openai-custom-model') as HTMLInputElement;
+const openaiTemperature = document.getElementById('openai-temperature') as HTMLInputElement;
+const openaiTemperatureValue = document.getElementById('openai-temperature-value') as HTMLSpanElement;
 // --- End 新增: 翻译API元素 ---
+
+// OpenAI限流信息面板元素
+const openaiRatelimitPanel = document.getElementById('openai-ratelimit-panel') as HTMLDivElement;
+const ratelimitLimitRequests = document.getElementById('x-ratelimit-limit-requests') as HTMLSpanElement;
+const ratelimitLimitTokens = document.getElementById('x-ratelimit-limit-tokens') as HTMLSpanElement;
+const ratelimitRemainingRequests = document.getElementById('x-ratelimit-remaining-requests') as HTMLSpanElement;
+const ratelimitRemainingTokens = document.getElementById('x-ratelimit-remaining-tokens') as HTMLSpanElement;
+const ratelimitResetRequests = document.getElementById('x-ratelimit-reset-requests') as HTMLSpanElement;
+const ratelimitResetTokens = document.getElementById('x-ratelimit-reset-tokens') as HTMLSpanElement;
+
+// 密码显示/隐藏功能元素
+const togglePasswordBtn = document.getElementById('toggle-password') as HTMLButtonElement;
+const apiKeyPasswordInput = document.getElementById('api-key') as HTMLInputElement;
+const eyeOpenIcon = togglePasswordBtn?.querySelector('.eye-open') as SVGElement;
+const eyeClosedIcon = togglePasswordBtn?.querySelector('.eye-closed') as SVGElement;
 
 /** 存储当前侧边栏关联的标签页 ID */
 let currentTabId: number | null = null;
@@ -69,6 +90,36 @@ const apiInfoMap: Record<string, ApiInfo> = {
         name: '微软翻译',
         infoUrl: 'https://www.microsoft.com/zh-cn/translator/',
         requiresKey: false,
+        customConfig: false
+    },
+    'deepl': {
+        name: 'DeepL API',
+        infoUrl: 'https://www.deepl.com/pro-api',
+        requiresKey: true,
+        customConfig: false
+    },
+    'openai': {
+        name: 'OpenAI API',
+        infoUrl: 'https://platform.openai.com/docs/guides/text-generation',
+        requiresKey: true,
+        customConfig: false
+    },
+    'gemini': {
+        name: 'Gemini API',
+        infoUrl: 'https://ai.google.dev/docs',
+        requiresKey: true,
+        customConfig: false
+    },
+    'deepseek': {
+        name: 'DeepSeek API',
+        infoUrl: 'https://platform.deepseek.com/',
+        requiresKey: true,
+        customConfig: false
+    },
+    'qwen': {
+        name: '阿里Qwen API',
+        infoUrl: 'https://help.aliyun.com/zh/dashscope/developer-reference/api-details',
+        requiresKey: true,
         customConfig: false
     }
 };
@@ -191,6 +242,12 @@ const defaultSettings = {
         headers: '{"Content-Type": "application/json"}',
         body: '{"text": "{text}", "source": "{source}", "target": "{target}"}',
         responsePath: 'data.translations[0].text'
+    },
+    // 新增: OpenAI API配置默认值
+    openaiConfig: {
+        model: 'gpt-4o',
+        customModel: '',
+        temperature: 0.7
     }
 };
 
@@ -412,41 +469,59 @@ function getFallbackTargetLang(sourceLangCode: string): string {
  * @param apiType 当前选择的API类型
  */
 function updateApiPanels(apiType: string) {
-    // 获取API信息
-    const apiInfo = apiInfoMap[apiType] || {
-        name: '未知API',
-        infoUrl: '',
-        requiresKey: false,
-        customConfig: false
-    };
+    console.log(`[updateApiPanels] 更新API面板: ${apiType}`);
     
-    // 隐藏所有API相关面板
+    // 重置所有面板为隐藏
     if (apiKeyPanel) apiKeyPanel.style.display = 'none';
     if (serviceTypePanel) serviceTypePanel.style.display = 'none';
     if (membershipPanel) membershipPanel.style.display = 'none';
     if (customApiPanel) customApiPanel.style.display = 'none';
+    if (openaiBasicPanel) openaiBasicPanel.style.display = 'none';
     
-    // 设置API信息链接
-    if (apiInfoLink && apiInfo.infoUrl) {
-        apiInfoLink.href = apiInfo.infoUrl;
-        apiInfoLink.parentElement!.style.display = 'block';
-    } else if (apiInfoLink) {
-        apiInfoLink.parentElement!.style.display = 'none';
-    }
+    // 根据API类型显示相应面板
+    const apiInfo = apiInfoMap[apiType];
     
-    // 对于当前只保留的免费API选项，不需要显示API密钥或服务类型面板
-    // 只有模拟翻译、Google翻译、微软翻译
-    
-    // 更新测试按钮文本
+    // 测试按钮显示与否
     if (testApiKeyButton) {
-        testApiKeyButton.textContent = `测试连接`;
+        testApiKeyButton.style.display = apiInfo?.requiresKey || apiType.includes('-free') ? 'block' : 'none';
     }
     
-    // 清除测试结果
-    if (testResultSpan) {
-        testResultSpan.textContent = '';
-        testResultSpan.className = 'test-result';
+    // 非付费API，不显示任何面板
+    if (!apiInfo) {
+        console.log(`[updateApiPanels] 未找到API信息: ${apiType}`);
+        return;
     }
+    
+    // 显示API密钥输入面板，对于所有需要密钥的API
+    if (apiInfo.requiresKey && apiKeyPanel) {
+        apiKeyPanel.style.display = 'block';
+        
+        // 更新提示链接
+        if (apiInfoLink && apiInfo.infoUrl) {
+            apiInfoLink.href = apiInfo.infoUrl;
+            apiInfoLink.textContent = `如何获取${apiInfo.name}API密钥？`;
+        }
+    }
+    
+    // 自定义API
+    if (apiInfo.customConfig && customApiPanel) {
+        customApiPanel.style.display = 'block';
+    }
+    
+    // 需要选择服务类型的API
+    if (apiType === 'deepl') {
+        if (serviceTypePanel) serviceTypePanel.style.display = 'block';
+        updateAuthPanels();
+    }
+    // 处理OpenAI相关面板
+    else if (apiType === 'openai') {
+        if (openaiBasicPanel) openaiBasicPanel.style.display = 'block';
+        // 确保API密钥面板也显示
+        if (apiKeyPanel) apiKeyPanel.style.display = 'block';
+    }
+    
+    // 最后确保API密钥面板始终可见
+    ensureApiKeyPanelVisible();
 }
 
 /**
@@ -454,29 +529,10 @@ function updateApiPanels(apiType: string) {
  */
 function updateAuthPanels() {
     const apiType = translationApiSelect?.value || defaultSettings.translationApi;
-    const isPaidService = apiType.endsWith('-paid');
-    const currentServiceType = serviceTypeMembership?.checked ? 'membership' : 'api-key';
-    
-    // 处理会员登录面板
-    if (membershipPanel) {
-        if (isPaidService && currentServiceType === 'membership') {
-            membershipPanel.classList.add('visible');
-            membershipPanel.style.display = 'flex';
-        } else {
-            membershipPanel.classList.remove('visible');
-            setTimeout(() => {
-                if (!isPaidService || currentServiceType !== 'membership') {
-                    membershipPanel.style.display = 'none';
-                }
-            }, 300);
-        }
-    }
     
     // 处理API密钥面板
     if (apiKeyPanel) {
-        const needsApiKey = (isPaidService && currentServiceType === 'api-key') || 
-                           apiType === 'custom' || 
-                           (apiInfoMap[apiType]?.requiresKey && !isPaidService);
+        const needsApiKey = apiInfoMap[apiType]?.requiresKey || apiType === 'custom';
         
         if (needsApiKey) {
             apiKeyPanel.classList.add('visible');
@@ -485,14 +541,7 @@ function updateAuthPanels() {
             apiKeyPanel.classList.remove('visible');
             setTimeout(() => {
                 const currentApiType = translationApiSelect?.value || defaultSettings.translationApi;
-                const currentIsPaidService = currentApiType.endsWith('-paid');
-                const currentServiceTypeValue = serviceTypeMembership?.checked ? 'membership' : 'api-key';
-                
-                const shouldHide = !(
-                    (currentIsPaidService && currentServiceTypeValue === 'api-key') || 
-                    currentApiType === 'custom' || 
-                    (apiInfoMap[currentApiType]?.requiresKey && !currentIsPaidService)
-                );
+                const shouldHide = !(apiInfoMap[currentApiType]?.requiresKey || currentApiType === 'custom');
                 
                 if (shouldHide) {
                     apiKeyPanel.style.display = 'none';
@@ -507,7 +556,17 @@ function updateAuthPanels() {
  */
 function loadSettings() {
     console.log('[Debug] 开始从storage加载设置...');
-    chrome.storage.sync.get(['sourceLang', 'targetLang', 'subtitleMode', 'translationApi', 'apiKey', 'serviceType', 'membershipCredentials', 'customApiConfig'], (result) => {
+    chrome.storage.sync.get([
+        'sourceLang', 
+        'targetLang', 
+        'subtitleMode', 
+        'translationApi', 
+        'apiKey', 
+        'serviceType', 
+        'membershipCredentials', 
+        'customApiConfig',
+        'openaiConfig'
+    ], (result) => {
         console.log('[Debug] storage.get回调执行, 结果:', result);
         if (chrome.runtime.lastError) {
             console.error('[Error] 从storage加载设置时出错:', chrome.runtime.lastError);
@@ -527,7 +586,8 @@ function loadSettings() {
             apiKey: defaultSettings.apiKey,
             serviceType: defaultSettings.serviceType,
             membershipCredentials: defaultSettings.membershipCredentials,
-            customApiConfig: defaultSettings.customApiConfig
+            customApiConfig: defaultSettings.customApiConfig,
+            openaiConfig: defaultSettings.openaiConfig
         };
 
         if (result.translationApi) {
@@ -553,6 +613,11 @@ function loadSettings() {
         if (result.customApiConfig) {
             loadedApiSettings.customApiConfig = result.customApiConfig;
             console.log(`[Debug] 从storage加载自定义API配置`);
+        }
+        
+        if (result.openaiConfig) {
+            loadedApiSettings.openaiConfig = result.openaiConfig;
+            console.log(`[Debug] 从storage加载OpenAI配置`);
         }
 
         // 显示设置到UI
@@ -635,57 +700,77 @@ function updateUI(settings: Partial<typeof defaultSettings>) {
  * 保存设置到chrome.storage
  */
 function saveSettings() {
+    // 获取当前选中的源语言
+    const sourceLang = sourceLangSelect ? sourceLangSelect.value : defaultSettings.sourceLang;
+    
+    // 获取当前选中的目标语言 (从targetLangTrigger的data-value属性)
+    const targetLang = (targetLangTriggerValue && targetLangTriggerValue.dataset.value) ? 
+                        targetLangTriggerValue.dataset.value : 
+                        currentSelectedTargetLang || defaultSettings.targetLang;
+    
+    // 获取字幕模式
+    const subtitleMode = subtitleTypeSwitch && subtitleTypeSwitch.checked ? 'bilingual' : 'targetOnly';
+    
+    // 获取API设置
+    const translationApi = translationApiSelect ? translationApiSelect.value : defaultSettings.translationApi;
+    const apiKey = apiKeyInput ? apiKeyInput.value : defaultSettings.apiKey;
+    
+    // 获取服务类型
+    const serviceType = serviceTypeMembership && serviceTypeMembership.checked ? 'membership' : 'api-key';
+    
     // 获取自定义API配置
-    const customApiConfigValue = {
-        url: customApiUrl?.value || defaultSettings.customApiConfig.url,
-        method: customApiMethod?.value || defaultSettings.customApiConfig.method,
-        headers: customApiHeaders?.value || defaultSettings.customApiConfig.headers,
-        body: customApiBody?.value || defaultSettings.customApiConfig.body,
-        responsePath: customApiResponsePath?.value || defaultSettings.customApiConfig.responsePath
+    const customApiConfig = {
+        url: customApiUrl ? customApiUrl.value : defaultSettings.customApiConfig.url,
+        method: customApiMethod ? customApiMethod.value : defaultSettings.customApiConfig.method,
+        headers: customApiHeaders ? customApiHeaders.value : defaultSettings.customApiConfig.headers,
+        body: customApiBody ? customApiBody.value : defaultSettings.customApiConfig.body,
+        responsePath: customApiResponsePath ? customApiResponsePath.value : defaultSettings.customApiConfig.responsePath
     };
-
-    // 获取当前登录状态
-    const currentLoginState: LoginState = chrome.storage.sync.get('membershipCredentials')
-        .then(result => result.membershipCredentials) 
-        .catch(() => defaultSettings.membershipCredentials) as unknown as LoginState;
-
-    const selectedTargetValue = currentSelectedTargetLang || defaultSettings.targetLang;
-    const settingsToSave = {
-        sourceLang: sourceLangSelect?.value || defaultSettings.sourceLang,
-        targetLang: selectedTargetValue,
-        subtitleMode: subtitleTypeSwitch?.checked ? 'bilingual' : 'targetOnly',
-        // 新增：保存API相关设置
-        translationApi: translationApiSelect?.value || defaultSettings.translationApi,
-        apiKey: apiKeyInput?.value || '',
-        serviceType: serviceTypeMembership?.checked ? 'membership' : 'api-key',
-        membershipCredentials: currentLoginState,
-        customApiConfig: customApiConfigValue
+    
+    // 获取OpenAI配置
+    const openaiConfig = {
+        model: openaiModelSelect ? openaiModelSelect.value : defaultSettings.openaiConfig.model,
+        customModel: openaiCustomModel ? openaiCustomModel.value : defaultSettings.openaiConfig.customModel,
+        temperature: openaiTemperature ? parseFloat(openaiTemperature.value) : defaultSettings.openaiConfig.temperature
     };
-    chrome.storage.sync.set(settingsToSave, () => {
+    
+    // 保存到chrome.storage
+    chrome.storage.sync.set({
+        sourceLang,
+        targetLang,
+        subtitleMode,
+        translationApi,
+        apiKey,
+        serviceType,
+        customApiConfig,
+        openaiConfig
+    }, () => {
         if (chrome.runtime.lastError) {
             console.error('保存设置时出错:', chrome.runtime.lastError);
         } else {
-            console.log('设置已保存:', settingsToSave);
-            // 当设置保存成功后，向内容脚本发送消息更新字幕模式
-            if (currentTabId) { //确保 currentTabId 有效
-                chrome.tabs.sendMessage(
-                    currentTabId,
-                    {
-                        action: 'subtitleModeUpdated',
-                        mode: settingsToSave.subtitleMode
-                    },
-                    (response) => {
-                        if (chrome.runtime.lastError) {
-                            // 在这里处理错误，例如目标标签页不存在或内容脚本没有监听
-                            // 对于 "Could not establish connection..." 错误，这通常意味着内容脚本没有对应的 listener
-                            // 或者 currentTabId 指向的标签页没有成功注入内容脚本或已关闭
-                            console.warn('向内容脚本发送字幕模式更新消息失败:', chrome.runtime.lastError.message);
-                        } else {
-                            // 处理来自内容脚本的成功响应 (可选)
-                            console.log('内容脚本响应subtitleModeUpdated:', response);
-                        }
+            console.log('设置已保存:', {
+                sourceLang,
+                targetLang,
+                subtitleMode,
+                translationApi,
+                apiKey,
+                serviceType,
+                customApiConfig,
+                openaiConfig
+            });
+            
+            // 设置已保存，向内容脚本发送更新消息
+            if (currentTabId) {
+                // 字幕设置更新
+                chrome.tabs.sendMessage(currentTabId, { 
+                    action: 'settingsUpdated',
+                    settings: {
+                        sourceLang,
+                        targetLang,
+                        subtitleMode,
+                        translationApi
                     }
-                );
+                });
             }
         }
     });
@@ -868,63 +953,107 @@ async function requestAndFillSourceLanguages(tabId: number) {
 }
 
 /**
- * 测试API连接是否有效
- * @param apiType API类型
- * @param apiKey API密钥（对于免费API不需要）
- * @param customConfig 自定义API配置（不需要）
- * @returns 测试结果
+ * 测试API连接
+ * @param forceTest 是否强制进行测试，即使是免费API
+ * @param model 仅当选择OpenAI模型时使用，特定模型名称
  */
-async function testApiKey(
-    apiType: string, 
-    apiKey: string = '', 
-    customConfig?: typeof defaultSettings.customApiConfig
-): Promise<{success: boolean, message: string}> {
-    try {
-        // 准备测试数据
-        const testText = "Hello, world!"; // 简单测试文本
+function testApiKey(forceTest: boolean = false, model?: string) {
+    if (!testResultSpan) return;
+    
+    // 重置测试结果
+    testResultSpan.textContent = '';
+    testResultSpan.className = 'test-result';
+    
+    // 获取当前API类型和密钥
+    const apiType = translationApiSelect?.value || defaultSettings.translationApi;
+    const apiKey = apiKeyInput?.value || '';
+    
+    // 免费API不需要密钥，除非强制测试
+    if (!apiInfoMap[apiType]?.requiresKey && !forceTest) {
+        testResultSpan.textContent = '正在测试免费API连接...';
+        testResultSpan.className = 'test-result in-progress';
         
-        // 获取源语言和目标语言
-        const language = sourceLangSelect?.value || 'en';
-        const targetLang = currentSelectedTargetLang || loadedTargetLang || 'zh-Hans';
-        
-        console.log(`[Test API] Testing ${apiType} with source=${language}, target=${targetLang}`);
-        
-        // 显示测试中状态
-        if (testResultSpan) {
-            testResultSpan.textContent = '正在测试连接...';
-            testResultSpan.className = 'test-result';
+        // 测试API连接
+        chrome.runtime.sendMessage({
+            action: 'testFreeTranslation', 
+            apiType: apiType
+        }, (response) => {
+            if (response.success) {
+                testResultSpan.textContent = '连接测试成功！';
+                testResultSpan.className = 'test-result success';
+            } else {
+                testResultSpan.textContent = `测试失败: ${response.message}`;
+                testResultSpan.className = 'test-result error';
+            }
+        });
+        return;
+    }
+    
+    // 特殊处理OpenAI模型选择
+    if (apiType === 'openai' && model) {
+        if (apiKey.trim() === '') {
+            testResultSpan.textContent = '请输入API密钥';
+            testResultSpan.className = 'test-result error';
+            return;
         }
         
-        // 发送测试请求到后台脚本
-        return await new Promise<{success: boolean, message: string}>((resolve, reject) => {
-            chrome.runtime.sendMessage(
-                {
-                    action: 'testApiKey',
-                    payload: {
-                        apiType,
-                        apiKey,
-                        testText,
-                        sourceLang: language,
-                        targetLang: targetLang,
-                        customConfig
-                    }
-                },
-                (response) => {
-                    if (chrome.runtime.lastError) {
-                        reject(new Error(chrome.runtime.lastError.message));
-                    } else {
-                        resolve(response);
-                    }
+        // 显示测试中
+        testResultSpan.textContent = '正在测试OpenAI模型连接...';
+        testResultSpan.className = 'test-result in-progress';
+        
+        // 发送测试请求到后台脚本，包含模型信息
+        chrome.runtime.sendMessage({
+            action: 'testOpenAIModel',
+            apiKey: apiKey,
+            model: model
+        }, (response) => {
+            if (response.success) {
+                testResultSpan.textContent = '连接测试成功！';
+                testResultSpan.className = 'test-result success';
+                
+                // 更新界面显示的限制信息
+                if (response.limits) {
+                    // 更新限流信息面板
+                    updateOpenAIRateLimitInfo(response.limits);
                 }
-            );
+            } else {
+                // 自定义处理组织未验证错误
+                if (response.message.includes('must be verified')) {
+                    testResultSpan.textContent = '测试失败: 组织未验证，请前往 https://platform.openai.com/settings/organization/general 验证组织，验证后可能需15分钟生效';
+                } else {
+                    testResultSpan.textContent = `测试失败: ${response.message}`;
+                }
+                testResultSpan.className = 'test-result error';
+            }
         });
-    } catch (error) {
-        console.error('测试API时出错:', error);
-        return {
-            success: false,
-            message: error instanceof Error ? error.message : '未知错误'
-        };
+        return;
     }
+    
+    // 需要API密钥的服务
+    if (apiKey.trim() === '') {
+        testResultSpan.textContent = '请输入API密钥';
+        testResultSpan.className = 'test-result error';
+        return;
+    }
+    
+    // 显示测试中
+    testResultSpan.textContent = '正在测试API连接...';
+    testResultSpan.className = 'test-result in-progress';
+    
+    // 发送测试请求到后台脚本
+    chrome.runtime.sendMessage({
+        action: 'testApiKey',
+        apiType: apiType,
+        apiKey: apiKey
+    }, (response) => {
+        if (response.success) {
+            testResultSpan.textContent = '连接测试成功！';
+            testResultSpan.className = 'test-result success';
+        } else {
+            testResultSpan.textContent = `测试失败: ${response.message}`;
+            testResultSpan.className = 'test-result error';
+        }
+    });
 }
 
 /**
@@ -972,98 +1101,123 @@ function addEventListeners() {
     // 字幕类型切换
     subtitleTypeSwitch?.addEventListener('change', saveSettings);
 
-    // 新增: 翻译API选择更改事件
+    // 监听API选择变化
     if (translationApiSelect) {
         translationApiSelect.addEventListener('change', () => {
-            updateApiPanels(translationApiSelect.value);
+            const apiType = translationApiSelect.value;
+            console.log(`[事件] API类型更改为: ${apiType}`);
+            updateApiPanels(apiType);
+            // 通过调用saveSettings保存变化
             saveSettings();
         });
     }
-
-    // 新增: API密钥输入变化事件 (使用防抖)
+    
+    // 监听所有输入字段变化，自动保存
     if (apiKeyInput) {
-        let apiKeyTimeout: number | null = null;
-        apiKeyInput.addEventListener('input', () => {
-            if (apiKeyTimeout) clearTimeout(apiKeyTimeout);
-            apiKeyTimeout = window.setTimeout(() => {
-                saveSettings();
-                apiKeyTimeout = null;
-            }, 500); // 500ms防抖
-        });
+        apiKeyInput.addEventListener('change', saveSettings);
     }
     
-    // 初始化测试API密钥按钮事件
+    // 添加密码显示/隐藏按钮事件
+    if (togglePasswordBtn && apiKeyPasswordInput) {
+        togglePasswordBtn.addEventListener('click', togglePasswordVisibility);
+    }
+    
+    // 测试API连接按钮
     if (testApiKeyButton) {
-        testApiKeyButton.addEventListener('click', async () => {
-            // 对于免费API，不需要API密钥，直接测试连接
-            const apiType = translationApiSelect?.value || 'google-free';
-            
-            try {
-                testApiKeyButton.textContent = '测试中...';
-                testApiKeyButton.disabled = true;
-                
-                // 测试API连接
-                const result = await testApiKey(apiType);
-                
-                // 显示测试结果
-                displayTestResult(result);
-            } catch (error) {
-                console.error('测试API连接失败:', error);
-                displayTestResult({
-                    success: false,
-                    message: error instanceof Error ? error.message : '未知错误'
-                });
-            } finally {
-                testApiKeyButton.textContent = '测试连接';
-                testApiKeyButton.disabled = false;
-            }
-        });
+        testApiKeyButton.addEventListener('click', () => testApiKey());
     }
+    
+    // 处理点击文档其他地方关闭目标语言面板
+    document.addEventListener('click', (e) => {
+        if (targetLangPanel && 
+            targetLangPanel.style.display === 'block' && 
+            !targetLangContainer?.contains(e.target as Node)) {
+            closeTargetLanguagePanel();
+        }
+    });
+    
+    // 设置键盘事件监听
+    window.addEventListener('keydown', (e) => {
+        // ESC键关闭目标语言面板
+        if (e.key === 'Escape' && targetLangPanel && targetLangPanel.style.display === 'block') {
+            closeTargetLanguagePanel();
+        }
+    });
 
-    // 新增: 服务类型单选按钮变化事件
-    if (serviceTypeMembership && serviceTypeApiKey) {
-        serviceTypeMembership.addEventListener('change', () => {
-            updateAuthPanels();
-            saveSettings();
-        });
-        
-        serviceTypeApiKey.addEventListener('change', () => {
-            updateAuthPanels();
+    // 监听OpenAI模型选择变化
+    if (openaiModelSelect) {
+        openaiModelSelect.addEventListener('change', () => {
+            // 检查是否选择了"自定义"选项
+            if (openaiModelSelect.value === 'custom' && openaiCustomModel) {
+                openaiCustomModel.style.display = 'block';
+            } else if (openaiCustomModel) {
+                openaiCustomModel.style.display = 'none';
+                
+                // 当选择非自定义模型且有API密钥时，自动测试该模型的API
+                const apiKey = apiKeyInput?.value || '';
+                if (apiKey.trim() !== '') {
+                    // 自动测试所选模型
+                    testApiKey(true, openaiModelSelect.value);
+                }
+            }
             saveSettings();
         });
     }
     
-    // 新增: 社交登录按钮点击事件
-    if (socialLoginButtons) {
-        socialLoginButtons.forEach(button => {
-            const provider = button.dataset.provider as LoginProvider;
-            if (provider) {
-                button.addEventListener('click', async () => {
-                    await handleSocialLogin(provider);
-                });
-            }
-        });
+    // 监听自定义模型输入变化
+    if (openaiCustomModel) {
+        openaiCustomModel.addEventListener('change', saveSettings);
     }
-
-    // 新增: 自定义API配置变化事件 (使用防抖)
-    const customApiInputs = [customApiUrl, customApiMethod, customApiHeaders, customApiBody, customApiResponsePath];
-    customApiInputs.forEach(input => {
-        if (!input) return;
-        
-        let timeout: number | null = null;
-        input.addEventListener('input', () => {
-            if (timeout) clearTimeout(timeout);
-            timeout = window.setTimeout(() => {
-                saveSettings();
-                timeout = null;
-            }, 500); // 500ms防抖
+    
+    // 监听Temperature控件变化
+    if (openaiTemperature && openaiTemperatureValue) {
+        openaiTemperature.addEventListener('input', () => {
+            // 更新显示的值
+            openaiTemperatureValue.textContent = openaiTemperature.value;
         });
-    });
+        
+        openaiTemperature.addEventListener('change', saveSettings);
+    }
+}
+
+/**
+ * 切换API密钥输入框的密码显示/隐藏状态
+ */
+function togglePasswordVisibility() {
+    if (!apiKeyPasswordInput || !eyeOpenIcon || !eyeClosedIcon) return;
+    
+    if (apiKeyPasswordInput.type === 'password') {
+        // 显示密码
+        apiKeyPasswordInput.type = 'text';
+        eyeOpenIcon.style.display = 'none';
+        eyeClosedIcon.style.display = 'block';
+    } else {
+        // 隐藏密码
+        apiKeyPasswordInput.type = 'password';
+        eyeOpenIcon.style.display = 'block';
+        eyeClosedIcon.style.display = 'none';
+    }
+}
+
+/**
+ * 强制显示API密钥输入框
+ * 确保API密钥面板在所有情况下都可见
+ */
+function ensureApiKeyPanelVisible() {
+    if (apiKeyPanel) {
+        console.log('[ensureApiKeyPanelVisible] 强制显示API密钥输入框');
+        apiKeyPanel.style.display = 'flex';
+        apiKeyPanel.classList.add('visible'); // 添加visible类以确保面板真正可见
+    }
 }
 
 // --- 初始化 ---
 document.addEventListener('DOMContentLoaded', () => {
     console.log("===== 侧边栏DOMContentLoaded开始 =====");
+    
+    // 最优先：确保API密钥面板始终可见
+    ensureApiKeyPanelVisible();
+    
     // 1. 获取 UI 语言
     uiLangCode = chrome.i18n.getUILanguage();
     console.log(`[Debug] 获取UI语言: ${uiLangCode}`);
@@ -1091,6 +1245,17 @@ document.addEventListener('DOMContentLoaded', () => {
     // 这一步现在会在 loadSettings 内部被再次调用，以确保基于最终的源语言更新禁用状态
     console.log("[Debug] 初步填充目标语言列表 (将在loadSettings后根据源语言刷新状态)");
     populateTargetLanguages(); 
+    
+    // 根据当前选择的API类型初始化显示或隐藏API密钥面板
+    if (translationApiSelect) {
+        const currentApiType = translationApiSelect.value;
+        updateApiPanels(currentApiType);
+    } else {
+        // 如果还没有加载API选择器，默认隐藏API密钥面板
+        if (apiKeyPanel) {
+            apiKeyPanel.style.display = 'none';
+        }
+    }
     
     // 4. 获取当前标签页 ID 并请求源语言轨道 (成功后调用 loadSettings)
     console.log("[Debug] 开始查询当前标签页");
@@ -1145,8 +1310,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // 6. 动态填充语言列表 
 
 /**
- * 将API设置显示到表单中
- * @param settings API设置对象
+ * 显示API设置到UI
  */
 function displayApiSettings(settings: {
     translationApi: string;
@@ -1154,20 +1318,22 @@ function displayApiSettings(settings: {
     serviceType: string;
     membershipCredentials: typeof defaultSettings.membershipCredentials;
     customApiConfig: typeof defaultSettings.customApiConfig;
+    openaiConfig: typeof defaultSettings.openaiConfig;
 }) {
-    // 设置翻译API选择器
+    // 设置翻译API下拉框
     if (translationApiSelect) {
         translationApiSelect.value = settings.translationApi;
-        // 根据选择更新面板显示
-        updateApiPanels(settings.translationApi);
     }
+    
+    // 更新API面板
+    updateApiPanels(settings.translationApi);
     
     // 设置API密钥
     if (apiKeyInput) {
         apiKeyInput.value = settings.apiKey;
     }
     
-    // 设置服务类型单选按钮
+    // 设置服务类型单选框
     if (serviceTypeMembership && serviceTypeApiKey) {
         if (settings.serviceType === 'membership') {
             serviceTypeMembership.checked = true;
@@ -1176,32 +1342,36 @@ function displayApiSettings(settings: {
             serviceTypeMembership.checked = false;
             serviceTypeApiKey.checked = true;
         }
-        // 更新相关面板
-        updateAuthPanels();
-    }
-    
-    // 设置会员登录状态
-    if (loginResultSpan && settings.membershipCredentials) {
-        // 如果是第三方登录
-        if (settings.membershipCredentials.loggedIn && settings.membershipCredentials.provider) {
-            loginResultSpan.textContent = `已通过${getProviderDisplayName(settings.membershipCredentials.provider as LoginProvider)}登录`;
-            loginResultSpan.className = 'result-text success';
-        }
-        // 兼容旧数据结构
-        else if (settings.membershipCredentials.loggedIn) {
-            loginResultSpan.textContent = '已登录';
-            loginResultSpan.className = 'result-text success';
-        }
     }
     
     // 设置自定义API配置
-    if (settings.customApiConfig) {
-        if (customApiUrl) customApiUrl.value = settings.customApiConfig.url;
-        if (customApiMethod) customApiMethod.value = settings.customApiConfig.method;
-        if (customApiHeaders) customApiHeaders.value = settings.customApiConfig.headers;
-        if (customApiBody) customApiBody.value = settings.customApiConfig.body;
-        if (customApiResponsePath) customApiResponsePath.value = settings.customApiConfig.responsePath;
+    if (customApiUrl) customApiUrl.value = settings.customApiConfig.url;
+    if (customApiMethod) customApiMethod.value = settings.customApiConfig.method;
+    if (customApiHeaders) customApiHeaders.value = settings.customApiConfig.headers;
+    if (customApiBody) customApiBody.value = settings.customApiConfig.body;
+    if (customApiResponsePath) customApiResponsePath.value = settings.customApiConfig.responsePath;
+    
+    // 设置OpenAI配置
+    if (openaiModelSelect) {
+        openaiModelSelect.value = settings.openaiConfig.model;
+        // 如果是自定义模型，显示输入框
+        if (settings.openaiConfig.model === 'custom' && openaiCustomModel) {
+            openaiCustomModel.style.display = 'block';
+            openaiCustomModel.value = settings.openaiConfig.customModel;
+        } else if (openaiCustomModel) {
+            openaiCustomModel.style.display = 'none';
+        }
     }
+    
+    if (openaiTemperature) {
+        openaiTemperature.value = settings.openaiConfig.temperature.toString();
+        if (openaiTemperatureValue) {
+            openaiTemperatureValue.textContent = settings.openaiConfig.temperature.toString();
+        }
+    }
+    
+    // 确保API密钥面板始终可见
+    ensureApiKeyPanelVisible();
 }
 
 /**
@@ -1227,4 +1397,61 @@ function displaySettings(settings: {
     if (subtitleTypeSwitch) {
         subtitleTypeSwitch.checked = settings.subtitleMode === 'bilingual';
     }
+}
+
+/**
+ * 更新OpenAI限流信息面板可见性
+ */
+function updateOpenAIRateLimitPanelVisibility() {
+    if (!openaiRatelimitPanel) return;
+    
+    // 确保限流信息面板始终显示
+    openaiRatelimitPanel.style.display = 'block';
+}
+
+/**
+ * 更新OpenAI API限流信息显示
+ * @param limits API限流信息
+ */
+function updateOpenAIRateLimitInfo(limits: {
+    maxTokens?: number;
+    maxRequests?: number;
+    remainingTokens?: number;
+    remainingRequests?: number;
+    resetTokens?: string;
+    resetRequests?: string;
+}) {
+    if (!openaiRatelimitPanel) return;
+    
+    // 仅显示每分钟请求限制 (RPM) 和每分钟令牌限制 (TPM)
+    if (ratelimitLimitRequests && limits.maxRequests !== undefined) {
+        ratelimitLimitRequests.textContent = `${limits.maxRequests} RPM`;
+    }
+    if (ratelimitLimitTokens && limits.maxTokens !== undefined) {
+        ratelimitLimitTokens.textContent = `${limits.maxTokens} TPM`;
+    }
+    
+    // 显示限流信息面板
+    openaiRatelimitPanel.style.display = 'block';
+}
+
+/**
+ * 格式化日期时间为更友好的显示
+ * @param date 日期对象
+ * @returns 格式化后的字符串
+ */
+function formatDateTime(date: Date): string {
+    // 如果时间在一小时内，显示相对时间
+    const now = new Date();
+    const diffMs = date.getTime() - now.getTime();
+    const diffMinutes = Math.round(diffMs / 60000);
+    
+    if (diffMinutes < 60) {
+        return `${diffMinutes} 分钟后`;
+    }
+    
+    // 否则显示具体时间
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    return `${hours}:${minutes}`;
 } 

@@ -253,7 +253,42 @@ textToShow = `${targetText}\n${sourceText}`;
    }
    ```
 
-### 2.6 错误处理优化
+### 2.6 OpenAI模型选项更新 (2024-05)
+
+为支持最新的AI翻译技术，我们对扩展中的OpenAI模型选项进行了全面更新：
+
+#### 模型列表更新
+
+基于最新OpenAI API文档和用户需求，我们更新了侧边栏中的模型选择列表：
+
+```html
+<select id="openai-model" name="openai-model">
+  <option value="gpt-4.1">gpt-4.1</option>
+  <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+  <option value="gpt-4.1-nano">gpt-4.1-nano</option>
+  <option value="gpt-4o">gpt-4o</option>
+  <option value="gpt-4o-mini">gpt-4o-mini</option>
+  <option value="custom">自定义...</option>
+</select>
+```
+
+- **移除** 过于昂贵或老旧模型：`gpt-4`、`gpt-o3` 系列、`o4-mini` 等
+- **保留** 主力系列和精简版本：`gpt-4.1` / `gpt-4.1-mini` / `gpt-4.1-nano` / `gpt-4o` / `gpt-4o-mini`
+- **自定义** 选项仍然可用，支持用户输入任意模型 ID
+
+#### 技术实现细节
+
+前端改动：
+1. 更新 `sidepanel.html` 中 `<select id="openai-model">` 元素
+2. 保持 `sidepanel.ts` 和 `background.ts` 中消息传递及处理逻辑不变
+
+#### 用户体验与性能考量
+
+1. **成本与性能平衡**：移除成本高且老旧的模型，保留通用性强、性能表现好的模型系列
+2. **界面简洁化**：用户下拉列表更加精炼，无需在大量模型间选择
+3. **灵活性保留**：`custom` 选项支持探索其他模型
+
+### 2.7 错误处理优化
 
 改进了翻译失败时的用户体验：
 
@@ -306,7 +341,7 @@ textToShow = `${targetText}\n${sourceText}`;
    }
    ```
 
-### 2.7 Google翻译API优化
+### 2.8 Google翻译API优化
 
 为提高Google免费翻译API的可靠性和成功率，实现了双路径请求策略：
 
@@ -369,7 +404,7 @@ textToShow = `${targetText}\n${sourceText}`;
    - 增强了翻译过程的稳定性
    - 减少了由于API变化导致的失败
 
-### 2.8 微软翻译API双路径实现与优化
+### 2.9 微软翻译API双路径实现与优化
 
 为提高微软翻译服务的可靠性和稳定性，我们实现了双路径策略并解决了关键认证问题：
 
@@ -669,130 +704,3 @@ chrome.storage.onChanged.addListener((changes) => {
   <option value="mock">模拟翻译</option>
 </select>
 ```
-
-2. 更新JS代码，仅保留免费API的处理逻辑：
-```typescript
-const defaultSettings = {
-  translationApi: 'google-free', // 设置Google为默认选项
-  // ... 其他设置 ...
-};
-
-const apiInfoMap = {
-  'google-free': { name: 'Google翻译', infoUrl: 'https://translate.google.com/' },
-  'youdao-free': { name: '有道翻译', infoUrl: 'https://fanyi.youdao.com/' },
-  'microsoft-free': { name: '微软翻译', infoUrl: 'https://www.bing.com/translator' },
-  'mock': { name: '模拟翻译', infoUrl: '#' }
-};
-```
-
-3. 移除了所有API密钥相关的面板和处理，简化界面：
-```typescript
-function updateApiPanels() {
-  // 所有面板都隐藏，因为免费API不需要密钥
-  document.querySelectorAll('.api-key-panel').forEach(panel => {
-    panel.classList.add('hidden');
-  });
-}
-```
-
-## 4. 翻译API详细说明
-
-### 4.1 Google翻译 (google-free)
-
-**优点**：
-* 无需API密钥，可直接调用
-* 支持大量语言对
-* 翻译质量稳定
-
-**实现细节**：
-* 使用非官方API端点 `translate.googleapis.com/translate_a/single`
-* 支持批处理翻译，每批最多10条文本
-* 添加500ms批次间延迟，避免限流
-
-**限制**：
-* 可能存在IP请求频率限制
-* 单次请求文本长度限制
-* 不保证长期可用性
-
-### 4.2 有道翻译 (youdao-free)
-
-**优点**：
-* 无需API密钥
-* 对中文翻译质量较好
-* 响应速度快
-
-**实现细节**：
-* 使用端点 `fanyi.youdao.com/translate`
-* 通过自定义语言代码映射处理有道特殊的语言格式
-* 实现批处理和请求延迟
-
-**限制**：
-* 支持的语言对比Google少
-* 较为严格的IP请求限制
-
-### 4.3 微软/Bing翻译 (microsoft-free)
-
-**优点**：
-* 无需API密钥，使用Edge浏览器认证令牌
-* 翻译质量优秀
-* 双路径实现提供高可靠性
-
-**实现细节**：
-* 路径A使用`api.cognitive.microsofttranslator.com`端点
-* 路径B使用`api-edge.cognitive.microsofttranslator.com`端点
-* 两条路径均通过`Authorization: Bearer`方式传递令牌
-* 模拟Edge浏览器用户代理和请求头
-* 差异化批处理策略增强整体稳定性
-
-**认证流程**：
-* 通过`https://edge.microsoft.com/translate/auth`获取临时令牌
-* 令牌有效期较短，每次请求前重新获取
-* 设置合适的Origin和Referer头部减少被拒风险
-
-**限制**：
-* 令牌获取可能受到地区和网络环境影响
-* 未记录的API，微软可能随时更改
-* 批量请求有数量和频率限制
-
-**错误处理**：
-* 详细的错误信息捕获和日志记录
-* 自动路径切换机制，提高整体成功率
-* 处理各种常见错误情况（认证失败、格式异常等）
-
-### 4.4 模拟翻译 (mock)
-
-**用途**：
-* 开发测试使用
-* 离线调试
-* 性能基准测试
-
-**实现细节**：
-* 简单添加"[已翻译]"前缀
-* 无网络请求，立即返回
-* 支持所有语言代码组合
-
-## 5. 后续开发计划
-
-### 5.1 功能增强
-* **字幕样式自定义**：允许用户调整字体、大小、颜色、背景透明度等
-* **字幕位置调整**：提供控件调整字幕在屏幕上的位置
-* **翻译缓存机制**：保存已翻译内容，减少API调用，提升性能
-* **离线翻译功能**：基于WebAssembly实现本地翻译能力
-
-### 5.2 用户体验优化
-* **键盘快捷键**：添加快捷键控制翻译开关和设置面板
-* **字幕预览**：在侧边栏中提供翻译效果预览
-* **历史记录**：保存近期观看的视频和使用的翻译设置
-* **导出/导入设置**：允许用户备份和恢复自定义设置
-
-### 5.3 技术优化
-* **性能监控**：添加性能指标收集，监测资源使用情况
-* **代码模块化**：进一步拆分大文件，提高代码可维护性
-* **自动化测试**：实现单元测试和E2E测试
-* **国际化支持**：使用Chrome i18n API支持多语言界面
-
-### 5.4 发布准备
-* **用户文档**：创建详细的使用指南
-* **隐私政策**：编写符合Chrome商店要求的隐私政策
-* **宣传材料**：准备商店截图和演示视频
-* **收集反馈**：建立用户反馈渠道 
