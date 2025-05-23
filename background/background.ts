@@ -1,14 +1,33 @@
 /**
+ * 后台脚本 - 主模块
+ */
+
+console.log('[background/background.ts] >>>>>> 后台脚本已加载 - 版本2 <<<<<<');
+
+/**
  * 后台脚本 (Service Worker)
  */
 
-console.log('后台脚本 (Service Worker) 已启动。');
+// 引入优化模块
+import { OpenAITranslator } from './openai-translator';
+import { RateLimitManager } from './rate-limit-manager';
+import { BatchProcessor } from './batch-processor';
+import { CacheManager } from './cache-manager';
+// --- 新增导入 ---
+import { StorageManager, StorageKeys } from '../src/storage/storage-manager';
+import { VideoSettingsCache, VideoSettings } from '../src/storage/video-settings-cache';
+// --- 新增导入语言处理工具 ---
+import { findMatchingTargetLanguage, isLanguageRelevantToUI } from '../src/utils/language-processing';
+import { targetLanguages } from '../src/utils/languages'; // 可能需要访问语言列表以获取默认值
+// ----------------
+
+console.log('[background/background.ts] 后台脚本 (Service Worker) 已启动。');
 
 // --- 设置侧边栏行为：允许点击工具栏图标打开 ---
 // (即使我们的主要触发是内容脚本按钮，也与官方示例保持一致)
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
-  .then(() => console.log('Side panel behavior set.'))
-  .catch((error) => console.error('Error setting side panel behavior:', error));
+  .then(() => console.log('[background/background.ts] 侧边栏行为已设置。'))
+  .catch((error) => console.error('[background/background.ts] 设置侧边栏行为时出错:', error));
 
 /**
  * 检查 URL 是否为 YouTube 视频或频道等相关页面。
@@ -19,8 +38,8 @@ function isYoutubeUrl(urlString?: string): boolean {
     if (!urlString) return false;
     try {
         const url = new URL(urlString);
-        // 匹配 www.youtube.com 域名，可以根据需要放宽或收紧匹配规则
-        return url.hostname === 'www.youtube.com'; 
+        // 仅匹配 https://www.youtube.com 的 origin
+        return url.origin === 'https://www.youtube.com';
     } catch (e) {
         return false; // 无效 URL
     }
@@ -31,30 +50,32 @@ function isYoutubeUrl(urlString?: string): boolean {
  * @param {number} tabId - 目标标签页 ID。
  */
 async function updateSidePanelState(tabId: number) {
+    console.log(`[background/background.ts] 调用 updateSidePanelState，标签页ID: ${tabId}`);
     try {
         const tab = await chrome.tabs.get(tabId);
         // --- 关键检查：确保 tab 和 tab.url 有效 ---
-        if (tab && tab.url) { 
+        if (tab && tab.url) {
             if (isYoutubeUrl(tab.url)) {
-                console.log(`启用 Tab ${tabId} (${tab.url}) 的 Side Panel`);
-                // --- 动态设置路径并启用 ---
+                console.log(`[background/background.ts] 为 YouTube 标签页 ${tabId} (${tab.url}) 启用侧边栏`);
                 await chrome.sidePanel.setOptions({
                     tabId: tabId,
                     path: 'sidepanel/sidepanel.html', // 在启用时设置路径
                     enabled: true
                 });
+                console.log(`[background/background.ts] 侧边栏已为标签页 ${tabId} 设置为启用`);
             } else {
-                console.log(`禁用 Tab ${tabId} (${tab.url}) 的 Side Panel (非 YouTube URL)`);
+                console.log(`[background/background.ts] 为非 YouTube 标签页 ${tabId} (${tab.url}) 禁用侧边栏`);
                 await chrome.sidePanel.setOptions({
                     tabId: tabId,
                     enabled: false
                 });
+                console.log(`[background/background.ts] 侧边栏已为标签页 ${tabId} 设置为禁用`);
             }
         } else {
-             console.warn(`无法获取 Tab ${tabId} 的有效 URL，不更改 Side Panel 状态。`);
+             console.warn(`[background/background.ts] updateSidePanelState：标签页ID ${tabId} 的标签页或URL无效，标签页对象:`, tab);
         }
     } catch (error) {
-        console.warn(`更新 Tab ${tabId} 的 Side Panel 状态时出错:`, error);
+        console.error(`[background/background.ts] updateSidePanelState：标签页ID ${tabId} 出错:`, error);
     }
 }
 
@@ -80,108 +101,247 @@ chrome.tabs.onActivated.addListener(activeInfo => {
 });
 */
 
+// --- 恢复 onActivated 监听器 ---
+chrome.tabs.onActivated.addListener(activeInfo => {
+    console.log(`[background/background.ts] 标签页激活: tabId=${activeInfo.tabId}`);
+    updateSidePanelState(activeInfo.tabId);
+});
+
 /**
  * 监听来自 Content Script 或其他部分的扩展消息
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // 打印收到的每条消息及其来源，方便调试
   console.log(
-    `收到消息: action='${message.action}'`, 
-    '来自:', sender.tab ? `Tab ID ${sender.tab.id} (${sender.tab.url})` : '扩展内部',
-    '消息体:', message
+    `[background/background.ts] 收到消息: action='${message.action}', 来自: ${sender.tab ? `标签页ID ${sender.tab.id} (${sender.tab.url})` : '扩展内部'}, 消息体:`, message
   );
 
   // --- 处理打开 Side Panel 的请求 ---
   if (message.action === 'openSidePanel') {
-    if (!sender.tab || !sender.tab.id) { // 只需要 tabId 即可
-        console.warn('收到 openSidePanel 请求，但缺少有效的 sender.tab.id 信息。', sender);
+    if (!sender.tab || !sender.tab.id) {
+        console.warn('[background/background.ts] 收到 openSidePanel 请求，但缺少有效的发送者标签页ID信息。', sender);
         sendResponse({ status: 'error', message: 'Invalid sender for opening side panel.' });
-        return false; 
+        return false; // 同步返回错误
     }
-    
     const tabId = sender.tab.id;
+    console.log(`[background/background.ts] openSidePanel 处理程序启动，标签页ID = ${tabId}`);
 
-    // 检查侧边栏是否已为该标签页启用
-    chrome.sidePanel.getOptions({ tabId: tabId }, (options) => {
-        if (chrome.runtime.lastError) { 
-            console.error(`获取 Tab ${tabId} 的 Side Panel 选项时出错:`, chrome.runtime.lastError.message);
-            sendResponse({ status: 'error', message: 'Failed to get side panel options.' });
-            return; 
-        }
-        
-        if (options.enabled) {
-            chrome.sidePanel.open({ tabId: tabId })
-              .then(() => {
-                  console.log(`Side Panel 已为 Tab ${tabId} 成功打开。`);
-                  sendResponse({ status: 'success', message: 'Side Panel opened.' });
-              })
-              .catch((error) => {
-                  console.error(`为 Tab ${tabId} 打开 Side Panel 时出错:`, error);
-                  // 检查是否还是 "No active side panel" 错误，或其他错误
-                  console.error('Open error details:', error.message);
-                  sendResponse({ status: 'error', message: error.message });
-              });
-        } else {
-            console.warn(`尝试为 Tab ${tabId} 打开 Side Panel，但它已被禁用。`);
-            sendResponse({ status: 'error', message: 'Side panel is disabled for this tab.' });
-        }
-    });
-
-    return true; // 告诉 Chrome 我们将异步发送响应
+    // 直接打开 Side Panel。
+    // 依赖 updateSidePanelState 确保其已为目标标签页启用并设置了路径。
+    // chrome.sidePanel.open() 必须在用户手势的直接上下文中调用。
+    chrome.sidePanel.open({ tabId })
+        .then(() => {
+            console.log(`[background/background.ts] 侧边栏已为标签页 ${tabId} 成功打开。`);
+            sendResponse({ status: 'success', message: 'Side Panel opened.' });
+        })
+        .catch((error) => {
+            console.error(`[background/background.ts] 为标签页 ${tabId} 打开侧边栏时出错:`, error);
+            // 重要的是将具体的错误消息传回，因为它可能包含如\"用户手势\"相关的提示
+            sendResponse({ status: 'error', message: error.message || 'Error opening side panel.' });
+        });
+    return true; // 表明将异步发送响应
   }
   // --- 新增：处理来自内容脚本的导航完成通知 ---
   else if (message.action === 'youtubeNavigationFinished') {
     if (sender.tab && sender.tab.id) {
         const navigatedTabId = sender.tab.id;
-        console.log(`[BG] Received navigation finished from Tab ${navigatedTabId}. Broadcasting notification...`);
-        // 广播消息给所有扩展上下文（包括 Side Panel）
+        console.log(`[background/background.ts] 收到来自标签页 ${navigatedTabId} 的导航完成消息。正在广播通知...`);
         chrome.runtime.sendMessage({ action: 'youtubeNavigationOccurred', navigatedTabId: navigatedTabId });
     } else {
-         console.warn('[BG] Received youtubeNavigationFinished without sender tab ID.');
+         console.warn('[background/background.ts] 收到 youtubeNavigationFinished 消息，但缺少发送者标签页ID。');
     }
-    // 不需要异步响应，可以返回 false 或省略 return
     return false;
+  }
+  else if (message.action === 'sidePanelOpened') {
+    const { tabId, videoId } = message;
+    if (!tabId) {
+        console.error('[background/background.ts] sidePanelOpened 消息缺少 tabId。');
+        return false;
+    }
+    console.log(`[background/background.ts] 侧边栏为标签页ID ${tabId} 打开，视频ID: ${videoId}。准备初始化数据。`);
+    initializeSidePanel(tabId, videoId);
+    return false;
+  }
+  // --- 新增：处理来自 Side Panel 的设置更新请求 ---
+  else if (message.action === 'updateSettings') {
+    console.log('[background/background.ts] 收到设置更新请求:', message);
+    const { settings, videoId, tabId: msgTabId, sourceTrackKind } = message;
+    if (!settings) {
+      console.error('[background/background.ts] updateSettings 消息缺少 settings 字段。');
+      sendResponse({ success: false, message: '缺少设置数据' });
+      return false;
+    }
+    (async () => {
+      try {
+        const globalSettingsToSave: Record<string, any> = {
+          [StorageKeys.SETTINGS.SUBTITLE_MODE]: settings.subtitleMode,
+          [StorageKeys.SETTINGS.TRANSLATION_API]: settings.translationApi,
+          [StorageKeys.SETTINGS.API_KEY]: settings.apiKey,
+          [StorageKeys.SETTINGS.SERVICE_TYPE]: settings.serviceType,
+          [StorageKeys.SETTINGS.CUSTOM_API_CONFIG]: settings.customApiConfig,
+          [StorageKeys.SETTINGS.OPENAI_CONFIG]: settings.openaiConfig,
+          [StorageKeys.SETTINGS.SOURCE_LANG]: settings.sourceLang, 
+          [StorageKeys.SETTINGS.TARGET_LANG]: settings.targetLang
+        };
+        await StorageManager.getInstance().setBatch(globalSettingsToSave, 'local');
+        console.log("[background/background.ts] 全局设置已保存:", globalSettingsToSave);
+        if (videoId) {
+          const currentVideoSettings = await VideoSettingsCache.getInstance().getVideoSettings(videoId);
+          const hasSubtitles = currentVideoSettings?.hasSubtitles ?? true; 
+          const videoSpecificSettings: VideoSettings = {
+            videoId: videoId,
+            sourceLang: settings.sourceLang,
+            targetLang: settings.targetLang,
+            lastUsed: Date.now(),
+            hasSubtitles: hasSubtitles,
+            sourceTrackKind: sourceTrackKind
+          };
+          await VideoSettingsCache.getInstance().saveVideoSettings(videoSpecificSettings);
+          console.log(`[background/background.ts] 视频 ${videoId} 的特定设置已保存。`);
+        }
+        sendResponse({ 
+          success: true, 
+          message: videoId ? '全局设置和视频特定设置已保存' : '全局设置已保存'
+        });
+        if (msgTabId) {
+          try {
+            await chrome.tabs.sendMessage(msgTabId, { 
+              action: 'settingsUpdated',
+              videoId: videoId,
+              settings: {
+                sourceLang: settings.sourceLang,
+                targetLang: settings.targetLang,
+                subtitleMode: settings.subtitleMode,
+                translationApi: settings.translationApi
+              }
+            });
+            console.log(`[background/background.ts] 通知标签页 ${msgTabId} 设置已更新。`);
+          } catch (notifyError) {
+            console.warn(`[background/background.ts] 通知内容脚本设置已更新时出错:`, notifyError);
+          }
+        }
+      } catch (error) {
+        console.error('[background/background.ts] 保存设置时出错:', error);
+        sendResponse({ 
+          success: false, 
+          message: error instanceof Error ? error.message : '保存设置时出现未知错误'
+        });
+      }
+    })();
+    return true;
+  }
+  // --- 新增：处理关闭 Side Panel 的请求 ---
+  else if (message.action === 'closeSidePanel') {
+    if (!sender.tab || !sender.tab.id) {
+        console.warn('[background/background.ts] 收到 closeSidePanel 请求，但缺少有效的发送者标签页ID信息。', sender);
+        sendResponse({ status: 'error', message: 'Invalid sender for closing side panel.' });
+        return false; // 同步返回错误
+    }
+    const tabId = sender.tab.id;
+    console.log(`[background/background.ts] closeSidePanel 处理程序启动，标签页ID = ${tabId}`);
+
+    chrome.sidePanel.setOptions({
+        tabId: tabId,
+        enabled: false
+    }).then(() => {
+        console.log(`[background/background.ts] 已禁用标签页 ${tabId} 的侧边栏 (关闭).`);
+        // 关键：禁用后，立即调用 updateSidePanelState
+        // 这会确保如果该标签页仍符合条件（例如是YouTube页面），
+        // 侧边栏会再次被设置为 enabled: true（但不会打开），
+        // 为下一次用户点击 openSidePanel 做好准备。
+        updateSidePanelState(tabId).then(() => {
+            console.log(`[background/background.ts] 禁用标签页 ${tabId} 后调用 updateSidePanelState。`);
+        }).catch(error => {
+            // 即使 updateSidePanelState 失败，关闭操作本身可能已成功
+            console.error(`[background/background.ts] 禁用标签页 ${tabId} 后调用 updateSidePanelState 失败:`, error);
+        });
+        sendResponse({ status: 'success', message: 'Side Panel closed and state updated.' });
+    }).catch((error) => {
+        console.error(`[background/background.ts] 为标签页 ${tabId} 关闭侧边栏时出错:`, error);
+        sendResponse({ status: 'error', message: error.message || 'Error closing side panel.' });
+    });
+    return true; // 表明将异步发送响应
   }
   // --- 处理来自内容脚本的翻译请求 ---
   else if (message.action === 'translateSubtitles') {
-    console.log('Background received translation request:', message.payload);
-    const { subtitles, targetLang, sourceLang } = message.payload;
+    console.log('[background/background.ts] 收到翻译请求:', message.payload);
+    const { subtitles, targetLang, sourceLang, videoId } = message.payload;
 
-    if (!Array.isArray(subtitles) || !targetLang) {
-         console.error("Invalid payload for translateSubtitles action");
+    if (!Array.isArray(subtitles) || !targetLang || !videoId) {
+         console.error("[background/background.ts] translateSubtitles 操作的载荷无效");
          sendResponse({ status: 'error', message: 'Invalid payload'});
          return false; // 同步响应错误
     }
 
     // 从存储中获取API设置
-    chrome.storage.sync.get(['translationApi', 'apiKey', 'serviceType', 'membershipCredentials', 'customApiConfig'], async (settings) => {
+    chrome.storage.sync.get(['translationApi', 'apiKey', 'serviceType', 'membershipCredentials', 'customApiConfig', 'openaiConfig'], async (settings) => {
       try {
         const apiType = settings.translationApi || 'dummy';
-        console.log(`使用翻译API: ${apiType}`);
+        console.log(`[background/background.ts] 使用翻译API: ${apiType}`);
         
-        // 根据API类型选择翻译方法
-        switch (apiType) {
-          case 'google-free':
-            // 使用Google免费翻译API
-            const googleResults = await googleTranslateFunction(subtitles, sourceLang, targetLang);
-            console.log('背景脚本发送Google翻译结果:', googleResults);
-            sendResponse({ status: 'success', translatedSubtitles: googleResults });
-            break;
+        // 导入字幕缓存管理器
+        const { SubtitleCacheManager } = await import('./subtitle-cache-manager');
+        const subtitleCacheManager = SubtitleCacheManager.getInstance();
+        
+        // 尝试从缓存获取翻译结果
+        const cache = await subtitleCacheManager.getSubtitleCache(videoId, targetLang, apiType);
+        
+        if (cache) {
+          // 检查是否所有字幕都在缓存中
+          const allIdsInCache = subtitles.every(subtitle => cache.translations[subtitle.id] !== undefined);
+          
+          if (allIdsInCache) {
+            // 所有字幕都找到缓存，直接使用缓存结果
+            console.log(`[背景脚本] 使用缓存的翻译结果, ${Object.keys(cache.translations).length} 条字幕`);
+            sendResponse({ 
+              status: 'success', 
+              translatedSubtitles: cache.translations,
+              _fromCache: true // 添加标记，表示使用了缓存
+            });
+            return;
+          } else {
+            // 部分字幕未缓存，只翻译缺失的部分
+            console.log(`[背景脚本] 部分字幕在缓存中，只翻译缺失部分`);
             
-          case 'microsoft-free':
-            // 使用微软/Bing免费翻译API
-            const microsoftResults = await microsoftTranslateFunction(subtitles, sourceLang, targetLang);
-            console.log('背景脚本发送微软翻译结果:', microsoftResults);
-            sendResponse({ status: 'success', translatedSubtitles: microsoftResults });
-            break;
+            // 筛选出需要翻译的字幕
+            const uncachedSubtitles = subtitles.filter(subtitle => !cache.translations[subtitle.id]);
             
-          default:
-            // 不支持的API类型，默认使用Google翻译
-            console.warn(`未知的API类型: ${apiType}, 使用Google翻译代替`);
-            const fallbackResults = await googleTranslateFunction(subtitles, sourceLang, targetLang);
-            sendResponse({ status: 'success', translatedSubtitles: fallbackResults });
-            break;
+            // 使用已有缓存
+            const combinedResults = { ...cache.translations };
+            
+            // 根据API类型选择翻译方法，并只翻译缺失的部分
+            const newResults = await translateWithAPI(uncachedSubtitles, sourceLang, targetLang, apiType, settings);
+            
+            // 合并结果
+            Object.assign(combinedResults, newResults);
+            
+            // 更新缓存
+            await subtitleCacheManager.saveSubtitleCache(videoId, targetLang, apiType, combinedResults);
+            
+            // 返回完整的翻译结果
+            sendResponse({ 
+              status: 'success', 
+              translatedSubtitles: combinedResults,
+              _fromCache: 'partial' // 添加标记，表示部分使用了缓存
+            });
+            return;
+          }
         }
+        
+        // 缓存未命中，执行完整翻译
+        console.log(`[背景脚本] 缓存未命中，执行完整翻译`);
+        const translatedSubtitles = await translateWithAPI(subtitles, sourceLang, targetLang, apiType, settings);
+        
+        // 保存到缓存
+        await subtitleCacheManager.saveSubtitleCache(videoId, targetLang, apiType, translatedSubtitles);
+        
+        // 返回翻译结果
+        console.log(`[背景脚本] 翻译完成并已缓存, ${Object.keys(translatedSubtitles).length} 条字幕`);
+        sendResponse({ 
+          status: 'success', 
+          translatedSubtitles,
+          _fromCache: false // 添加标记，表示未使用缓存
+        });
       } catch (error) {
         console.error('背景脚本翻译失败:', error);
         sendResponse({ 
@@ -330,6 +490,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
       
     return true; // 保持通道开放，延迟回应
+  }
+  // --- 新增：处理更新速率限制信息请求 ---
+  else if (message.action === 'updateRateLimits' && message.headers) {
+    try {
+      // 获取RateLimitManager实例
+      const rateLimitManager = RateLimitManager.getInstance();
+      
+      // 创建Headers对象
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(message.headers)) {
+        headers.append(key, value as string);
+      }
+      
+      // 更新限流管理器
+      rateLimitManager.updateLimits(headers);
+      
+      // 发送成功响应
+      sendResponse({ status: 'success' });
+    } catch (error) {
+      console.error('更新速率限制信息失败:', error);
+      sendResponse({ 
+        status: 'error', 
+        message: error instanceof Error ? error.message : '未知错误' 
+      });
+    }
+    return true; // 表明我们将异步响应
   }
   // --- 结束处理 ---
 
@@ -1308,6 +1494,39 @@ async function testMicrosoftTranslateFunction(
 }
 
 /**
+ * 使用OpenAI API翻译字幕
+ * @param subtitles 要翻译的字幕数组
+ * @param sourceLang 源语言代码
+ * @param targetLang 目标语言代码
+ * @param apiKey OpenAI API密钥
+ * @param openaiConfig OpenAI配置
+ * @returns 翻译结果的对象 {id: translatedText}
+ */
+async function openaiTranslateFunction(
+  subtitles: { id: string, text: string }[],
+  sourceLang: string,
+  targetLang: string,
+  apiKey: string,
+  openaiConfig: { model: string, customModel: string, temperature: number } = { 
+    model: 'gpt-4o', 
+    customModel: '', 
+    temperature: 0.7 
+  }
+): Promise<{ [id: string]: string }> {
+  console.log(`使用OpenAI翻译API翻译 ${subtitles.length} 条字幕，从 ${sourceLang} 到 ${targetLang}`);
+  
+  // 使用优化后的OpenAITranslator类
+  try {
+    const translator = new OpenAITranslator(apiKey, openaiConfig);
+    const results = await translator.translateSubtitles(subtitles, sourceLang, targetLang);
+    return results;
+  } catch (error) {
+    console.error('[Background] OpenAI翻译失败:', error);
+    throw error;
+  }
+}
+
+/**
  * 调用OpenAI API并获取限流信息
  * @param apiKey 用户的OpenAI API Key
  * @param endpoint OpenAI接口路径，例如'/v1/chat/completions'
@@ -1317,52 +1536,68 @@ async function testMicrosoftTranslateFunction(
  */
 async function callOpenAIWithRateLimitInfo(apiKey: string, endpoint: string, payload: any) {
   const url = `https://api.openai.com${endpoint}`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify(payload)
-  });
+  const controller = new AbortController();
+  
+  // 设置10秒超时
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+  
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
 
-  // 调试：打印所有响应头，检查 rate limit 头是否存在
-  console.log('[Background] OpenAI 响应头:');
-  response.headers.forEach((value, key) => console.log(`${key}: ${value}`));
+    // 获取和更新速率限制信息
+    const rateLimitManager = RateLimitManager.getInstance();
+    rateLimitManager.updateLimits(response.headers);
 
-  if (!response.ok) {
-    let errorData;
-    try {
-      errorData = await response.json();
-    } catch (parseErr) {
-      const errText = await response.text();
-      throw new Error(`OpenAI 接口调用失败: ${response.status} ${errText}`);
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (parseErr) {
+        const errText = await response.text();
+        throw new Error(`OpenAI 接口调用失败: ${response.status} ${errText}`);
+      }
+      const { message, type, code, param } = errorData.error || {};
+      const error = new Error(`OpenAI 接口调用失败: ${message}`);
+      Object.assign(error, { status: response.status, type, code, param });
+      throw error;
     }
-    const { message, type, code, param } = errorData.error || {};
-    const error = new Error(`OpenAI 接口调用失败: ${message}`);
-    Object.assign(error, { status: response.status, type, code, param });
+
+    // 获取限流相关响应头
+    const rateLimitRequests = response.headers.get('x-ratelimit-limit-requests');
+    const rateLimitTokens = response.headers.get('x-ratelimit-limit-tokens');
+    const remainingRequests = response.headers.get('x-ratelimit-remaining-requests');
+    const remainingTokens = response.headers.get('x-ratelimit-remaining-tokens');
+    const resetRequests = response.headers.get('x-ratelimit-reset-requests');
+    const resetTokens = response.headers.get('x-ratelimit-reset-tokens');
+
+    const data = await response.json();
+    // 更新限流信息：若 header 缺失则返回 undefined
+    return {
+      rateLimitRequests: rateLimitRequests !== null ? Number(rateLimitRequests) : undefined,
+      rateLimitTokens: rateLimitTokens !== null ? Number(rateLimitTokens) : undefined,
+      remainingRequests: remainingRequests !== null ? Number(remainingRequests) : undefined,
+      remainingTokens: remainingTokens !== null ? Number(remainingTokens) : undefined,
+      resetRequests: resetRequests !== null ? resetRequests : undefined,
+      resetTokens: resetTokens !== null ? resetTokens : undefined,
+      responseBody: data
+    };
+  } catch (error: unknown) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('OpenAI API请求超时');
+    }
     throw error;
   }
-
-  // 获取限流相关响应头
-  const rateLimitRequests = response.headers.get('x-ratelimit-limit-requests');
-  const rateLimitTokens = response.headers.get('x-ratelimit-limit-tokens');
-  const remainingRequests = response.headers.get('x-ratelimit-remaining-requests');
-  const remainingTokens = response.headers.get('x-ratelimit-remaining-tokens');
-  const resetRequests = response.headers.get('x-ratelimit-reset-requests');
-  const resetTokens = response.headers.get('x-ratelimit-reset-tokens');
-
-  const data = await response.json();
-  // 更新限流信息：若 header 缺失则返回 undefined
-  return {
-    rateLimitRequests: rateLimitRequests !== null ? Number(rateLimitRequests) : undefined,
-    rateLimitTokens: rateLimitTokens !== null ? Number(rateLimitTokens) : undefined,
-    remainingRequests: remainingRequests !== null ? Number(remainingRequests) : undefined,
-    remainingTokens: remainingTokens !== null ? Number(remainingTokens) : undefined,
-    resetRequests: resetRequests !== null ? resetRequests : undefined,
-    resetTokens: resetTokens !== null ? resetTokens : undefined,
-    responseBody: data
-  };
 }
 
 /**
@@ -1403,14 +1638,18 @@ async function testOpenAIModel(
     const result = await callOpenAIWithRateLimitInfo(apiKey, "/v1/chat/completions", payload);
     console.log("OpenAI API测试成功，获取到限流信息:", result);
     
+    // 获取RateLimitManager实例的当前状态
+    const rateLimitManager = RateLimitManager.getInstance();
+    const limitStatus = rateLimitManager.getLimitStatus();
+    
     return {
       success: true,
       message: "API连接成功！",
       limits: {
-        maxTokens: result.rateLimitTokens,
-        maxRequests: result.rateLimitRequests,
-        remainingTokens: result.remainingTokens,
-        remainingRequests: result.remainingRequests,
+        maxTokens: limitStatus.tokensLimit,
+        maxRequests: limitStatus.requestsLimit,
+        remainingTokens: limitStatus.tokensRemaining,
+        remainingRequests: limitStatus.requestsRemaining,
         resetTokens: result.resetTokens,
         resetRequests: result.resetRequests
       }
@@ -1425,15 +1664,94 @@ async function testOpenAIModel(
 }
 
 /**
- * 增强型fetch系统，支持自动故障转移
+ * 增强型fetch系统，支持自动故障转移和重试
  * @param url 请求URL
  * @param options 请求选项
  * @returns 响应对象
  */
 async function enhancedFetch(url: string, options: RequestInit): Promise<Response> {
-  // 实现增强型fetch系统，支持自动故障转移
-  // 这里可以添加自定义逻辑，例如自动重试、故障转移等
-  return fetch(url, options);
+  const MAX_RETRIES = 3;
+  const INITIAL_RETRY_DELAY = 300; // 初始重试延迟（毫秒）
+  
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      // 添加超时控制
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒超时
+      
+      // 合并选项，添加信号
+      const fetchOptions = {
+        ...options,
+        signal: controller.signal
+      };
+      
+      // 尝试请求
+      console.log(`[enhancedFetch] 尝试请求 ${url} (尝试 #${attempt + 1}/${MAX_RETRIES})`);
+      const response = await fetch(url, fetchOptions);
+      
+      // 请求完成，清除超时
+      clearTimeout(timeoutId);
+      
+      // 如果请求成功但状态码不是2xx，且这是可重试的错误，则尝试重试
+      if (!response.ok) {
+        // 429 Too Many Requests 和 5xx 服务器错误可重试
+        if ((response.status === 429 || response.status >= 500) && attempt < MAX_RETRIES - 1) {
+          let retryAfter = 0;
+          
+          // 尝试从响应头获取重试延迟
+          const retryAfterHeader = response.headers.get('retry-after');
+          if (retryAfterHeader) {
+            // retry-after可以是秒数或日期字符串
+            retryAfter = isNaN(Number(retryAfterHeader)) 
+              ? new Date(retryAfterHeader).getTime() - Date.now()
+              : Number(retryAfterHeader) * 1000;
+            
+            // 确保重试延迟在合理范围内
+            retryAfter = Math.max(0, Math.min(retryAfter, 10000)); // 最多等待10秒
+          } else {
+            // 指数退避重试策略
+            retryAfter = INITIAL_RETRY_DELAY * Math.pow(2, attempt);
+          }
+          
+          console.log(`[enhancedFetch] 请求返回状态码 ${response.status}，${retryAfter}ms后重试`);
+          await new Promise(resolve => setTimeout(resolve, retryAfter));
+          continue; // 尝试下一次请求
+        }
+      }
+      
+      // 请求成功或不可重试的错误，直接返回响应
+      return response;
+      
+    } catch (error: any) {
+      lastError = error;
+      
+      // 判断是否为可重试的错误（网络错误、超时等）
+      const isRetryable = 
+        error.name === 'TypeError' || // 网络错误
+        error.name === 'AbortError' || // 超时
+        error.message && (
+          error.message.includes('network') || 
+          error.message.includes('timeout') || 
+          error.message.includes('aborted')
+        );
+      
+      if (isRetryable && attempt < MAX_RETRIES - 1) {
+        // 指数退避重试策略
+        const retryDelay = INITIAL_RETRY_DELAY * Math.pow(2, attempt);
+        console.log(`[enhancedFetch] 请求失败: ${error.message}, ${retryDelay}ms后重试`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+        continue;
+      }
+      
+      // 不可重试或已达到最大重试次数，抛出最后一个错误
+      break;
+    }
+  }
+  
+  // 如果所有重试都失败，抛出最后一个错误
+  throw lastError || new Error('请求失败，未知原因');
 }
 
 /**
@@ -1446,3 +1764,397 @@ const BROWSER_PROFILES = [
   },
   // 其他浏览器配置...
 ];
+
+/**
+ * 根据API类型选择翻译方法
+ * @param subtitles 要翻译的字幕数组
+ * @param sourceLang 源语言
+ * @param targetLang 目标语言
+ * @param apiType API类型
+ * @param settings 设置对象
+ * @returns 翻译结果对象
+ */
+async function translateWithAPI(
+  subtitles: { id: string, text: string }[],
+  sourceLang: string,
+  targetLang: string,
+  apiType: string,
+  settings: any
+): Promise<{ [id: string]: string }> {
+  switch (apiType) {
+    case 'google-free':
+      // 使用Google免费翻译API
+      return await googleTranslateFunction(subtitles, sourceLang, targetLang);
+      
+    case 'microsoft-free':
+      // 使用微软/Bing免费翻译API
+      return await microsoftTranslateFunction(subtitles, sourceLang, targetLang);
+    
+    case 'openai':
+      // 使用OpenAI翻译API
+      if (!settings.apiKey) {
+        throw new Error('未提供OpenAI API密钥');
+      }
+      return await openaiTranslateFunction(
+        subtitles, 
+        sourceLang, 
+        targetLang,
+        settings.apiKey,
+        settings.openaiConfig
+      );
+      
+    default:
+      // 不支持的API类型，默认使用Google翻译
+      console.warn(`未知的API类型: ${apiType}, 使用Google翻译代替`);
+      return await googleTranslateFunction(subtitles, sourceLang, targetLang);
+  }
+}
+
+// 默认全局设置 (基于 sidepanel.ts 中的 defaultSettings)
+const globalDefaultSettings = {
+    sourceLang: '',
+    targetLang: '',
+    subtitleMode: 'bilingual', // 新增或确认默认值
+    translationApi: 'google-free', // 新增或确认默认值
+    apiKey: '',
+    serviceType: 'api-key', // 确认这个是否需要成为一个更明确的全局设置项或依赖于 translationApi
+    membershipCredentials: { loggedIn: false, provider: undefined, userId: '' },
+    customApiConfig: {
+        url: '',
+        method: 'POST',
+        headers: '{\\"Content-Type\\": \\"application/json\\"}', // JSON stringified
+        body: '{\\"text\\": \\"{text}\\", \\"source\\": \\"{source}\\", \\"target\\": \\"{target}\\"}', // JSON stringified
+        responsePath: 'data.translations[0].text'
+    },
+    openaiConfig: {
+        model: 'gpt-4o',
+        customModel: '',
+        temperature: 0.7
+    }
+};
+
+/**
+ * 初始化侧边面板数据
+ * @param tabId 标签页ID
+ * @param videoIdFromSidePanel 侧边面板传递的videoId (可选)
+ */
+async function initializeSidePanel(tabId: number, videoIdFromSidePanel?: string | null) {
+  console.log(`[background/background.ts] 调用 initializeSidePanel，标签页ID: ${tabId}, 来自侧边栏的视频ID: ${videoIdFromSidePanel}`);
+
+  // 步骤 1: 加载全局设置
+  const globalSettings = await loadAndApplyGlobalSettings();
+  console.log('[background/background.ts] initializeSidePanel: 加载的全局设置:', globalSettings);
+
+  // 步骤 1.5: 获取浏览器UI语言
+  const uiLang = chrome.i18n.getUILanguage();
+  console.log(`[background/background.ts] initializeSidePanel: 获取到的浏览器UI语言: ${uiLang}`);
+
+  // 步骤 2: 确定要使用的 Video ID
+  const currentVideoId = videoIdFromSidePanel || await getVideoIdForTab(tabId);
+
+  // 新增：用于存储轨道请求相关的错误信息
+  let trackRequestErrorMessage: string | undefined = undefined;
+
+  if (!currentVideoId) {
+    console.warn(`[background/background.ts] initializeSidePanel: 未能确定标签页 ${tabId} 的视频ID。侧边栏可能无法完全初始化。`);
+    // 仍然发送一个包含错误状态的 initializeSidePanelUI，让 sidepanel 知道出了问题
+    chrome.runtime.sendMessage({
+      action: 'initializeSidePanelUI',
+      tabId: tabId,
+      data: { 
+        state: 'error', 
+        message: '无法获取 Video ID', 
+        settings: { globalSettings: globalSettings, uiLangCode: uiLang }, // 发送一些基础信息
+        availableTracks: [],
+        videoId: null
+      }
+    }).catch(e => console.warn("[background/background.ts] initializeSidePanel: 发送 'error' 状态到侧边栏时出错:", e));
+    return;
+  }
+  console.log(`[background/background.ts] initializeSidePanel: 使用的视频ID: ${currentVideoId}`);
+
+  // 步骤 3: 加载特定视频的设置（检查缓存）
+  const videoSettings = await VideoSettingsCache.getInstance().getVideoSettings(currentVideoId);
+  
+  let hasSubtitles = false;
+  let availableTracks: { languageCode: string, languageName: string, kind: string }[] = [];
+  let determinedSourceLang = '';
+  let determinedTargetLang = '';
+  
+  if (videoSettings) {
+    console.log(`[background/background.ts] initializeSidePanel: 加载的视频 ${currentVideoId} 的特定设置:`, videoSettings);
+    hasSubtitles = videoSettings.hasSubtitles;
+    if (hasSubtitles) {
+      console.log(`[background/background.ts] initializeSidePanel: 缓存显示视频有字幕，使用缓存数据`);
+      const cachedTracks = await StorageManager.getInstance().get(
+        `${StorageKeys.CACHE.VIDEO_TRACKS_PREFIX}${currentVideoId}`,
+        [] as { languageCode: string, languageName: string, kind: string }[],
+        'local'
+      );
+      availableTracks = cachedTracks;
+      determinedSourceLang = videoSettings.sourceLang;
+      determinedTargetLang = videoSettings.targetLang;
+      console.log(`[background/background.ts] initializeSidePanel: 使用缓存的源语言: ${determinedSourceLang}, 目标语言: ${determinedTargetLang}`);
+    } else {
+      console.log(`[background/background.ts] initializeSidePanel: 缓存显示视频无字幕`);
+      hasSubtitles = false;
+      availableTracks = [];
+    }
+  } else {
+    console.log(`[background/background.ts] initializeSidePanel: 未找到 videoId: ${currentVideoId} 的特定视频设置，请求内容脚本获取轨道信息`);
+    
+    // REMOVED: 不再向侧边栏发送 loadingTracks 状态
+    
+    try {
+      console.log(`[background/background.ts] 向内容脚本请求轨道: 标签页ID=${tabId}, 视频ID=${currentVideoId}`);
+      chrome.tabs.sendMessage(tabId, {
+        action: 'getAvailableTracks',
+        videoId: currentVideoId
+      });
+      
+      const tracksResponse = await new Promise<{tracks?: any[], error?: string}>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('请求字幕轨道超时'));
+        }, 10000);
+        const messageListener = (message: any, senderCandidate: chrome.runtime.MessageSender) => {
+          if (senderCandidate.tab && senderCandidate.tab.id === tabId && message.action === 'availableTracksResult') {
+            clearTimeout(timeout);
+            chrome.runtime.onMessage.removeListener(messageListener);
+            resolve({
+              tracks: message.tracks || [],
+              error: message.error
+            });
+          }
+        };
+        chrome.runtime.onMessage.addListener(messageListener);
+      });
+      
+      if (tracksResponse.tracks && tracksResponse.tracks.length > 0) {
+        console.log(`[background/background.ts] 内容脚本返回了 ${tracksResponse.tracks.length} 条轨道`);
+        hasSubtitles = true;
+        availableTracks = tracksResponse.tracks;
+        determinedSourceLang = selectBestSourceLanguage(availableTracks);
+        console.log(`[background/background.ts] 根据优先级规则选择的源语言: ${determinedSourceLang}`);
+        await StorageManager.getInstance().set(
+          `${StorageKeys.CACHE.VIDEO_TRACKS_PREFIX}${currentVideoId}`,
+          availableTracks,
+          'local'
+        );
+      } else {
+        console.log(`[background/background.ts] 内容脚本未返回轨道或出错: ${tracksResponse.error || '无轨道'}`);
+        trackRequestErrorMessage = tracksResponse.error || '内容脚本未返回轨道信息'; // 捕获错误信息
+        hasSubtitles = false;
+        availableTracks = [];
+      }
+    } catch (error) {
+      console.error(`[background/background.ts] 请求字幕信息失败:`, error);
+      trackRequestErrorMessage = error instanceof Error ? error.message : '请求字幕信息时发生未知错误'; // 捕获错误信息
+      hasSubtitles = false;
+      availableTracks = [];
+    }
+  }
+  
+  if (!determinedSourceLang) {
+    determinedSourceLang = globalSettings[StorageKeys.SETTINGS.SOURCE_LANG] || 'en';
+    console.log(`[background/background.ts] 使用全局设置或默认源语言: ${determinedSourceLang}`);
+  }
+  
+  if (!determinedTargetLang) {
+    determinedTargetLang = globalSettings[StorageKeys.SETTINGS.TARGET_LANG];
+    if (!determinedTargetLang || !targetLanguages.some(l => l.code === determinedTargetLang)) {
+      const matchedLang = findMatchingTargetLanguage(uiLang);
+      determinedTargetLang = matchedLang ? matchedLang.code : 'en';
+      console.log(`[background/background.ts] 使用基于UI语言(${uiLang})的目标语言: ${determinedTargetLang}`);
+    } else {
+      console.log(`[background/background.ts] 使用全局设置的目标语言: ${determinedTargetLang}`);
+    }
+  }
+  
+  const settingsForSidePanel = {
+    globalSettings: globalSettings,
+    videoSettings: videoSettings, 
+    determinedSourceLang: determinedSourceLang,
+    determinedTargetLang: determinedTargetLang,
+    hasSubtitles: hasSubtitles,
+    uiLangCode: uiLang
+  };
+  
+  if (!videoSettings || videoSettings.hasSubtitles !== hasSubtitles || videoSettings.sourceLang !== determinedSourceLang || videoSettings.targetLang !== determinedTargetLang) {
+    console.log(`[background/background.ts] 更新VideoSettingsCache: 视频ID=${currentVideoId}, 源语言=${determinedSourceLang}, 目标语言=${determinedTargetLang}, 是否有字幕=${hasSubtitles}`);
+    await VideoSettingsCache.getInstance().saveVideoSettings({
+      videoId: currentVideoId,
+      sourceLang: determinedSourceLang,
+      targetLang: determinedTargetLang,
+      lastUsed: Date.now(),
+      hasSubtitles: hasSubtitles,
+      sourceTrackKind: availableTracks.find(t => t.languageCode === determinedSourceLang)?.kind
+    });
+  }
+  
+  console.log(`[background/background.ts] 向侧边栏发送初始化数据: 是否有字幕=${hasSubtitles}, 字幕轨道数量=${availableTracks.length}`);
+  chrome.runtime.sendMessage({
+    action: 'initializeSidePanelUI',
+    tabId: tabId,
+    data: {
+      state: hasSubtitles ? 'ready' : (availableTracks.length === 0 && !videoSettings?.hasSubtitles ? 'noTracks' : 'error'),
+      videoId: currentVideoId,
+      availableTracks: availableTracks,
+      settings: settingsForSidePanel,
+      message: !hasSubtitles ? (trackRequestErrorMessage || 'No subtitles available') : undefined // 使用 trackRequestErrorMessage
+    }
+  }).catch(e => console.warn("[background/background.ts] 发送到侧边栏失败:", e));
+}
+
+async function getVideoIdForTab(tabId: number): Promise<string | null> {
+  try {
+    const tabVideoIdMap = await StorageManager.getInstance().get<{[key: number]: string} | undefined>(
+        StorageKeys.TEMP.LAST_KNOWN_VIDEO_ID_FOR_TAB, 
+        undefined, 
+        'local'
+    );
+    if (tabVideoIdMap && tabVideoIdMap[tabId]) {
+      console.log(`[background/background.ts] getVideoIdForTab: 在存储中为标签页 ${tabId} 找到视频ID ${tabVideoIdMap[tabId]}.`);
+      return tabVideoIdMap[tabId];
+    }
+    console.log(`[background/background.ts] getVideoIdForTab: 标签页 ${tabId} 的视频ID不在存储中。正在查询内容脚本。`);
+    const response = await chrome.tabs.sendMessage(tabId, { action: 'requestCurrentVideoId' });
+    if (response && response.videoId) {
+      console.log(`[background/background.ts] getVideoIdForTab: 从内容脚本收到标签页 ${tabId} 的视频ID ${response.videoId}.`);
+      const newMap = { ...(tabVideoIdMap || {}), [tabId]: response.videoId };
+      await StorageManager.getInstance().set(StorageKeys.TEMP.LAST_KNOWN_VIDEO_ID_FOR_TAB, newMap, 'local');
+      return response.videoId;
+    }
+    console.log(`[background/background.ts] getVideoIdForTab: 内容脚本未返回标签页 ${tabId} 的视频ID。`);
+    return null;
+  } catch (error) {
+    console.warn(`[background/background.ts] getVideoIdForTab: 获取标签页 ${tabId} 的视频ID时出错:`, error);
+    return null;
+  }
+}
+
+async function loadAndApplyGlobalSettings() {
+  try {
+    const settings = await StorageManager.getInstance().getBatch([
+      StorageKeys.SETTINGS.TRANSLATION_API,
+      StorageKeys.SETTINGS.API_KEY,
+      StorageKeys.SETTINGS.TARGET_LANG,
+      StorageKeys.SETTINGS.SOURCE_LANG,
+      StorageKeys.SETTINGS.SUBTITLE_MODE, // 新增获取
+      StorageKeys.SETTINGS.FONT_SIZE,
+      StorageKeys.SETTINGS.FONT_COLOR,
+      StorageKeys.SETTINGS.BACKGROUND_COLOR,
+      StorageKeys.SETTINGS.TEXT_STROKE_COLOR,
+      StorageKeys.SETTINGS.TEXT_STROKE_WIDTH,
+      StorageKeys.SETTINGS.LINE_WRAPPING_MODE,
+      StorageKeys.SETTINGS.MAX_LINES_PER_CAPTION,
+      StorageKeys.SETTINGS.AUTO_DETECT_SOURCE_LANGUAGE,
+      StorageKeys.SETTINGS.OPENAI_CONFIG_MODEL,
+      StorageKeys.SETTINGS.OPENAI_CONFIG_CUSTOM_MODEL,
+      StorageKeys.SETTINGS.OPENAI_CONFIG_TEMPERATURE,
+    ], 'local');
+
+    console.log('[background/background.ts] loadAndApplyGlobalSettings: 全局设置已加载:', settings);
+    // 将可能未定义的设置补充为null或默认值，确保返回的对象结构完整
+    const defaultedSettings: Record<string, any> = {};
+    const allGlobalSettingKeys = [
+        StorageKeys.SETTINGS.TRANSLATION_API, StorageKeys.SETTINGS.API_KEY, StorageKeys.SETTINGS.TARGET_LANG,
+        StorageKeys.SETTINGS.SOURCE_LANG, StorageKeys.SETTINGS.SUBTITLE_MODE, // 新增处理
+        StorageKeys.SETTINGS.FONT_SIZE, StorageKeys.SETTINGS.FONT_COLOR,
+        StorageKeys.SETTINGS.BACKGROUND_COLOR, StorageKeys.SETTINGS.TEXT_STROKE_COLOR, StorageKeys.SETTINGS.TEXT_STROKE_WIDTH,
+        StorageKeys.SETTINGS.LINE_WRAPPING_MODE, StorageKeys.SETTINGS.MAX_LINES_PER_CAPTION, 
+        StorageKeys.SETTINGS.AUTO_DETECT_SOURCE_LANGUAGE, StorageKeys.SETTINGS.OPENAI_CONFIG_MODEL,
+        StorageKeys.SETTINGS.OPENAI_CONFIG_CUSTOM_MODEL, StorageKeys.SETTINGS.OPENAI_CONFIG_TEMPERATURE
+    ];
+    allGlobalSettingKeys.forEach(key => {
+        defaultedSettings[key] = settings[key] !== undefined ? settings[key] : (globalDefaultSettings as any)[key.replace('settings.', '')] ?? null;
+    });
+
+    // 这里可以根据加载的设置执行一些全局操作
+    return defaultedSettings;
+  } catch (error) {
+    console.error('[background/background.ts] loadAndApplyGlobalSettings: 加载或应用全局设置时出错:', error);
+    return {}; 
+  }
+}
+
+chrome.storage.onChanged.addListener((changes, namespace) => {
+  if (namespace === 'local') { 
+    let globalSettingsChanged = false;
+    const globalSettingKeysArray: string[] = [
+        StorageKeys.SETTINGS.TRANSLATION_API,
+        StorageKeys.SETTINGS.API_KEY,
+        StorageKeys.SETTINGS.TARGET_LANG,
+        StorageKeys.SETTINGS.SOURCE_LANG,
+        StorageKeys.SETTINGS.SUBTITLE_MODE, // 新增获取
+        StorageKeys.SETTINGS.FONT_SIZE,
+        StorageKeys.SETTINGS.FONT_COLOR,
+        StorageKeys.SETTINGS.BACKGROUND_COLOR,
+        StorageKeys.SETTINGS.TEXT_STROKE_COLOR,
+        StorageKeys.SETTINGS.TEXT_STROKE_WIDTH,
+        StorageKeys.SETTINGS.LINE_WRAPPING_MODE,
+        StorageKeys.SETTINGS.MAX_LINES_PER_CAPTION,
+        StorageKeys.SETTINGS.AUTO_DETECT_SOURCE_LANGUAGE,
+        StorageKeys.SETTINGS.OPENAI_CONFIG_MODEL,
+        StorageKeys.SETTINGS.OPENAI_CONFIG_CUSTOM_MODEL,
+        StorageKeys.SETTINGS.OPENAI_CONFIG_TEMPERATURE,
+    ];
+
+    for (let [key, { oldValue, newValue }] of Object.entries(changes)) {
+      if (globalSettingKeysArray.includes(key)) { // No need for 'as StorageKeys.SETTINGS' with string array
+        console.log(
+          `[background/background.ts] onChanged: 存储项 "${key}" 从`,
+          oldValue,
+          '变为',
+          newValue
+        );
+        globalSettingsChanged = true;
+      }
+    }
+
+    if (globalSettingsChanged) {
+      console.log('[background/background.ts] onChanged: 检测到全局设置相关存储更改，重新加载设置并通知侧边栏。');
+      loadAndApplyGlobalSettings();
+      chrome.runtime.sendMessage({ action: 'globalSettingsPossiblyChanged' })
+        .catch(e => {
+          if (e.message && (e.message.includes("Could not establish connection") || e.message.includes("Receiving end does not exist"))) {
+            console.log("[background/background.ts] onChanged: 通知侧边栏全局设置更改失败 (可能未打开或未连接).");
+          } else {
+            console.warn("[background/background.ts] onChanged: 通知侧边栏全局设置更改时出错:", e);
+          }
+        });
+    }
+  }
+});
+
+/**
+ * 从可用字幕轨道中选择最佳源语言
+ * @param tracks 可用字幕轨道
+ * @returns 选择的源语言代码
+ */
+function selectBestSourceLanguage(tracks: { languageCode: string, languageName: string, kind: string }[]): string {
+  if (!tracks || tracks.length === 0) {
+    return ''; // P4: 无字幕情况 (返回空字符串，initializeSidePanel会据此设置hasSubtitles)
+  }
+  
+  // P1: 选择非ASR英语 (包含各种变种)
+  const nonAsrEnglishTrack = tracks.find(track => 
+    track.languageCode.startsWith('en') && 
+    track.kind !== 'asr'
+  );
+  if (nonAsrEnglishTrack) {
+    return nonAsrEnglishTrack.languageCode;
+  }
+
+  // P2: 选择ASR英语 (包含各种变种)
+  const asrEnglishTrack = tracks.find(track => 
+    track.languageCode.startsWith('en') && 
+    track.kind === 'asr'
+  );
+  if (asrEnglishTrack) {
+    return asrEnglishTrack.languageCode;
+  }
+  
+  // P3: 选择获取语言列表中的第一个语言种类
+  // (此时availableTracks.length > 0 必然成立，因为P4已处理空数组)
+  return tracks[0].languageCode;
+}

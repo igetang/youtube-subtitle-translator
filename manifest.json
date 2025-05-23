@@ -1,4 +1,5 @@
 {
+  "default_locale": "zh_CN",
   "manifest_version": 3,
   "name": "项目名称 (待定)",
   "version": "0.0.1",
@@ -16,22 +17,36 @@
     }
   },
   "background": {
-    "service_worker": "src/background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
   "permissions": [
     "storage",
     "sidePanel",
-    "tabs"
+    "tabs",
+    "content_settings"
   ],
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  },
   "host_permissions": [
-    "https://api.openai.com/*"
+    "*://*.youtube.com/*",
+    "https://api.openai.com/*",
+    "https://translate.googleapis.com/*",
+    "https://api.cognitive.microsofttranslator.com/*",
+    "https://api-edge.cognitive.microsofttranslator.com/*",
+    "https://edge.microsoft.com/*"
   ],
   "content_scripts": [
     {
       "matches": ["*://*.youtube.com/*"],
-      "js": ["src/content.js"]
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
     }
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
   "web_accessible_resources": [
     {
       "resources": [
@@ -41,7 +56,9 @@
         "icons/l-setting.svg",
         "icons/l-setting-active.svg",
         "icons/normal-border.svg",
-        "src/main-world.js"
+        "main-world.js",
+        "assets/control-panel.js",
+        "assets/preload-helper.js"
        ],
       "matches": ["*://*.youtube.com/*"]
     }

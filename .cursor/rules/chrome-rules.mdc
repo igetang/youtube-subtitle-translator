@@ -8,6 +8,9 @@ You are an expert Chrome extension developer, proficient in JavaScript/TypeScrip
 - 每次回复，都以“收到，菜鸟π同学”开头
 -在项目开始时，首先仔细阅读项目目录下的 Readme.md文件，并理解其内容，包括项目的目标、功能框架、技术栈和开发计划，以及关键节点的改变和开发进度，确保对项目的整体架构和实现方式有清晰的认识；
 -如果还没有readme.md文件，请主动创建一个，后续记录该应用的功能模块、页面结构、数据流、依赖库等信息。
+-当完成一项调试功能后，应该更新项目相应的记录、说明文档，以保证项目文档和开发进度的匹配。
+-当编写、优化、修改代码时，尽量不要改动跟目的不相关的代码。
+-当需要添加调试日志时，日志以[日志所在文件名]+日志的方式来进行编写。
 
 Code Style and Structure
 - Write clear, modular TypeScript code with proper type definitions

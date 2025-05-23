@@ -1,0 +1,346 @@
+# This file has been renamed from content/event-bus.ts to content/event-bus.ts_DEPRECATED
+# It is suspected to be redundant.
+# Please refer to DEVELOPMENT.md for more details on the "Unified EventBus Implementation" task.
+
+# Original content below:
+
+/**
+ * YouTube 字幕翻译扩展 - 事件总线系统
+ * 
+ * 实现发布/订阅模式，用于组件间通信和状态同步。
+ * 支持事件优先级、通配符订阅和事件日志记录。
+ */
+
+interface EventCallback {
+  callback: Function;
+  once: boolean;
+  priority: number;
+}
+
+type EventCallbackMap = Map<string, EventCallback[]>;
+
+/**
+ * 事件总线类，管理事件发布和订阅
+ */
+class EventBus {
+  private events: EventCallbackMap = new Map();
+  private readonly MAX_LOG_ENTRIES = 100;
+  private eventLog: Array<{
+    time: number;
+    event: string;
+    data: any;
+  }> = [];
+  private debugMode: boolean = false;
+
+  /**
+   * 获取单例实例
+   */
+  public static getInstance(): EventBus {
+    if (!EventBus.instance) {
+      EventBus.instance = new EventBus();
+    }
+    return EventBus.instance;
+  }
+
+  private static instance: EventBus;
+
+  /**
+   * 开启或关闭调试模式
+   * @param enable 是否开启调试模式
+   */
+  public setDebugMode(enable: boolean): void {
+    this.debugMode = enable;
+    if (enable) {
+      console.log('[EventBus] 调试模式已开启，将记录所有事件');
+    } else {
+      console.log('[EventBus] 调试模式已关闭');
+    }
+  }
+
+  /**
+   * 订阅事件
+   * @param event 事件名称，支持通配符(*)匹配
+   * @param callback 回调函数
+   * @param options 选项：once(是否一次性)和priority(优先级)
+   * @returns 取消订阅的函数
+   */
+  public on(event: string, callback: Function, options: { once?: boolean; priority?: number } = {}): () => void {
+    const { once = false, priority = 0 } = options;
+    
+    if (!this.events.has(event)) {
+      this.events.set(event, []);
+    }
+    
+    const callbacks = this.events.get(event)!;
+    const callbackObj: EventCallback = { callback, once, priority };
+    
+    // 按优先级插入
+    let inserted = false;
+    for (let i = 0; i < callbacks.length; i++) {
+      if (callbacks[i].priority < priority) {
+        callbacks.splice(i, 0, callbackObj);
+        inserted = true;
+        break;
+      }
+    }
+    
+    if (!inserted) {
+      callbacks.push(callbackObj);
+    }
+    
+    if (this.debugMode) {
+      console.log(`[EventBus] 已订阅事件 "${event}"${once ? '(一次性)' : ''}，优先级: ${priority}`);
+    }
+    
+    // 返回取消订阅的函数
+    return () => {
+      this.off(event, callback);
+    };
+  }
+
+  /**
+   * 订阅一次性事件
+   * @param event 事件名称
+   * @param callback 回调函数
+   * @param priority 优先级
+   * @returns 取消订阅的函数
+   */
+  public once(event: string, callback: Function, priority: number = 0): () => void {
+    return this.on(event, callback, { once: true, priority });
+  }
+
+  /**
+   * 取消订阅事件
+   * @param event 事件名称
+   * @param callback 回调函数，不提供则移除全部订阅
+   */
+  public off(event: string, callback?: Function): void {
+    if (!this.events.has(event)) {
+      return;
+    }
+    
+    if (!callback) {
+      // 移除全部订阅
+      this.events.delete(event);
+      if (this.debugMode) {
+        console.log(`[EventBus] 已移除事件 "${event}" 的所有订阅`);
+      }
+      return;
+    }
+    
+    const callbacks = this.events.get(event)!;
+    const index = callbacks.findIndex(cb => cb.callback === callback);
+    
+    if (index !== -1) {
+      callbacks.splice(index, 1);
+      if (this.debugMode) {
+        console.log(`[EventBus] 已取消订阅事件 "${event}"`);
+      }
+      
+      // 如果没有更多回调，删除事件条目
+      if (callbacks.length === 0) {
+        this.events.delete(event);
+      }
+    }
+  }
+
+  /**
+   * 发布事件
+   * @param event 事件名称
+   * @param data 事件数据
+   * @returns 是否有处理该事件的订阅者
+   */
+  public emit(event: string, data?: any): boolean {
+    let handled = false;
+    
+    // 记录事件日志
+    this.logEvent(event, data);
+    
+    // 调用精确匹配的事件订阅者
+    if (this.events.has(event)) {
+      const callbacks = this.events.get(event)!;
+      const onceFunctions: EventCallback[] = [];
+      
+      // 执行回调
+      for (const cb of callbacks) {
+        try {
+          cb.callback(data);
+          handled = true;
+          
+          if (cb.once) {
+            onceFunctions.push(cb);
+          }
+        } catch (error) {
+          console.error(`[EventBus] 处理事件 "${event}" 时出错:`, error);
+        }
+      }
+      
+      // 移除一次性订阅
+      for (const onceFunc of onceFunctions) {
+        const index = callbacks.indexOf(onceFunc);
+        if (index !== -1) {
+          callbacks.splice(index, 1);
+        }
+      }
+      
+      // 如果没有更多回调，删除事件条目
+      if (callbacks.length === 0) {
+        this.events.delete(event);
+      }
+    }
+    
+    // 处理通配符订阅
+    if (this.events.has('*')) {
+      const wildcardCallbacks = this.events.get('*')!;
+      const onceFunctions: EventCallback[] = [];
+      
+      for (const cb of wildcardCallbacks) {
+        try {
+          cb.callback(event, data);
+          handled = true;
+          
+          if (cb.once) {
+            onceFunctions.push(cb);
+          }
+        } catch (error) {
+          console.error(`[EventBus] 处理通配符事件 "*" 时出错:`, error);
+        }
+      }
+      
+      // 移除一次性订阅
+      for (const onceFunc of onceFunctions) {
+        const index = wildcardCallbacks.indexOf(onceFunc);
+        if (index !== -1) {
+          wildcardCallbacks.splice(index, 1);
+        }
+      }
+      
+      // 如果没有更多回调，删除事件条目
+      if (wildcardCallbacks.length === 0) {
+        this.events.delete('*');
+      }
+    }
+    
+    if (this.debugMode && !handled) {
+      console.warn(`[EventBus] 事件 "${event}" 未被任何订阅者处理`);
+    }
+    
+    return handled;
+  }
+
+  /**
+   * 记录事件日志
+   * @param event 事件名称
+   * @param data 事件数据
+   */
+  private logEvent(event: string, data?: any): void {
+    // 添加日志条目
+    this.eventLog.push({
+      time: Date.now(),
+      event,
+      data: data ? JSON.parse(JSON.stringify(data)) : null
+    });
+    
+    // 限制日志大小
+    if (this.eventLog.length > this.MAX_LOG_ENTRIES) {
+      this.eventLog.shift();
+    }
+    
+    if (this.debugMode) {
+      console.log(`[EventBus] 发布事件: "${event}"`, data);
+    }
+  }
+
+  /**
+   * 获取事件日志
+   * @param limit 限制返回的条目数量，默认返回全部
+   * @returns 事件日志数组
+   */
+  public getEventLog(limit?: number): Array<{time: number; event: string; data: any}> {
+    if (limit && limit > 0) {
+      return this.eventLog.slice(-limit);
+    }
+    return [...this.eventLog];
+  }
+
+  /**
+   * 清除事件日志
+   */
+  public clearEventLog(): void {
+    this.eventLog = [];
+    if (this.debugMode) {
+      console.log('[EventBus] 事件日志已清除');
+    }
+  }
+
+  /**
+   * 获取已注册的事件列表
+   * @returns 事件名称数组
+   */
+  public getRegisteredEvents(): string[] {
+    return Array.from(this.events.keys());
+  }
+
+  /**
+   * 获取特定事件的订阅者数量
+   * @param event 事件名称
+   * @returns 订阅者数量
+   */
+  public getSubscriberCount(event: string): number {
+    if (!this.events.has(event)) {
+      return 0;
+    }
+    return this.events.get(event)!.length;
+  }
+
+  /**
+   * 检查事件是否有订阅者
+   * @param event 事件名称
+   * @returns 是否有订阅者
+   */
+  public hasSubscribers(event: string): boolean {
+    return this.events.has(event) && this.events.get(event)!.length > 0;
+  }
+}
+
+// 导出单例实例
+export const eventBus = EventBus.getInstance();
+
+// 定义常用事件类型
+export const EventTypes = {
+  // 导航相关事件
+  NAVIGATION_STARTED: 'navigation:started',
+  NAVIGATION_FINISHED: 'navigation:finished',
+  
+  // 初始化相关事件
+  BASIC_INIT_DONE: 'init:basic_done',
+  FULL_INIT_DONE: 'init:full_done',
+  
+  // DOM相关事件
+  CONTROLS_INJECTED: 'dom:controls_injected',
+  OVERLAY_CREATED: 'dom:overlay_created',
+  PLAYER_READY: 'dom:player_ready',
+  
+  // 翻译相关事件
+  TRANSLATION_STARTED: 'translation:started',
+  TRANSLATION_FINISHED: 'translation:finished',
+  TRANSLATION_ERROR: 'translation:error',
+  TRANSLATION_START_REQUESTED: 'translation:start_requested',
+  TRANSLATION_STOP_REQUESTED: 'translation:stop_requested',
+  
+  // 字幕相关事件
+  SUBTITLES_LOADED: 'subtitles:loaded',
+  SUBTITLES_UPDATED: 'subtitles:updated',
+  SUBTITLE_MODE_CHANGED: 'subtitles:mode_changed',
+  
+  // 设置相关事件
+  SETTINGS_CHANGED: 'settings:changed',
+  TARGET_LANG_CHANGED: 'settings:target_lang_changed',
+  SOURCE_LANG_CHANGED: 'settings:source_lang_changed',
+  
+  // 状态相关事件
+  STATE_CHANGED: 'state:changed',
+  TRANSLATE_ACTIVE_CHANGED: 'state:translate_active_changed'
+};
+
+export default eventBus; 

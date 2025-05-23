@@ -1,706 +1,366 @@
-# 开发文档 - YouTube 双语字幕 Chrome 扩展
+# YouTube 字幕翻译 Chrome 扩展 - 开发指南
 
-本文档记录项目的开发过程、技术决策和实现细节。
+本文档提供扩展项目的开发环境设置、工作流程和贡献指南，帮助开发者参与项目开发。
 
-## 1. 项目架构与技术选型
+## 开发环境设置
 
-* **Chrome 扩展框架**：采用 Manifest V3 规范
-* **开发语言**：TypeScript
-* **构建工具**：Vite，配置多入口构建
-* **扩展组件**：
-  * 内容脚本 (`content-script.ts`)：负责与YouTube页面交互
-  * 主世界脚本 (`main-world.ts`)：在页面主执行环境中运行，获取视频字幕轨道
-  * 后台脚本 (`background.ts`)：处理扩展级别事件和侧边栏管理，处理翻译请求
-  * 侧边栏 (`sidepanel/`)：用户设置界面，基于HTML/CSS/TS实现
+### 前置要求
 
-## 2. 核心功能实现
+* Node.js (v14+)
+* npm, yarn 或 pnpm
+* Chrome浏览器（用于测试扩展）
 
-### 2.1 字幕轨道数据获取
+### 项目获取与依赖安装
 
-YouTube页面动态加载特性使从内容脚本直接获取字幕轨道数据变得不稳定。为解决此问题：
-
-1. 注入主世界脚本访问YouTube播放器API：
-```typescript
-// 主世界脚本中
-const player = document.getElementById('movie_player');
-const playerResponse = player.getPlayerResponse();
-const captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
-```
-
-2. 通过`window.postMessage`建立隔离世界与主世界间通信：
-```typescript
-// 内容脚本发送请求
-window.postMessage({
-    source: 'content-script',
-    type: 'REQUEST_CAPTION_TRACKS'
-}, '*');
-
-// 主世界脚本响应
-window.postMessage({
-    source: 'main-world',
-    type: 'CAPTION_TRACKS_RESPONSE',
-    payload: { captionTracks }
-}, '*');
-```
-
-3. 在内容脚本中基于Promise处理异步请求和响应，包含超时处理
-
-### 2.2 YouTube导航处理
-
-YouTube作为单页应用，页面导航不会重新加载整个页面，导致按钮重复注入、字幕状态不同步等问题。解决方案：
-
-1. 监听YouTube自定义事件`yt-navigate-finish`
-2. 在导航事件触发时执行状态重置和DOM清理：
-```typescript
-function handleYoutubeNavigation() {
-    // 停止字幕更新循环
-    stopSubtitleUpdates();
-    
-    // 重置轨道和字幕数据
-    cachedCaptionTracks = null;
-    tracksInfoFetched = false;
-    processedSubtitleEvents = [];
-    
-    // 主动清理旧DOM元素
-    const existingButtons = document.querySelectorAll('.vid-translate-button');
-    existingButtons.forEach(button => button.remove());
-    
-    // 重置注入标志
-    controlsInjected = false;
-    
-    // 通知其他组件导航事件
-    chrome.runtime.sendMessage({ action: 'youtubeNavigationFinished' });
-    
-    // 重新应用字幕模式
-    if (currentSubtitleMode) {
-        applySubtitleMode(currentSubtitleMode);
-    } else {
-        initializeSubtitleMode();
-    }
-}
-```
-
-3. 实现导航广播机制，通知侧边栏等组件更新状态
-
-### 2.3 字幕模式切换与同步
-
-为在多个组件间（侧边栏、内容脚本）保持字幕模式设置的一致性：
-
-1. 使用`chrome.storage.sync`作为持久化存储
-2. 实现双重同步机制：
-
-   侧边栏保存设置并通知内容脚本：
-   ```typescript
-   // 保存到storage
-   chrome.storage.sync.set({ subtitleMode: mode });
-   
-   // 直接通知当前标签页
-   chrome.tabs.sendMessage(tabId, {
-      action: 'subtitleModeUpdated',
-      mode: mode
-   });
-   ```
-
-   内容脚本通过两种方式接收更新：
-   ```typescript
-   // 直接消息监听
-   chrome.runtime.onMessage.addListener((request) => {
-      if (request.action === 'subtitleModeUpdated') {
-         applySubtitleMode(request.mode);
-      }
-   });
-   
-   // 存储变化监听（备用路径）
-   chrome.storage.onChanged.addListener((changes) => {
-      if (changes.subtitleMode) {
-         applySubtitleMode(changes.subtitleMode.newValue);
-      }
-   });
-   ```
-
-3. 使用全局变量`currentSubtitleMode`缓存当前模式，减少存储读取
-
-### 2.4 字幕显示顺序优化
-
-为提升用户体验，改变双语字幕的显示顺序：
-
-1. **优化前**：源语言（原视频语言）在上，目标语言（翻译后语言）在下
-2. **优化后**：目标语言（用户熟悉的语言）在上，源语言在下
-
-实现方式简单但效果显著：
-```typescript
-// 优化前
-textToShow = `${sourceText}\n${targetText}`;
-
-// 优化后
-textToShow = `${targetText}\n${sourceText}`;
-```
-
-优化理由：
-* 符合自上而下的阅读习惯，先看到熟悉的语言
-* 减少认知负担，即使不了解源语言也能立即理解内容
-* 提高内容浏览效率
-
-### 2.5 多种翻译API实现
-
-扩展实现了多种免费翻译API的支持：
-
-1. **Google翻译API**：
-   ```typescript
-   async function translateWithGoogleFree(texts: string[], sourceLang: string, targetLang: string): Promise<string[]> {
-     const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t`;
-     
-     // 批处理文本，避免请求过大
-     const batchResults = [];
-     for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-       const batch = texts.slice(i, i + BATCH_SIZE);
-       const batchTranslations = await translateBatchWithGoogleFree(batch, url);
-       batchResults.push(...batchTranslations);
-       
-       // 添加延迟避免API限流
-       if (i + BATCH_SIZE < texts.length) {
-         await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
-       }
-     }
-     
-     return batchResults;
-   }
-   ```
-
-2. **有道翻译API**：
-   ```typescript
-   async function translateWithYoudao(texts: string[], sourceLang: string, targetLang: string): Promise<string[]> {
-     // 将语言代码转换为有道支持的格式
-     const mappedSourceLang = mapToYoudaoLangCode(sourceLang);
-     const mappedTargetLang = mapToYoudaoLangCode(targetLang);
-     
-     const url = `https://fanyi.youdao.com/translate?&doctype=json&type=${mappedSourceLang}2${mappedTargetLang}`;
-     
-     // 批处理文本
-     const batchResults = [];
-     for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-       const batch = texts.slice(i, i + BATCH_SIZE);
-       const batchTranslations = await translateBatchWithYoudao(batch, url);
-       batchResults.push(...batchTranslations);
-       
-       // 添加延迟避免API限流
-       if (i + BATCH_SIZE < texts.length) {
-         await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
-       }
-     }
-     
-     return batchResults;
-   }
-   ```
-
-3. **微软/Bing翻译API**：
-   ```typescript
-   async function translateWithMicrosoft(texts: string[], sourceLang: string, targetLang: string): Promise<string[]> {
-     const mappedSourceLang = mapToMicrosoftLangCode(sourceLang);
-     const mappedTargetLang = mapToMicrosoftLangCode(targetLang);
-     
-     const url = `https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&from=${mappedSourceLang}&to=${mappedTargetLang}`;
-     
-     // 批处理文本
-     const batchResults = [];
-     for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-       const batch = texts.slice(i, i + BATCH_SIZE);
-       const batchTranslations = await translateBatchWithMicrosoft(batch, url);
-       batchResults.push(...batchTranslations);
-       
-       if (i + BATCH_SIZE < texts.length) {
-         await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
-       }
-     }
-     
-     return batchResults;
-   }
-   ```
-
-4. **API测试功能实现**：
-   ```typescript
-   async function testApiKey(api: string): Promise<{ success: boolean; message: string }> {
-     try {
-       // 准备测试文本
-       const testText = "Hello, this is a test message.";
-       let result = "";
-       
-       // 根据API类型调用相应的翻译函数
-       switch(api) {
-         case 'google-free':
-           result = await translateTestTextWithGoogleFree(testText);
-           break;
-         case 'youdao-free':
-           result = await translateTestTextWithYoudao(testText);
-           break;
-         case 'microsoft-free':
-           result = await translateTestTextWithMicrosoft(testText);
-           break;
-         default:
-           return { success: false, message: "未知的API类型" };
-       }
-       
-       return { 
-         success: true, 
-         message: `API测试成功！翻译结果: "${result}"` 
-       };
-     } catch (error) {
-       return { 
-         success: false, 
-         message: `API测试失败: ${error.message}` 
-       };
-     }
-   }
-   ```
-
-### 2.6 OpenAI模型选项更新 (2024-05)
-
-为支持最新的AI翻译技术，我们对扩展中的OpenAI模型选项进行了全面更新：
-
-#### 模型列表更新
-
-基于最新OpenAI API文档和用户需求，我们更新了侧边栏中的模型选择列表：
-
-```html
-<select id="openai-model" name="openai-model">
-  <option value="gpt-4.1">gpt-4.1</option>
-  <option value="gpt-4.1-mini">gpt-4.1-mini</option>
-  <option value="gpt-4.1-nano">gpt-4.1-nano</option>
-  <option value="gpt-4o">gpt-4o</option>
-  <option value="gpt-4o-mini">gpt-4o-mini</option>
-  <option value="custom">自定义...</option>
-</select>
-```
-
-- **移除** 过于昂贵或老旧模型：`gpt-4`、`gpt-o3` 系列、`o4-mini` 等
-- **保留** 主力系列和精简版本：`gpt-4.1` / `gpt-4.1-mini` / `gpt-4.1-nano` / `gpt-4o` / `gpt-4o-mini`
-- **自定义** 选项仍然可用，支持用户输入任意模型 ID
-
-#### 技术实现细节
-
-前端改动：
-1. 更新 `sidepanel.html` 中 `<select id="openai-model">` 元素
-2. 保持 `sidepanel.ts` 和 `background.ts` 中消息传递及处理逻辑不变
-
-#### 用户体验与性能考量
-
-1. **成本与性能平衡**：移除成本高且老旧的模型，保留通用性强、性能表现好的模型系列
-2. **界面简洁化**：用户下拉列表更加精炼，无需在大量模型间选择
-3. **灵活性保留**：`custom` 选项支持探索其他模型
-
-### 2.7 错误处理优化
-
-改进了翻译失败时的用户体验：
-
-1. **错误提示与源字幕分离显示**：
-   ```typescript
-   function handleSubtitleUpdate(currentTime) {
-     // ... 现有代码 ...
-     
-     if (translateError) {
-       // 创建错误消息和源字幕的分离显示
-       const errorElement = document.createElement('span');
-       errorElement.style.color = 'red';
-       errorElement.textContent = `翻译错误: ${translateError}`;
-       
-       const sourceElement = document.createElement('span');
-       sourceElement.style.color = 'white';
-       sourceElement.textContent = sourceText;
-       
-       overlayInner.innerHTML = '';
-       overlayInner.appendChild(errorElement);
-       overlayInner.appendChild(document.createElement('br'));
-       overlayInner.appendChild(sourceElement);
-     } else {
-       // 正常显示逻辑
-       overlayInner.textContent = textToShow;
-     }
-   }
-   ```
-
-2. **错误类型区分**：
-   ```typescript
-   try {
-     translatedTexts = await translateFunction(textsToTranslate, sourceLang, targetLang);
-   } catch (error) {
-     console.error(`翻译失败: ${error.message}`);
-     
-     // 区分不同错误类型
-     if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
-       translateError = "网络连接错误，请检查网络连接";
-     } else if (error.message.includes('rate limit')) {
-       translateError = "API请求频率限制，请稍后重试";
-     } else if (error.message.includes('403')) {
-       translateError = "API访问被拒绝，可能需要更换IP或等待一段时间";
-     } else {
-       translateError = error.message;
-     }
-     
-     // 使用源语言文本作为回退
-     translatedTexts = textsToTranslate;
-   }
-   ```
-
-### 2.8 Google翻译API优化
-
-为提高Google免费翻译API的可靠性和成功率，实现了双路径请求策略：
-
-1. **双路径策略**：
-   - 路径A：使用 `/translate_a/single` 端点（主要路径）
-   - 路径B：使用 `/translate_a/t` 端点（备选路径）
-
-2. **关键问题修复**：
-   ```typescript
-   // 路径B实现优化前（有问题）
-   const url = `https://translate.googleapis.com/translate_a/t?client=webapp&sl=${sourceLang}&tl=${targetLang}&hl=auto&dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t&source=bh&ssel=0&tsel=0&kc=1&tk=${generateGoogleTk(subtitle.text)}`;
-   const options = {
-     method: 'POST', // 错误：使用POST方法
-     headers: {
-       'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-       // ...其他头部
-     },
-     body: `q=${encodeURIComponent(subtitle.text)}` // 在请求体中传参
-   };
-   ```
-   
-   ```typescript  
-   // 路径B实现优化后（修复）
-   const url = `https://translate.googleapis.com/translate_a/t?client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t&q=${encodeURIComponent(subtitle.text)}`;
-   const options = {
-     method: 'GET', // 修正：使用GET方法
-     headers: {
-       'Accept': '*/*',
-       // ...其他头部
-     }
-     // 无请求体，参数在URL中
-   };
-   ```
-
-3. **主要改进**：
-   - 修改请求方法：从 `POST` 改为 `GET`
-   - 简化请求参数：仅保留必要参数
-   - 修改client参数：从 `webapp` 改为 `gtx`
-   - 移除自定义tk令牌：减少失败可能性
-
-4. **自动故障转移**：
-   ```typescript
-   // 尝试双路径翻译，自动故障转移
-   try {
-     // 首先尝试路径A
-     return await googleTranslatePathA(subtitles, sourceLang, targetLang);
-   } catch (error) {
-     console.warn(`Google翻译路径A失败: ${error.message}`);
-     try {
-       // 如果路径A失败，尝试路径B
-       return await googleTranslatePathB(subtitles, sourceLang, targetLang);
-     } catch (secondError) {
-       throw new Error(`所有Google翻译路径均失败`);
-     }
-   }
-   ```
-
-5. **优化成效**：
-   - 提高了API请求成功率
-   - 增强了翻译过程的稳定性
-   - 减少了由于API变化导致的失败
-
-### 2.9 微软翻译API双路径实现与优化
-
-为提高微软翻译服务的可靠性和稳定性，我们实现了双路径策略并解决了关键认证问题：
-
-1. **认证问题分析与解决**：
-   
-   我们最初根据一些参考文档实现了微软翻译API的双路径策略，但路径B（使用`api-edge`端点）一直失败，返回401错误：
-   ```
-   {"error":{"code":401001,"message":"The request is not authorized because credentials are missing or invalid."}}
-   ```
-   
-   通过系统性测试发现：
-   - 路径A (`api.cognitive...`)：使用`Authorization: Bearer ${token}`认证方式成功
-   - 路径B (`api-edge...`)：尝试使用`Ocp-Apim-Subscription-Key`和`Ocp-Apim-Subscription-Region`认证方式失败
-   - 当尝试在路径B中也使用`Authorization: Bearer ${token}`认证方式时，成功了
-
-2. **测试验证过程**：
-   ```typescript
-   // 伪代码：我们测试了三种方式
-   // 方案1：Ocp-Apim-Subscription-Key + Region (失败401)
-   // 方案2：Authorization Bearer (成功200)
-   // 方案3：Ocp-Apim-Subscription-Key 无Region (失败401)
-   ```
-
-3. **最终实现差异**：
-   
-   两条路径的主要区别：
-   ```typescript
-   // 路径A
-   const translationUrl = `https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&from=${from}&to=${to}`;
-   
-   // 路径B
-   const translationUrl = `https://api-edge.cognitive.microsofttranslator.com/translate?api-version=3.0&from=${from}&to=${to}&includeSentenceLength=true`;
-   ```
-   
-   两条路径共同使用：
-   ```typescript
-   headers: {
-     'Content-Type': 'application/json',
-     'Authorization': `Bearer ${authToken}`,
-     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
-     // ...其他请求头
-   }
-   ```
-   
-   批处理策略差异：
-   ```typescript
-   // 路径A
-   const batchSize = 10;
-   await new Promise(resolve => setTimeout(resolve, 500));
-   
-   // 路径B
-   const batchSize = 3;
-   await new Promise(resolve => setTimeout(resolve, 1500));
-   ```
-
-4. **增强的错误处理**：
-   ```typescript
-   if (!response.ok) {
-     // 尝试获取详细错误信息
-     let errorDetail = '';
-     try {
-       errorDetail = await response.text();
-     } catch (e) {
-       errorDetail = '无法获取详细错误信息';
-     }
-     
-     throw new Error(`微软翻译路径B请求失败，状态码: ${response.status}，错误详情: ${errorDetail}`);
-   }
-   ```
-
-5. **关于DNR规则**：
-   
-   尽管一些参考资料建议使用DNR（Declarative Net Request）规则修改请求头以模拟Edge浏览器，但我们的测试表明通过直接设置合适的User-Agent和其他关键请求头，无需使用DNR规则也能成功调用两个端点。
-
-通过这些优化，我们确保了微软翻译API的高可用性和稳定性。即使一条路径出现问题，系统会自动切换到另一条路径，为用户提供连续的翻译服务。
-
-## 3. 问题排查与修复
-
-### 3.1 翻译API测试后字幕不显示问题
-
-#### 问题描述
-
-在实现多种翻译API支持并提供测试功能后，发现当用户测试完谷歌和微软翻译API后，会出现视频字幕完全不显示的问题。具体表现为：
-
-1. 翻译按钮保持"开启"状态（按钮图标显示正确）
-2. 屏幕上没有任何字幕显示（即使视频中有对话）
-3. 用户需要手动关闭后再开启翻译按钮才能恢复字幕显示
-
-#### 排查过程
-
-1. **问题复现**：首先确认了问题的可复现性，通过以下步骤可稳定复现：
-   - 打开YouTube视频并开启翻译功能（字幕正常显示）
-   - 打开侧边栏并测试微软翻译API
-   - 测试谷歌翻译API
-   - 返回视频，发现字幕不再显示，但翻译开关仍为开启状态
-
-2. **日志分析**：检查控制台日志，发现以下关键信息：
-   ```
-   [Debug] Processed 0 subtitle events. Listing below:
-   字幕数据处理和合并完成，启动显示循环。
-   启动字幕显示循环 (requestAnimationFrame)
-   ```
-   
-   这表明系统确实试图启动字幕显示循环，但处理后的字幕事件列表为空。
-
-3. **代码检查**：检查了关键函数的实现，发现了几个潜在问题点：
-   
-   a. `startTranslationProcess` 函数中获取翻译结果后处理：
-   ```typescript
-   try {
-     // API调用代码...
-     translationResults = response.translatedSubtitles;
-   } catch (error) {
-     // 设置错误信息，但translationResults维持为null
-     translationError = `使用${apiDisplayName}翻译服务失败，请切换翻译服务`;
-   }
-   
-   // 后续直接使用可能为null的translationResults
-   processedSubtitleEvents = mergeSubtitleData(
-     sourceEvents,
-     needsTranslation ? translationResults : nativeTargetEvents,
-     targetLang
-   );
-   ```
-
-   b. `mergeSubtitleData` 函数缺少对null输入的严格处理：
-   ```typescript
-   function mergeSubtitleData(sourceEvents, targetEventsOrTranslations, targetLangCode) {
-     // 没有检查sourceEvents是否为空
-     // 没有检查targetEventsOrTranslations是否为null
-     
-     const isTargetNative = Array.isArray(targetEventsOrTranslations);
-     const translations = isTargetNative ? null : targetEventsOrTranslations;
-     
-     // 如果translations为null，这里会出现问题
-   }
-   ```
-
-   c. `setTranslateActive` 函数在切换状态时缺乏清理机制：
-   ```typescript
-   async function setTranslateActive(active: boolean): Promise<void> {
-     translateActive = active;
-     // 更新图标...
-     // 保存到存储...
-     // 缺少对processedSubtitleEvents的清理
-   }
-   ```
-
-4. **根本原因确认**：通过插入调试日志，确认当翻译API测试失败时，`translationResults`变量为null，导致`mergeSubtitleData`无法正确合并字幕数据，生成的`processedSubtitleEvents`数组为空，即便有可用的源字幕也不会显示。
-
-#### 解决方案
-
-实现了多层次的防护机制，确保即使翻译失败也能保持字幕显示：
-
-1. **确保翻译结果不为null**：
-```typescript
-// 确保translationResults变量不为null
-if (needsTranslation && !translationResults) {
-  console.warn('[警告] translationResults为null，创建空对象避免后续处理错误');
-  translationResults = {};
-}
-```
-
-2. **添加字幕数据保底机制**：
-```typescript
-// 添加额外检查以确保字幕事件有效
-if (processedSubtitleEvents.length === 0 && sourceEvents.length > 0) {
-  console.warn('[警告] 合并后的字幕事件为空但源字幕存在，直接使用源字幕');
-  // 如果合并后的事件为空但源事件存在，直接使用源事件
-  processedSubtitleEvents = sourceEvents.map(event => ({
-    start: event.start,
-    end: event.end,
-    sourceText: event.text,
-    targetText: null,
-    sourceLangCode: event.langCode,
-    targetLangCode: targetLang
-  }));
-}
-```
-
-3. **优化合并函数代码**：
-```typescript
-function mergeSubtitleData(
-  sourceEvents: { start: number; end: number; text: string; langCode: string }[],
-  targetEventsOrTranslations: { start: number; end: number; text: string; langCode: string }[] | { [id: string]: string } | null,
-  targetLangCode: string
-): SubtitleEvent[] {
-  // 如果源事件为空，直接返回空数组
-  if (!sourceEvents || sourceEvents.length === 0) {
-    console.warn("源字幕事件为空，无法合并");
-    return [];
-  }
-
-  // 添加日志输出
-  if (!targetEventsOrTranslations) {
-    console.warn("目标字幕/翻译为null，将只使用源字幕");
-  }
-  
-  // 其余合并逻辑...
-}
-```
-
-4. **完善状态切换函数**：
-```typescript
-async function setTranslateActive(active: boolean): Promise<void> {
-  // 获取之前的状态，以便执行适当的清理
-  const wasActive = translateActive;
-  translateActive = active;
-  
-  // 更新图标...
-  
-  // 如果是从开启状态切换到关闭状态，执行必要的清理
-  if (wasActive && !active) {
-    // 停止字幕更新循环
-    stopSubtitleUpdates();
-    // 清空字幕数据
-    processedSubtitleEvents = [];
-    console.log('翻译关闭，已清理字幕显示和数据');
-  }
-  
-  // 保存到存储...
-}
-```
-
-5. **优化字幕显示逻辑**：
-```typescript
-// 非错误情况下，使用普通文本
-subtitleOverlayElement.innerHTML = '';
-if (textToShow) { // 添加空字符串检查
-  subtitleOverlayElement.innerText = textToShow;
-}
-```
-
-#### 验证结果
-
-优化后再次进行测试，确认了以下改进：
-
-1. 即使翻译API测试失败，字幕功能也能继续工作
-2. 当翻译服务出现问题时，会自动降级到显示原始字幕
-3. 翻译开关状态变化时能正确清理旧状态
-4. 添加了详细的日志输出，便于问题排查
-5. 提高了整个字幕系统的鲁棒性
-
-通过这次问题修复，不仅解决了特定场景下的字幕显示问题，也提升了整个字幕处理流程的容错能力，为用户提供了更稳定的体验。
-
-### 3.2 构建错误：非法HTML标记
-
-**问题**：构建时出现错误，文件末尾存在非法HTML标记`</rewritten_file>`。
-**解决**：使用命令行工具提取有效内容并覆盖原文件。
 ```bash
-head -n 1720 content/content-script.ts > content/content-script-fixed.ts && 
-mv content/content-script-fixed.ts content/content-script.ts
+# 克隆仓库
+git clone <repository-url>
+
+# 进入项目目录
+cd youtube-subtitle-translator
+
+# 安装依赖
+npm install
 ```
 
-### 3.3 按钮注入和重复问题
+### 开发命令
 
-**问题**：页面导航后，控制按钮会重复注入。
-**解决**：
-* 在导航处理函数中主动查找并移除旧按钮
-* 保持`injectControls`中的双重检查（状态标志 + DOM检查）
+```bash
+# 开发模式构建（支持热重载）
+npm run dev
 
-### 3.4 字幕自动恢复问题
+# 生产模式构建
+npm run build
 
-**问题**：在视频间导航时，即使翻译开关为"开启"状态，也不会自动显示字幕。
-**解决**：
-* 将核心翻译启动逻辑封装到`startTranslationProcess`函数
-* 在按钮注入成功后根据`translateActive`状态自动调用此函数
-* 清理观察者中的冗余逻辑
+# 代码检查
+npm run lint
+```
 
-### 3.5 翻译API切换问题
+## 加载扩展进行测试
 
-**问题**：切换翻译API后，字幕不会自动更新使用新API。
-**解决**：
+1. 运行 `npm run dev` 启动 Vite 开发服务器
+2. 在 Chrome 地址栏输入：`chrome://extensions/`
+3. 打开右上角的"开发者模式"
+4. 点击"加载已解压的扩展程序"
+5. 选择项目的 `dist` 目录
+6. 访问任意 YouTube 视频页面进行测试
+7. 每次修改代码后，点击扩展卡片上的"重新加载"按钮应用更改
+
+## 项目结构
+
+```
+youtube-subtitle-translator/
+├── background/               # 后台脚本
+│   └── background.ts         # 服务工作者脚本
+├── content/                  # 内容脚本
+│   ├── content-script.ts     # 注入YouTube页面的主要脚本
+│   └── main-world.ts         # 注入主世界的辅助脚本
+├── sidepanel/                # 侧边栏
+│   ├── sidepanel.html        # 侧边栏HTML
+│   ├── sidepanel.css         # 侧边栏样式
+│   └── sidepanel.ts          # 侧边栏脚本
+├── icons/                    # 扩展图标
+├── docs/                     # 文档
+├── dist/                     # 构建输出目录
+├── manifest.json             # 扩展清单文件
+├── vite.config.ts            # Vite配置
+├── package.json              # 项目依赖
+└── tsconfig.json             # TypeScript配置
+```
+
+## 构建系统
+
+项目使用 Vite 进行构建，配置了多入口点以生成所需的各个脚本：
+
 ```typescript
-// 在内容脚本的storage.onChanged监听器中添加处理
-chrome.storage.onChanged.addListener((changes) => {
-  // ... 现有代码 ...
-  
-  // 处理API变化
-  if (changes.translationApi && translateActive) {
-    console.log('翻译API变更，重新启动翻译流程');
-    startTranslationProcess();
+// vite.config.ts 主要配置
+export default defineConfig(({ command, mode }) => {
+  // 内容脚本配置 - 使用IIFE格式
+  if (mode === 'content-script') {
+    return mergeConfig(baseConfig, {
+      build: {
+        // ...内容脚本特定配置
+        rollupOptions: {
+          output: { format: 'iife' } // 使用IIFE格式
+        }
+      }
+    });
   }
+  
+  // 默认配置 - 其他脚本使用ES模块
+  return mergeConfig(baseConfig, {
+    // ...ES模块脚本配置
+  });
 });
 ```
 
-### 3.6 侧边栏UI简化
+### 内容脚本特殊构建说明
 
-**问题**：侧边栏中显示了太多API选项，包括付费和自定义API，使界面复杂且混乱。
-**解决**：
-1. 简化HTML结构，移除所有付费API选项：
-```html
-<select id="translation-api">
-  <option value="google-free">Google翻译</option>
-  <option value="youdao-free">有道翻译</option>
-  <option value="microsoft-free">微软翻译</option>
-  <option value="mock">模拟翻译</option>
-</select>
-```
+由于Chrome扩展中内容脚本的特殊性，项目使用双重构建策略：
+
+1. **为什么内容脚本需要特殊处理？**
+   - 内容脚本直接注入到网页环境中，该环境可能不支持ES模块
+   - 使用`import`语句会导致`Uncaught SyntaxError: Cannot use import statement outside a module`错误
+   - 即使在manifest.json中设置`"type": "module"`也可能不完全兼容
+
+2. **IIFE格式 vs ES模块格式**
+   - 内容脚本使用IIFE（立即执行函数表达式）格式构建
+   - 背景脚本和其他扩展部分使用ES模块格式
+   - IIFE格式将所有代码和依赖打包在一个闭包中，避免使用`import`语句
+
+3. **构建命令**
+   - `npm run build:main` - 构建背景脚本、侧边栏等（ES模块格式）
+   - `npm run build:content` - 构建内容脚本（IIFE格式）
+   - `npm run build` - 依次执行上述两个命令
+
+4. **注意事项**
+   - 修改内容脚本后，必须重新运行构建命令
+   - 不要在内容脚本中使用动态导入（`import()`）语法
+   - 尽量避免内容脚本与其他脚本之间的复杂依赖关系
+
+## 开发工作流
+
+### 1. 功能开发流程
+
+1. 从主分支创建新的功能分支：`feature/名称`
+2. 实现功能并编写相关文档
+3. 测试功能是否正常工作
+4. 提交代码，遵循提交信息规范
+5. 创建Pull Request，等待审核
+
+### 2. Bug修复流程
+
+1. 从主分支创建新的修复分支：`fix/问题名称`
+2. 修复Bug并添加相关测试
+3. 在本地验证修复是否有效
+4. 提交代码，包含问题和解决方案的清晰描述
+5. 创建Pull Request，等待审核
+
+## 调试技巧
+
+### Chrome DevTools调试
+
+1. 在扩展卡片上点击"查看视图: 后台页面"打开Service Worker调试器
+2. 在YouTube页面上打开开发者工具，在控制台中可以看到内容脚本日志
+3. 使用"Elements"面板检查注入的UI元素
+4. 使用"Network"面板监控API请求
+
+### 常见调试方法
+
+* 使用`console.log`和`console.error`输出调试信息
+* 在关键位置添加断点，跟踪代码执行流程
+* 使用Chrome的"存储"面板检查扩展的存储数据
+* 查看扩展的错误日志：`chrome://extensions` -> 在扩展卡片上勾选"错误"
+
+## 贡献指南
+
+### 代码风格
+
+* 使用TypeScript类型注解，确保类型安全
+* 遵循功能模块化原则
+* 使用异步/await处理异步操作
+* 添加JSDoc注释说明函数用途和参数
+
+### 提交要求
+
+* 确保代码通过lint检查：`npm run lint`
+* 编写清晰的提交信息，格式：`类型(范围): 描述`
+  * 类型：feat, fix, docs, style, refactor, test, chore
+  * 范围：影响的模块，如content, background, sidepanel
+  * 描述：简明扼要的变更说明
+* 保持提交内容小而集中，便于审核和回退
+
+### 文档更新
+
+* 代码变更需同步更新相关文档
+* 新功能需添加用户文档和开发文档
+* 遵循现有文档风格和组织结构
+
+## 发布流程
+
+### 发布前检查清单
+
+- [ ] 确保所有功能正常工作
+- [ ] 验证在不同YouTube视频上的兼容性
+- [ ] 检查资源使用情况（内存、CPU）
+- [ ] 确认错误处理机制正常
+- [ ] 更新版本号和变更日志
+- [ ] 准备Chrome Web Store说明和截图
+
+### 打包与发布
+
+1. 更新`manifest.json`中的版本号
+2. 运行`npm run build`生成生产版本
+3. 压缩`dist`目录为zip文件
+4. 在Chrome Web Store开发者控制台上传新版本
+5. 填写变更说明
+6. 提交审核
+
+## 参考资源
+
+* [Chrome扩展开发文档](https://developer.chrome.com/docs/extensions/)
+* [Manifest V3指南](https://developer.chrome.com/docs/extensions/mv3/intro/)
+* [YouTube Player API参考](https://developers.google.com/youtube/iframe_api_reference)
+* [TypeScript文档](https://www.typescriptlang.org/docs/)
+* [Vite文档](https://vitejs.dev/guide/)
+
+## 常见问题
+
+### Q: 我的扩展无法获取字幕轨道，可能是什么原因？
+A: 检查main-world.js是否正确注入，以及YouTube播放器API是否发生变化。可以在控制台中检查是否有相关错误信息。
+
+### Q: 为什么我的翻译按钮在导航后消失了？
+A: 导航处理是扩展的关键挑战之一。检查MutationObserver是否正常工作，以及导航后的重新注入逻辑是否执行。
+
+### Q: 如何查看存储的翻译缓存数据？
+A: 在Chrome扩展页面点击"查看视图: 后台页面"，然后在控制台中输入`chrome.storage.local.get(null, console.log)`查看所有本地存储数据。
+
+## 核心数据流：侧边栏初始化
+
+当用户打开扩展的侧边栏 (Side Panel) 时，会触发以下初始化数据流：
+
+1.  **侧边栏 (`sidepanel.ts`) 启动**:
+    *   当侧边栏的 DOM 内容加载完成后 (`DOMContentLoaded`)。
+    *   它会通过 `chrome.tabs.query({ active: true, currentWindow: true })` 获取当前活动标签页的 `tabId` 和 `url`。
+    *   如果 `url` 存在，它会调用 `extractVideoIdFromUrl(url)` (该函数来自 `src/storage/video-settings-cache.ts`) 来尝试提取 YouTube 页面的 `videoId`。
+    *   `sidepanel.ts` 随后向后台脚本 (`background.ts`) 发送一条 `sidePanelOpened` 消息，该消息包含获取到的 `tabId` 和 `videoId` (如果 `videoId` 存在，否则为 `null`)。
+
+2.  **后台脚本 (`background.ts`) 响应**:
+    *   `background.ts` 监听 `sidePanelOpened` 消息。
+    *   收到消息后，它会调用内部的 `initializeSidePanel(tabId, videoIdFromSidePanel)` 函数。
+    *   **获取数据**: 
+        *   使用 `StorageManager.getInstance().getBatch()` 从 `chrome.storage.local` 加载全局设置 (例如默认源语言、目标语言、API配置等)。
+        *   **`videoId` 处理**: 优先使用从 `sidepanel.ts` 传递过来的 `videoIdFromSidePanel`。如果此 `videoId` 不存在，`background.ts` 会尝试通过传入的 `tabId` 调用 `chrome.tabs.get(tabId)` 获取标签页的 `url`，然后再次调用 `VideoSettingsCache.extractVideoId(tabUrl)` 来提取 `videoId`。
+        *   如果最终获得了有效的 `currentVideoId`，则会调用 `VideoSettingsCache.getInstance().getVideoSettings(currentVideoId)` 来获取该视频的特定缓存设置。
+        *   使用 `tabId` (通过 `chrome.tabs.sendMessage(tabId, { action: 'requestAvailableTracks' })`) 向当前标签页的内容脚本发送消息，请求该视频可用的字幕轨道列表。
+    *   **数据整合与发送**: 
+        *   `background.ts` 会合并全局设置和视频特定设置（视频特定设置具有较高优先级，但通常不覆盖账户相关的全局API密钥等）。
+        *   最后，`background.ts` 将包含最终合并后的设置对象 (`combinedSettings`)、获取到的字幕轨道列表 (`availableTracks`)、实际使用的 `videoId` 以及 `tabId` 打包，通过 `chrome.runtime.sendMessage({ action: 'initializeSidePanelUI', data: { ... } })` 消息发送回侧边栏。
+
+3.  **侧边栏 (`sidepanel.ts`) 更新UI**:
+    *   `sidepanel.ts` 监听 `initializeSidePanelUI` 消息。
+    *   收到数据后，它会使用提供的数据 (设置、轨道信息) 来渲染和更新侧边栏的用户界面元素 (如填充语言下拉列表、设置开关状态等)。
+    *   此流程确保了侧边栏显示的是最新的、与当前视频和用户配置相关的正确信息。
+
+4.  **页面内导航处理**:
+    *   如果用户在已打开侧边栏的 YouTube 标签页内导航到新的视频页面，内容脚本会检测到此变化并通知后台脚本 (`youtubeNavigationFinished` 消息)。
+    *   后台脚本再将此导航事件广播为 `youtubeNavigationOccurred` 消息。
+    *   侧边栏接收到 `youtubeNavigationOccurred` 消息后，会重新从当前标签页的 `sender.tab.url` 提取 `videoId`，并再次向后台脚本发送 `sidePanelOpened` 消息 (包含新的 `videoId` 和 `tabId`)，从而触发上述数据加载和UI更新流程，以确保侧边栏内容与新视频同步。
+
+这个集中的数据初始化流程，由 `background.ts` 主导，简化了侧边栏的逻辑，并确保了数据来源的一致性。
+
+## 数据存储策略
+
+为了确保扩展的性能、数据的持久性和安全性，本项目采用以下数据存储策略：
+
+| 信息类型                     | 主要存储位置                                 | 管理方式/类                                     | 主要原因                                                                |
+| :--------------------------- | :------------------------------------------- | :---------------------------------------------- | :---------------------------------------------------------------------- |
+| **用户全局设置**             | `chrome.storage.local`                       | `StorageManager`                                | 持久性、全局性。用于存储默认源/目标语言、字幕模式、选择的翻译API等。          |
+| **用户API密钥**              | `chrome.storage.local`                       | `StorageManager`                                | 持久性。用户提供的API密钥需长期保存。需注意`chrome.storage.local`本身未加密。 |
+| **视频的特定设置**           | `chrome.storage.local` (通过缓存类管理)      | `VideoSettingsCache`                            | 持久性、特定性、缓存优化。例如，用户为特定视频选择的源/目标语言。             |
+| **翻译后的字幕**             | `chrome.storage.local` (通过缓存类管理)      | `SubtitleCacheManager` (或类似字幕缓存管理类) | 性能优化、API成本节约、持久化用户体验。避免对相同字幕重复翻译。             |
+| **原始字幕 (YouTube源字幕)** | 内存缓存 (Service Worker中) / 按需从页面获取 | 主要在内存中临时持有，或按需直接从内容脚本获取    | 快速访问 (短期), 保证数据新鲜度, 避免占用过多本地存储空间。                 |
+
+**详细说明:**
+
+*   **`chrome.storage.local`**: 这是扩展主要的持久化存储方案，通过 `StorageManager` 类进行统一的异步读写操作。用于存储需要长期保留的用户配置和缓存数据。
+*   **`chrome.storage.sync`**: 目前项目主要使用 `chrome.storage.local`。如果未来需要跨设备同步某些核心设置，可以考虑使用 `chrome.storage.sync`，但需注意其更严格的配额限制。
+*   **API密钥安全性**: 虽然API密钥存储在 `chrome.storage.local` 中，但需要告知用户此存储未加密，并建议用户保护好自己的设备。扩展本身会遵循最小权限原则，仅在必要时由后台脚本访问密钥。
+*   **缓存管理**:
+    *   `VideoSettingsCache`: 负责管理每个视频的个性化设置，其数据最终也通过 `StorageManager` 持久化到 `chrome.storage.local`。
+    *   `SubtitleCacheManager`: 负责缓存翻译后的字幕文本，以视频ID、目标语言、API服务商等作为组合键，数据也持久化到 `chrome.storage.local`。需要考虑缓存的清理策略（如LRU）以管理存储空间。
+*   **原始字幕**: 考虑到数据的新鲜度和潜在的存储空间占用，原始字幕文本通常不建议大规模持久化存储。优先在内存中进行短期缓存，或在需要时由内容脚本从页面实时获取并传递给后台处理。
+
+这种分层和分类的存储方式，旨在平衡持久性、性能、数据安全性和存储空间占用的需求。
+
+## 待办任务与重构计划 (YYYY-MM-DD)
+
+### I. 代码一致性与冗余
+
+1.  **统一 EventBus 实现与事件类型定义：**
+    *   **状态**: 进行中
+    *   **分析**:
+        *   `content/content-script.ts` 已确认使用 `src/events/event-bus.ts` (主 EventBus 类)。
+        *   `content/event-bus.ts` (340行版本) 与 `src/events/event-bus.ts` 功能相似但有差异，目前未发现被项目主逻辑直接导入，疑似冗余。
+        *   `EventTypes` (事件名常量) 在 `content/content-script.ts` (旧的内部定义), `content/event-bus.ts` (导出的定义), 和 `content/main-world.ts` (内部定义) 中存在多个版本。
+    *   **已完成**:
+        *   已创建统一的事件定义文件 `src/events/event-types.ts`。
+        *   `content/content-script.ts` 已修改为导入并使用 `src/events/event-types.ts`。
+    *   **待办行动**:
+        *   仔细检查并确保 `content/content-script.ts` 中所有事件监听和触发点都已正确更新为使用 `src/events/event-types.ts` 中定义的新事件名/值 (尤其是 `UI_CONTROLS_INJECTED`, `UI_OVERLAY_CREATED`)。
+        *   审查并更新 `content/main-world.ts`，使其内部 `EventTypesConst` 与 `src/events/event-types.ts` 对齐，或在通过 `postMessage` 转发事件时使用标准化的事件名。
+        *   审查其他可能使用事件名的模块 (如 `background.ts`, `sidepanel/sidepanel.ts`)，确保它们也使用统一的 `EventTypes`。
+        *   在确认 `content/event-bus.ts` 文件无任何其他间接引用或特殊用途后，可计划从项目中移除或归档。
+    *   **备注**: `content/main-world.ts` 中的内联 EventBus 类本身因其特殊通信机制，暂不更改其类实现，但其使用的事件名需与标准统一。
+
+2.  **统一 `findMatchingTargetLanguage` 函数：**
+    *   **状态**: 未开始
+    *   **任务**: 对比 `sidepanel/ts/sidepanel.ts` 中的 `findMatchingTargetLanguage` 函数与 `sidepanel/sidepanel.ts` (72KB 版本) 中的同名函数。
+    *   **目标**: 确认两者逻辑是否一致。
+    *   **行动**: 若逻辑一致，确定一个标准版本，移除另一个副本，并更新调用点。
+
+### II. 主要功能模块的重叠与统一
+
+3.  **梳理并统一侧边栏 (Side Panel) 实现：**
+    *   **状态**: 未开始
+    *   **任务**: 明确 `src/pages/sidepanel/SidePanel.tsx` (React 版本) 与 `sidepanel/sidepanel.html` + `sidepanel/sidepanel.ts` (传统 DOM 操作版本) 的未来。
+    *   **目标**: 选择一个作为主要的、长期维护的实现方案。
+    *   **行动建议**: 当前 `sidepanel/sidepanel.html` + `sidepanel/sidepanel.ts` (72KB) 功能更完整。若以此为基础，可考虑移除/归档 React 版本，或明确其不同用途。若选择 React 版本，则需大量迁移功能。
+
+4.  **整合 OpenAI 翻译逻辑：**
+    *   **状态**: 未开始
+    *   **任务**: 审阅 `background/openai-translator.ts` (`OpenAITranslator` 类) 与 `background/background.ts` 中直接实现的 OpenAI 调用函数。
+    *   **目标**: 统一 OpenAI API 的调用方式。
+    *   **行动建议**: 推荐以 `OpenAITranslator` 类作为标准。修改 `background/background.ts` 中的 `translateWithAPI` 函数，确保在选择 OpenAI 作为翻译API时，调用 `OpenAITranslator` 实例的方法。逐步移除 `background.ts` 中冗余的 OpenAI 直接实现函数。
+
+### III. 代码规范和构建优化
+
+5.  **路径别名统一：**
+    *   **状态**: 未开始
+    *   **任务**: 检查项目中 `import` 语句的路径。
+    *   **目标**: 尽可能统一使用 `tsconfig.json` 中定义的路径别名 (如 `@/*`) 替代相对路径 (`../`)。
+
+6.  **Vite 构建配置确认 (侧边栏脚本)**：
+    *   **状态**: 未开始
+    *   **任务**: 明确 `sidepanel/sidepanel.html` 引用的 `sidepanel.js` 是如何由哪个 TypeScript 文件（特别是 `sidepanel/sidepanel.ts` 的 72KB 版本）编译而来的。
+    *   **目标**: 确保 Vite 配置能够清晰、正确地处理当前功能更完整的侧边栏脚本的构建。
+
+7.  **清理未使用或废弃的文件：**
+    *   **状态**: 未开始
+    *   **任务**: 识别并评估项目中可能不再使用的文件 (如 `content/content-script-external.js`, `content/content-script-new-event.ts`, 各种 `.bak` 和 `.original` 文件)。
+    *   **目标**: 保持代码库整洁。
+
+### IV. 当前主要问题追踪
+
+8.  **插件加载失败 - "Cannot use import statement outside a module" 错误：**
+    *   **状态**: 进行中
+    *   **任务**: 持续监控并解决此错误。
+    *   **行动**: 在尝试调整输出路径后，若问题依旧，需更细致地审查 Chrome 加载扩展时的实际请求、文件内容以及是否有意外的脚本注入或加载流程。
+
+### V. UI 优化与冗余消除（2024-05-25更新）
+
+9.  **优化UI组件的初始化和管理：**
+    *   **状态**: 已完成
+    *   **任务**: 解决UI组件初始化时的冗余问题。
+    *   **改进内容**:
+        *   将Tooltip元素的创建从"鼠标悬停事件触发"移至"UI Manager初始化阶段"，避免首次使用时的DOM操作延迟
+        *   修改了`showTooltip`方法，移除了重复的元素创建检查，确保代码流程更清晰
+
+10. **合并并优化字幕容器管理：**
+    *   **状态**: 已完成
+    *   **任务**: 解决两个独立字幕容器系统的冗余问题。
+    *   **改进内容**:
+        *   统一字幕容器ID为`yt-translate-subtitle-overlay`
+        *   采用UIManager创建的DOM结构（结构更合理）
+        *   使用内容脚本负责填充内容和处理显示逻辑
+        *   通过事件系统`request:subtitle_overlay`实现两者之间的通信
+        *   默认将字幕容器设为隐藏状态，只在有内容时显示，解决了播放器上黑块问题
+        *   在字幕容器创建时增加条件判断，只有在翻译功能开启时才会创建
+
+11. **UI元素加载优化：**
+    *   **状态**: 已完成
+    *   **任务**: 提高UI元素加载的性能和用户体验。
+    *   **改进内容**:
+        *   预先创建UI组件，避免按需延迟创建带来的界面闪烁
+        *   优化了DOM操作，减少重排重绘
+        *   明确区分了UI结构创建和功能逻辑处理的职责
