@@ -37,7 +37,7 @@ export interface TranslationResults {
 }
 
 /**
- * 翻译缓存项
+ * 翻译local storage项
  */
 export interface TranslationCacheItem {
   translations: TranslationResults;
@@ -189,7 +189,7 @@ export class TranslationDispatcher {
       try {
         handler(eventType, data);
       } catch (error) {
-        console.error(`翻译事件处理函数执行错误 (事件: ${eventType}):`, error);
+        console.error(`[translation-dispatcher] 翻译事件处理函数执行错误 (事件: ${eventType}):`, error);
       }
     });
   }
@@ -203,11 +203,11 @@ export class TranslationDispatcher {
   }
 
   /**
-   * 生成翻译缓存键
+   * 生成翻译本地存储键
    */
-  private generateCacheKey(context: TranslationContext): string {
+  private generateLocalStorageKey(context: TranslationContext): string {
     const { videoId, targetLang, translationApi } = context;
-    return `${StorageKeys.CACHE.TRANSLATIONS_PREFIX}${videoId}_${targetLang}_${translationApi}`;
+    return `${StorageKeys.LOCAL.TRANSLATIONS_PREFIX}${videoId}_${targetLang}_${translationApi}`;
   }
 
   /**
@@ -241,7 +241,7 @@ export class TranslationDispatcher {
   ): string {
     // 如果已有相同条件的请求，优先处理现有请求
     if (this.hasSimilarRequest(context)) {
-      console.log('已有相同条件的翻译请求正在处理中');
+              console.log('[translation-dispatcher] 已有相同条件的翻译请求正在处理中');
     }
     
     const requestId = this.generateRequestId(context);
@@ -325,7 +325,7 @@ export class TranslationDispatcher {
       this.activeRequests.delete(nextRequest.id);
       this.processingRequest = null;
     } catch (error) {
-      console.error('处理翻译请求时出错:', error);
+              console.error('[translation-dispatcher] 处理翻译请求时出错:', error);
       
       // 如果有正在处理的请求，标记为出错
       if (this.processingRequest) {
@@ -343,7 +343,7 @@ export class TranslationDispatcher {
           try {
             this.processingRequest.callback([], this.processingRequest.error);
           } catch (callbackError) {
-            console.error('翻译回调执行错误:', callbackError);
+            console.error('[translation-dispatcher] 翻译回调执行错误:', callbackError);
           }
         }
         
@@ -413,36 +413,36 @@ export class TranslationDispatcher {
       throw new Error('没有可翻译的字幕');
     }
     
-    console.log(`开始处理翻译请求: ${request.id}, 共 ${sourceEvents.length} 条字幕`);
+    console.log(`[translation-dispatcher] 开始处理翻译请求: ${request.id}, 共 ${sourceEvents.length} 条字幕`);
     
-    // 1. 查询字幕缓存
-    const cacheKey = this.generateCacheKey(context);
-    const cachedTranslations = await this.checkTranslationCache(cacheKey);
-    
+    // 1. 查询字幕本地存储
+    const localStorageKey = this.generateLocalStorageKey(context);
+    const localStorageTranslations = await this.checkTranslationLocalStorage(localStorageKey);
+
     let translationResults: TranslationResults = {};
-    let translatedFromCache = false;
-    
-    if (cachedTranslations) {
-      // 检查缓存是否包含所有字幕
-      const allSubtitlesInCache = sourceEvents.every(event => 
-        cachedTranslations[event.id] !== undefined
+    let translatedFromLocalStorage = false;
+
+    if (localStorageTranslations) {
+      // 检查本地存储是否包含所有字幕
+      const allSubtitlesInLocalStorage = sourceEvents.every(event => 
+        localStorageTranslations[event.id] !== undefined
       );
-      
-      if (allSubtitlesInCache) {
-        // 缓存中有所有字幕的翻译，直接使用
-        translationResults = cachedTranslations;
-        translatedFromCache = true;
-        console.log(`使用缓存的翻译结果，共 ${Object.keys(translationResults).length} 条字幕`);
+
+      if (allSubtitlesInLocalStorage) {
+        // 本地存储中有所有字幕的翻译，直接使用
+        translationResults = localStorageTranslations;
+        translatedFromLocalStorage = true;
+        console.log(`[translation-dispatcher] 翻译数据完全命中: 使用local storage的翻译结果，共 ${Object.keys(translationResults).length} 条字幕`);
       } else {
-        // 部分字幕在缓存中，提取需要翻译的部分
-        translationResults = { ...cachedTranslations };
+        // 部分字幕在本地存储中，提取需要翻译的部分
+        translationResults = { ...localStorageTranslations };
         const subtitlesToTranslate = sourceEvents.filter(event => 
           !translationResults[event.id]
         );
         
-        console.log(`部分字幕在缓存中，需要翻译 ${subtitlesToTranslate.length} 条字幕`);
+        console.log(`[translation-dispatcher] 翻译数据部分命中: local storage中有${Object.keys(localStorageTranslations).length}条，需要翻译 ${subtitlesToTranslate.length} 条字幕`);
         
-        // 2. 对未缓存的字幕进行翻译
+        // 2. 对未local storage的字幕进行翻译
         if (subtitlesToTranslate.length > 0) {
           const newTranslations = await this.translateSubtitles(
             subtitlesToTranslate,
@@ -454,13 +454,13 @@ export class TranslationDispatcher {
           // 合并结果
           Object.assign(translationResults, newTranslations);
           
-          // 更新缓存
-          await this.updateTranslationCache(cacheKey, translationResults);
+          // 更新本地存储
+          await this.updateTranslationLocalStorage(localStorageKey, translationResults);
         }
       }
     } else {
-      // 缓存中没有任何翻译，全部重新翻译
-      console.log(`缓存未命中，翻译全部 ${sourceEvents.length} 条字幕`);
+      // local storage中没有任何翻译，全部重新翻译
+      console.log(`[translation-dispatcher] 翻译数据未命中: local storage为空，翻译全部 ${sourceEvents.length} 条字幕`);
       
       // 2. 翻译字幕
       translationResults = await this.translateSubtitles(
@@ -470,8 +470,8 @@ export class TranslationDispatcher {
         translationApi
       );
       
-      // 更新缓存
-      await this.updateTranslationCache(cacheKey, translationResults);
+      // 更新本地存储
+      await this.updateTranslationLocalStorage(localStorageKey, translationResults);
     }
     
     // 3. 合并源字幕和翻译结果
@@ -489,7 +489,7 @@ export class TranslationDispatcher {
     this.triggerEvent(TranslationEvent.TRANSLATION_COMPLETED, {
       requestId: request.id,
       processedEvents,
-      fromCache: translatedFromCache
+      fromLocalStorage: translatedFromLocalStorage
     });
     
     // 6. 调用回调函数
@@ -497,48 +497,53 @@ export class TranslationDispatcher {
       try {
         callback(processedEvents);
       } catch (error) {
-        console.error('翻译回调执行错误:', error);
+        console.error('[translation-dispatcher] 翻译回调执行错误:', error);
       }
     }
     
-    console.log(`翻译请求处理完成: ${request.id}`);
+    console.log(`[translation-dispatcher] 翻译请求处理完成: ${request.id}`);
   }
 
   /**
-   * 从缓存中查询翻译结果
-   * @param cacheKey 缓存键
-   * @returns 缓存的翻译结果
+   * 从本地存储中查询翻译结果
+   * @param localStorageKey 本地存储键
+   * @returns 本地存储的翻译结果
    */
-  private async checkTranslationCache(cacheKey: string): Promise<TranslationResults | null> {
+  private async checkTranslationLocalStorage(localStorageKey: string): Promise<TranslationResults | null> {
     try {
-      const cache = await this.storageManager.get<TranslationCacheItem | null>(cacheKey, null, 'local');
-      
-      if (cache && cache.translations) {
-        return cache.translations;
+      console.log(`[translation-dispatcher] 检查翻译数据: 存储键=${localStorageKey}`);
+      const localStorageData = await this.storageManager.get<TranslationCacheItem | null>(localStorageKey, null, 'local');
+
+      if (localStorageData && localStorageData.translations) {
+        console.log(`[translation-dispatcher] 从local storage读取到翻译数据: 存储键=${localStorageKey}, 包含${Object.keys(localStorageData.translations).length}条记录, 时间戳=${localStorageData.timestamp}`);
+        return localStorageData.translations;
       }
-      
+
+      console.log(`[translation-dispatcher] local storage中未找到翻译数据: 存储键=${localStorageKey}`);
       return null;
     } catch (error) {
-      console.error('查询翻译缓存时出错:', error);
+      console.error('[translation-dispatcher] 查询翻译本地存储时出错:', error);
       return null;
     }
   }
 
   /**
-   * 更新翻译缓存
-   * @param cacheKey 缓存键
+   * 更新翻译本地存储
+   * @param localStorageKey 本地存储键
    * @param translations 翻译结果
    */
-  private async updateTranslationCache(cacheKey: string, translations: TranslationResults): Promise<void> {
+  private async updateTranslationLocalStorage(localStorageKey: string, translations: TranslationResults): Promise<void> {
     try {
+      console.log(`[translation-dispatcher] 保存翻译数据到local storage: 存储键=${localStorageKey}, 包含${Object.keys(translations).length}条记录`);
       const cacheData: TranslationCacheItem = {
         translations,
         timestamp: Date.now()
       };
       
-      await this.storageManager.set(cacheKey, cacheData, 'local');
+      await this.storageManager.set(localStorageKey, cacheData, 'local');
+      console.log(`[translation-dispatcher] 翻译数据保存成功: 存储键=${localStorageKey}, 时间戳=${cacheData.timestamp}`);
     } catch (error) {
-      console.error('更新翻译缓存时出错:', error);
+      console.error('[translation-dispatcher] 更新翻译本地存储时出错:', error);
     }
   }
 
@@ -682,7 +687,7 @@ export class TranslationDispatcher {
         90 // 前后各45秒
       );
       
-      console.log(`按优先级分组: 高优先级 ${highPriority.length} 条，普通优先级 ${normalPriority.length} 条`);
+      console.log(`[translation-dispatcher] 按优先级分组: 高优先级 ${highPriority.length} 条，普通优先级 ${normalPriority.length} 条`);
       
       if (highPriority.length > 0) {
         // 创建高优先级上下文

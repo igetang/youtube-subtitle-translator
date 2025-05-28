@@ -132,26 +132,31 @@ class LocalStorageService {
   }
 
   /**
-   * 保存轨道数据到Memory Cache
+   * 保存轨道本地存储
    * @param videoId 视频ID
    * @param tracks 轨道数据
    */
-  async saveTrackMemoryCache(videoId: string, tracks: any[]): Promise<any> {
-    console.log(`[background] saveTrackMemoryCache: videoId=${videoId}, tracks=${tracks.length}条`);
+  async saveTrackLocalStorage(videoId: string, tracks: any[]): Promise<any> {
+    console.log(`[background] 保存轨道local storage: videoId=${videoId}, tracks=${tracks.length}条`);
     
     try {
-      // 🔥 修复：使用真正的Memory Cache而不是local storage
-      const saved = MemoryCacheManager.saveTrackCache(videoId, tracks);
+      // 保存轨道数据到临时local storage (chrome.storage.local)
+      await StorageManager.getInstance().set(
+        `${StorageKeys.LOCAL.VIDEO_TRACKS_PREFIX}${videoId}`,
+        tracks,
+        'local'
+      );
       
+      console.log(`[background] 轨道local storage保存成功: 存储键=${StorageKeys.LOCAL.VIDEO_TRACKS_PREFIX}${videoId}, 包含${tracks.length}条轨道数据`);
       return {
-        success: saved,
-        message: '轨道数据已保存到Memory Cache (内存缓存)'
+        success: true,
+        message: '轨道local storage保存成功'
       };
     } catch (error) {
-      console.error(`[background] 保存轨道Memory Cache失败:`, error);
+      console.error(`[background] 保存轨道local storage失败:`, error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : '保存轨道Memory Cache失败'
+        error: error instanceof Error ? error.message : '保存轨道local storage失败'
       };
     }
   }
@@ -191,227 +196,39 @@ class LocalStorageService {
   }
 
   /**
-   * 从Memory Cache获取轨道数据
+   * 获取轨道本地存储
    * @param videoId 视频ID
    */
-  async getTrackMemoryCache(videoId: string): Promise<any> {
-    console.log(`[background] 获取轨道Memory Cache: videoId=${videoId}`);
+  async getTrackLocalStorage(videoId: string): Promise<any> {
+    console.log(`[background] 获取轨道local storage: videoId=${videoId}`);
     
     try {
-      // 🔥 修复：从真正的Memory Cache读取而不是local storage
-      const result = MemoryCacheManager.getTrackCache(videoId);
+      const tracks = await StorageManager.getInstance().get(
+        `${StorageKeys.LOCAL.VIDEO_TRACKS_PREFIX}${videoId}`,
+        [],
+        'local'
+      );
       
+      if (tracks && tracks.length > 0) {
+        console.log(`[background] 从local storage读取到轨道数据: 存储键=${StorageKeys.LOCAL.VIDEO_TRACKS_PREFIX}${videoId}, 包含${tracks.length}条轨道数据`);
+      } else {
+        console.log(`[background] local storage中未找到轨道数据: 存储键=${StorageKeys.LOCAL.VIDEO_TRACKS_PREFIX}${videoId}`);
+      }
       return {
-        success: result.success,
-        data: result.data,
-        fromMemory: result.fromMemory
+        success: true,
+        data: tracks
       };
     } catch (error) {
-      console.error(`[background] 获取轨道Memory Cache失败:`, error);
+      console.error(`[background] 获取轨道local storage失败:`, error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : '获取轨道Memory Cache失败'
+        error: error instanceof Error ? error.message : '获取轨道local storage失败'
       };
     }
   }
 }
-
-/**
- * 统一消息请求-响应管理器
- * 负责管理所有异步请求-响应，消除双监听器问题
- */
-class MessageRequestManager {
-  private static instance: MessageRequestManager;
-  private pendingRequests = new Map<string, {
-    resolve: (value: any) => void;
-    reject: (error: Error) => void;
-    timeout: NodeJS.Timeout;
-    tabId: number;
-    action: string;
-  }>();
-
-  static getInstance(): MessageRequestManager {
-    if (!this.instance) {
-      this.instance = new MessageRequestManager();
-    }
-    return this.instance;
-  }
-
-  /**
-   * 生成唯一的请求ID
-   * @param tabId 标签页ID
-   * @param action 操作类型
-   * @returns 唯一的请求ID
-   */
-  private generateRequestId(tabId: number, action: string): string {
-    const timestamp = Date.now().toString(36);
-    const random = Math.random().toString(36).substr(2, 6);
-    return `${tabId}_${action}_${timestamp}_${random}`;
-  }
-
-  /**
-   * 发送请求并等待响应
-   * @param tabId 目标标签页ID
-   * @param message 要发送的消息
-   * @param timeoutMs 超时时间（毫秒）
-   * @returns Promise 响应数据
-   */
-  async sendRequestAndWait<T>(
-    tabId: number, 
-    message: any, 
-    timeoutMs: number = 10000
-  ): Promise<T> {
-    const requestId = this.generateRequestId(tabId, message.action);
-    
-    return new Promise<T>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pendingRequests.delete(requestId);
-        reject(new Error(`请求 ${message.action} 超时`));
-      }, timeoutMs);
-
-      this.pendingRequests.set(requestId, {
-        resolve,
-        reject,
-        timeout,
-        tabId,
-        action: message.action
-      });
-
-      // 发送带有requestId的消息
-      chrome.tabs.sendMessage(tabId, { 
-        ...message, 
-        _requestId: requestId 
-      }).catch(error => {
-        this.pendingRequests.delete(requestId);
-        clearTimeout(timeout);
-        reject(error);
-      });
-    });
-  }
-
-  /**
-   * 处理响应消息
-   * @param message 收到的消息
-   * @param sender 消息发送者
-   * @returns 是否已处理该消息
-   */
-  handleResponse(message: any, sender: chrome.runtime.MessageSender): boolean {
-    const requestId = message._requestId;
-    if (!requestId) return false;
-
-    const request = this.pendingRequests.get(requestId);
-    if (!request || sender.tab?.id !== request.tabId) return false;
-
-    clearTimeout(request.timeout);
-    this.pendingRequests.delete(requestId);
-    
-    if (message.error) {
-      request.reject(new Error(message.error));
-    } else {
-      request.resolve(message);
-    }
-    
-    return true;
-  }
-
-  /**
-   * 获取待处理请求数量（用于调试）
-   */
-  getPendingRequestCount(): number {
-    return this.pendingRequests.size;
-  }
-}
-
-// 创建全局MessageRequestManager实例
-const messageRequestManager = MessageRequestManager.getInstance();
 
   console.log('[background] 后台脚本 (Service Worker) 已启动。');
-
-// 🔥 新增：真正的Memory Cache实现
-interface MemoryCacheData {
-  cachedCaptionTracks: CaptionTrack[] | null;
-  videoId: string | null;
-  lastUpdated: number;
-}
-
-interface CaptionTrack {
-  baseUrl: string;
-  name: { simpleText: string };
-  vssId: string;
-  languageCode: string;
-  isTranslatable: boolean;
-  kind?: string;
-}
-
-// 内存缓存全局变量（页面会话级别）
-let memoryCache: MemoryCacheData = {
-  cachedCaptionTracks: null,
-  videoId: null,
-  lastUpdated: 0
-};
-
-/**
- * Memory Cache管理器
- */
-class MemoryCacheManager {
-  /**
-   * 保存轨道数据到Memory Cache
-   */
-  static saveTrackCache(videoId: string, tracks: any[]): boolean {
-    console.log(`[background] MemoryCache: ✅保存轨道数据到内存缓存，videoId=${videoId}, tracks=${tracks.length}条`);
-    
-    memoryCache = {
-      cachedCaptionTracks: tracks,
-      videoId: videoId,
-      lastUpdated: Date.now()
-    };
-    
-    console.log(`[background] MemoryCache: 轨道数据已保存到内存缓存 ⚡`);
-    return true;
-  }
-  
-  /**
-   * 从Memory Cache获取轨道数据
-   */
-  static getTrackCache(videoId: string): { success: boolean; data: any[] | null; fromMemory: boolean } {
-    console.log(`[background] MemoryCache: 检查内存缓存，videoId=${videoId}`);
-    
-    // 检查缓存是否有效
-    if (memoryCache.videoId === videoId && 
-        memoryCache.cachedCaptionTracks && 
-        memoryCache.cachedCaptionTracks.length > 0) {
-      
-      const cacheAge = Date.now() - memoryCache.lastUpdated;
-      console.log(`[background] MemoryCache: 内存缓存命中 ⚡，包含${memoryCache.cachedCaptionTracks.length}条轨道数据，缓存年龄=${Math.round(cacheAge/1000)}秒`);
-      
-      return {
-        success: true,
-        data: memoryCache.cachedCaptionTracks,
-        fromMemory: true
-      };
-    } else {
-      console.log(`[background] MemoryCache: 内存缓存未命中，原因: videoId不匹配(${memoryCache.videoId} !== ${videoId}) 或无轨道数据`);
-      
-      return {
-        success: true,
-        data: null,
-        fromMemory: true
-      };
-    }
-  }
-  
-  /**
-   * 清空Memory Cache（导航时调用）
-   */
-  static clearCache(): void {
-    console.log(`[background] MemoryCache: 清空内存缓存`);
-    memoryCache = {
-      cachedCaptionTracks: null,
-      videoId: null,
-      lastUpdated: 0
-    };
-  }
-}
 
 // --- 设置侧边栏行为：允许点击工具栏图标打开 ---
 // (即使我们的主要触发是内容脚本按钮，也与官方示例保持一致)
@@ -493,13 +310,6 @@ async function updateSidePanelState(tabId: number) {
 
 // --- 监听标签页更新 (保持) --- 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    // 🔥 新增：检查是否发生了页面导航（URL变化），如果是则清空Memory Cache
-    if (changeInfo.url) {
-        console.log(`[background] 检测到标签页 ${tabId} 导航到新URL: ${changeInfo.url}`);
-        MemoryCacheManager.clearCache();
-        console.log(`[background] Memory Cache已因导航而清空 🧹`);
-    }
-    
     // --- 关键检查：确保 tab.url 或 changeInfo.url 至少有一个存在 ---
     // (避免在加载初期 URL 未定时过早触发 update)
     if (tab.url || changeInfo.url) { 
@@ -530,12 +340,6 @@ chrome.tabs.onActivated.addListener(activeInfo => {
  * 监听来自 Content Script 或其他部分的扩展消息
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // 🔧 新增：优先使用MessageRequestManager处理请求-响应配对
-  const handled = messageRequestManager.handleResponse(message, sender);
-  if (handled) {
-    return false; // 已处理，无需继续
-  }
-  
   // 打印收到的每条消息及其来源，方便调试
   console.log(`[background] 收到消息: action='${message.action}', 来自: ${sender.tab ? `标签页ID ${sender.tab.id} (${sender.tab.url})` : '扩展内部'}, 消息体:`, message);
 
@@ -610,38 +414,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         console.log("[background] 全局设置已保存:", globalSettingsToSave);
         if (videoId) {
           const currentVideoSettings = await VideoSettingsLocalStorage.getInstance().getVideoSettings(videoId);
-          const hasSubtitles = currentVideoSettings?.hasSubtitles ?? true;
-          
-          // 🔧 优化：检查是否需要保存视频设置（避免重复写入）
-          const needsSave = !currentVideoSettings || 
-            currentVideoSettings.sourceLang !== settings.sourceLang ||
-            currentVideoSettings.targetLang !== settings.targetLang ||
-            currentVideoSettings.hasSubtitles !== hasSubtitles ||
-            currentVideoSettings.sourceTrackKind !== sourceTrackKind;
-            
-          if (needsSave) {
-            // 🔧 优化：智能时间戳更新策略
-            const now = Date.now();
-            const shouldUpdateTimestamp = !currentVideoSettings || 
-              (now - (currentVideoSettings.lastUsed || 0)) > 3600000; // 1小时内不重复更新时间戳
-              
-            const lastUsedTime = shouldUpdateTimestamp ? now : (currentVideoSettings?.lastUsed || now);
-            
-            console.log(`[background] updateSettings需要保存视频设置: 时间戳更新=${shouldUpdateTimestamp}, 新时间戳=${lastUsedTime}`);
-            
-            const videoSpecificSettings: VideoSettings = {
-              videoId: videoId,
-              sourceLang: settings.sourceLang,
-              targetLang: settings.targetLang,
-              lastUsed: lastUsedTime,
-              hasSubtitles: hasSubtitles,
-              sourceTrackKind: sourceTrackKind
-            };
-            await VideoSettingsLocalStorage.getInstance().saveVideoSettings(videoSpecificSettings);
-            console.log(`[background] 视频 ${videoId} 的特定设置已保存。`);
-          } else {
-            console.log(`[background] 视频 ${videoId} 的设置无变化，跳过保存操作`);
-          }
+          const hasSubtitles = currentVideoSettings?.hasSubtitles ?? true; 
+          const videoSpecificSettings: VideoSettings = {
+            videoId: videoId,
+            sourceLang: settings.sourceLang,
+            targetLang: settings.targetLang,
+            lastUsed: Date.now(),
+            hasSubtitles: hasSubtitles,
+            sourceTrackKind: sourceTrackKind
+          };
+                      await VideoSettingsLocalStorage.getInstance().saveVideoSettings(videoSpecificSettings);
+          console.log(`[background] 视频 ${videoId} 的特定设置已保存。`);
         }
         sendResponse({ 
           success: true, 
@@ -811,7 +594,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   // --- 新增：处理API密钥测试请求 ---
   else if (message.action === 'testApiKey') {
-    console.log('[background] 测试API密钥:', message.apiType);
+    console.log('[background] Testing API key:', message.apiType);
     
     // 进行异步API测试
     const testText = 'Hello, this is a test message.';
@@ -820,11 +603,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     
     testApiKeyFunction(message.apiType, message.apiKey, testText, sourceLang, targetLang, message.customConfig)
         .then(result => {
-            console.log('[background] API测试结果:', result);
+            console.log('[background] API test result:', result);
             sendResponse(result);
         })
         .catch(error => {
-            console.error('[background] API测试错误:', error);
+            console.error('[background] API test error:', error);
             sendResponse({
                 success: false,
                 message: `测试失败: ${error.message || '未知错误'}`
@@ -835,15 +618,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   // --- 新增：处理OpenAI模型测试请求 ---
   else if (message.action === 'testOpenAIModel') {
-    console.log('[background] 测试OpenAI模型:', message.model);
+    console.log('[background] Testing OpenAI model:', message.model);
     
     testOpenAIModel(message.apiKey, message.model)
         .then(result => {
-            console.log('[background] OpenAI模型测试结果:', result);
+            console.log('[background] OpenAI model test result:', result);
             sendResponse(result);
         })
         .catch(error => {
-            console.error('[background] OpenAI模型测试错误:', error);
+            console.error('[background] OpenAI model test error:', error);
             sendResponse({
                 success: false,
                 message: `测试失败: ${error instanceof Error ? error.message : '未知错误'}`
@@ -854,7 +637,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   // 处理免费API测试请求
   else if (message.action === 'testFreeTranslation') {
-    console.log('[background] 测试免费翻译:', message.apiType);
+    console.log('[background] Testing free translation:', message.apiType);
     
     const testText = 'Hello, this is a test message.';
     const sourceLang = 'en';
@@ -877,14 +660,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     
     testFunction(testText, sourceLang, targetLang)
         .then(result => {
-            console.log('[background] 免费翻译测试结果:', result);
+            console.log('[background] Free translation test result:', result);
             sendResponse({
                 success: true,
                 message: result
             });
         })
         .catch(error => {
-            console.error('[background] 免费翻译测试错误:', error);
+            console.error('[background] Free translation test error:', error);
             sendResponse({
                 success: false,
                 message: `测试失败: ${error instanceof Error ? error.message : '未知错误'}`
@@ -895,7 +678,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   // --- 新增：处理会员账号测试登录请求 ---
   else if (message.action === 'testMembershipLogin') {
-    console.log('[background] 后台收到会员登录测试请求:', message.payload);
+    console.log('[background] Background received membership login test request:', message.payload);
     const { apiType, provider } = message.payload;
 
     if (!apiType || !provider) {
@@ -1031,16 +814,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return false;
       }
       
-            LocalStorageService.getInstance().saveTrackMemoryCache(videoId, tracks)
-        .then((result: any) => {
-          console.log('[background] 轨道Memory Cache保存结果:', result);
+            LocalStorageService.getInstance().saveTrackLocalStorage(videoId, tracks)
+        .then(result => {
+          console.log('[background] 轨道local storage保存结果:', result);
           sendResponse(result);
         })
-        .catch((error: any) => {
-          console.error('[background] 保存轨道Memory Cache失败:', error);
+        .catch(error => {
+          console.error('[background] 保存轨道local storage失败:', error);
           sendResponse({ 
             success: false, 
-            error: error instanceof Error ? error.message : '保存轨道Memory Cache失败'
+            error: error instanceof Error ? error.message : '保存轨道local storage失败'
           });
       });
     
@@ -1079,16 +862,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return false;
       }
       
-            LocalStorageService.getInstance().getTrackMemoryCache(videoId)
-        .then((result: any) => {
-          console.log('[background] 轨道Memory Cache获取结果:', result);
+            LocalStorageService.getInstance().getTrackLocalStorage(videoId)
+        .then(result => {
+          console.log('[background] 轨道local storage获取结果:', result);
           sendResponse(result);
         })
-        .catch((error: any) => {
-          console.error('[background] 获取轨道Memory Cache失败:', error);
+        .catch(error => {
+          console.error('[background] 获取轨道local storage失败:', error);
           sendResponse({ 
             success: false, 
-            error: error instanceof Error ? error.message : '获取轨道Memory Cache失败'
+            error: error instanceof Error ? error.message : '获取轨道local storage失败'
           });
       });
     
@@ -1462,7 +1245,7 @@ async function googleTranslatePathA(
   
   // 添加成功提示
   const successCount = Object.keys(results).length;
-  console.log(`[background] Google翻译路径A成功完成！共翻译 ${successCount}/${subtitles.length} 条字幕`);
+  console.log(`[background] ✅ Google翻译路径A成功完成！共翻译 ${successCount}/${subtitles.length} 条字幕`);
   
   return results;
 }
@@ -1552,7 +1335,7 @@ async function googleTranslatePathB(
   
   // 添加成功提示
   const successCount = Object.keys(results).length;
-  console.log(`[background] Google翻译路径B成功完成！共翻译 ${successCount}/${subtitles.length} 条字幕`);
+  console.log(`[background] ✅ Google翻译路径B成功完成！共翻译 ${successCount}/${subtitles.length} 条字幕`);
   
   return results;
 }
@@ -1710,7 +1493,7 @@ async function microsoftTranslatePathA(
     
     // 添加成功提示
     const successCount = Object.keys(results).length;
-    console.log(`[background] 微软翻译路径A成功完成！共翻译 ${successCount}/${subtitles.length} 条字幕`);
+    console.log(`[background] ✅ 微软翻译路径A成功完成！共翻译 ${successCount}/${subtitles.length} 条字幕`);
     
     return results;
   } catch (error) {
@@ -1913,7 +1696,7 @@ async function microsoftTranslatePathB(
     
     // 添加成功提示
     const successCount = Object.keys(results).length;
-    console.log(`[background] 微软翻译路径B成功完成！共翻译 ${successCount}/${subtitles.length} 条字幕`);
+    console.log(`[background] ✅ 微软翻译路径B成功完成！共翻译 ${successCount}/${subtitles.length} 条字幕`);
     
     return results;
   } catch (error) {
@@ -2484,17 +2267,27 @@ async function initializeSidePanel(tabId: number, videoIdFromSidePanel?: string 
     
     try {
       console.log(`[background] 向内容脚本请求轨道: 标签页ID=${tabId}, 视频ID=${currentVideoId}`);
+      chrome.tabs.sendMessage(tabId, {
+        action: 'getAvailableTracks',
+        videoId: currentVideoId
+      });
       
-      // 🔧 重构：使用MessageRequestManager替换临时监听器
-      const tracksResponse = await messageRequestManager
-        .sendRequestAndWait<{tracks?: any[], error?: string}>(
-          tabId,
-          {
-            action: 'getAvailableTracks',
-            videoId: currentVideoId
-          },
-          10000
-        );
+      const tracksResponse = await new Promise<{tracks?: any[], error?: string}>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('请求字幕轨道超时'));
+        }, 10000);
+        const messageListener = (message: any, senderCandidate: chrome.runtime.MessageSender) => {
+          if (senderCandidate.tab && senderCandidate.tab.id === tabId && message.action === 'availableTracksResult') {
+            clearTimeout(timeout);
+            chrome.runtime.onMessage.removeListener(messageListener);
+            resolve({
+              tracks: message.tracks || [],
+              error: message.error
+            });
+          }
+        };
+        chrome.runtime.onMessage.addListener(messageListener);
+      });
       
       if (tracksResponse.tracks && tracksResponse.tracks.length > 0) {
         console.log(`[background] 内容脚本返回了 ${tracksResponse.tracks.length} 条轨道`);
@@ -2502,6 +2295,11 @@ async function initializeSidePanel(tabId: number, videoIdFromSidePanel?: string 
         availableTracks = tracksResponse.tracks;
         determinedSourceLang = selectBestSourceLanguage(availableTracks);
         console.log(`[background] 根据优先级规则选择的源语言: ${determinedSourceLang}`);
+        await StorageManager.getInstance().set(
+          `${StorageKeys.LOCAL.VIDEO_TRACKS_PREFIX}${currentVideoId}`,
+          availableTracks,
+          'local'
+        );
       } else {
         console.log(`[background] 内容脚本未返回轨道或出错: ${tracksResponse.error || '无轨道'}`);
         trackRequestErrorMessage = tracksResponse.error || '内容脚本未返回轨道信息'; // 捕获错误信息
@@ -2543,21 +2341,11 @@ async function initializeSidePanel(tabId: number, videoIdFromSidePanel?: string 
   
   if (!videoSettings || videoSettings.hasSubtitles !== hasSubtitles || videoSettings.sourceLang !== determinedSourceLang || videoSettings.targetLang !== determinedTargetLang) {
     console.log(`[background] 更新VideoSettingsLocalStorage: 视频ID=${currentVideoId}, 源语言=${determinedSourceLang}, 目标语言=${determinedTargetLang}, 是否有字幕=${hasSubtitles}`);
-    
-    // 🔧 优化：只在真正需要更新时才更新lastUsed时间戳
-    const now = Date.now();
-    const shouldUpdateTimestamp = !videoSettings || 
-      (now - (videoSettings.lastUsed || 0)) > 3600000; // 1小时内不重复更新时间戳
-    
-    const lastUsedTime = shouldUpdateTimestamp ? now : (videoSettings?.lastUsed || now);
-    
-    console.log(`[background] 时间戳更新策略: 是否更新=${shouldUpdateTimestamp}, 当前时间=${now}, 上次使用=${videoSettings?.lastUsed || 0}, 新时间戳=${lastUsedTime}`);
-    
     await VideoSettingsLocalStorage.getInstance().saveVideoSettings({
       videoId: currentVideoId,
       sourceLang: determinedSourceLang,
       targetLang: determinedTargetLang,
-      lastUsed: lastUsedTime,
+      lastUsed: Date.now(),
       hasSubtitles: hasSubtitles,
       sourceTrackKind: availableTracks.find(t => t.languageCode === determinedSourceLang)?.kind
     });
@@ -2589,14 +2377,7 @@ async function getVideoIdForTab(tabId: number): Promise<string | null> {
       return tabVideoIdMap[tabId];
     }
     console.log(`[background] getVideoIdForTab: 标签页 ${tabId} 的视频ID不在存储中。正在查询内容脚本。`);
-    
-    // 🔧 重构：使用MessageRequestManager替换直接消息发送
-    const response = await messageRequestManager
-      .sendRequestAndWait<{videoId?: string}>(
-        tabId,
-        { action: 'requestCurrentVideoId' },
-        5000
-      );
+    const response = await chrome.tabs.sendMessage(tabId, { action: 'requestCurrentVideoId' });
     if (response && response.videoId) {
       console.log(`[background] getVideoIdForTab: 从内容脚本收到标签页 ${tabId} 的视频ID ${response.videoId}.`);
       const newMap = { ...(tabVideoIdMap || {}), [tabId]: response.videoId };

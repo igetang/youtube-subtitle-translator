@@ -38,9 +38,9 @@ const SidePanel: React.FC = () => {
     setSelectedModel(newModel);
     chrome.storage.sync.set({ openaiModel: newModel }, () => {
       if (chrome.runtime.lastError) {
-        console.error('Error saving OpenAI Model:', chrome.runtime.lastError);
+        console.error('[SidePanel] Error saving OpenAI Model:', chrome.runtime.lastError);
       } else {
-        console.log('OpenAI Model saved:', newModel); // Log successful save
+        console.log('[SidePanel] OpenAI Model saved:', newModel); // Log successful save
       }
     });
   };

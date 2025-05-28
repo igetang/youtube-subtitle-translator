@@ -2,7 +2,7 @@
  * Chrome 扩展 内容脚本
  */
 
-console.log('内容脚本已加载。');
+console.log('[event-system] 内容脚本已加载。');
 
 // 定义本地 EventBus 系统，不再依赖主世界脚本中的EventBus
 class LocalEventBus {

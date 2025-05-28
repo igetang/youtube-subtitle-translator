@@ -9,8 +9,8 @@
 export const StorageKeys = {
   // 用户设置前缀 (chrome.storage.sync)
   SETTINGS_PREFIX: 'settings.',
-  // 缓存数据前缀 (chrome.storage.local)
-  CACHE_PREFIX: 'cache.',
+  // 本地存储数据前缀 (chrome.storage.local)
+  LOCAL_PREFIX: 'local.',
   // 临时数据前缀 (存储在local中)
   TEMP_PREFIX: 'temp.',
 
@@ -39,13 +39,13 @@ export const StorageKeys = {
     OPENAI_CONFIG_TEMPERATURE: 'settings.openaiConfig.temperature'
   },
 
-  // 常用缓存键
-  CACHE: {
-    TRANSLATIONS_PREFIX: 'cache.translations.',
-    API_TEST_RESULTS: 'cache.apiTestResults',
-    LAST_USED_VIDEOS: 'cache.lastUsedVideos',
-    VIDEO_SETTINGS_PREFIX: 'cache.videoSettings.',
-    VIDEO_TRACKS_PREFIX: 'cache.videoTracks.'
+  // 常用本地存储键
+  LOCAL: {
+    TRANSLATIONS_PREFIX: 'local.translations.',
+    API_TEST_RESULTS: 'local.apiTestResults',
+    LAST_USED_VIDEOS: 'local.lastUsedVideos',
+    VIDEO_SETTINGS_PREFIX: 'local.videoSettings.',
+    VIDEO_TRACKS_PREFIX: 'local.videoTracks.'
   },
 
   // 常用临时数据键 (存储在local中)
@@ -165,10 +165,10 @@ export class StorageManager {
             if (!isHeavyOperation || isSubtitleRelatedChange) {
               handler(changes, areaName);
             } else {
-              console.log(`[StorageManager] 跳过非字幕数据变化触发的重操作: ${key}`);
+              console.log(`[storage-manager] 跳过非字幕数据变化触发的重操作: ${key}`);
             }
           } catch (error) {
-            console.error(`存储变更处理函数执行错误 (键: ${key}):`, error);
+            console.error(`[storage-manager] 存储变更处理函数执行错误 (键: ${key}):`, error);
           }
         });
       }
@@ -238,7 +238,7 @@ export class StorageManager {
       const result = await storage.get(key);
       return result[key] !== undefined ? result[key] : defaultValue;
     } catch (error) {
-      console.error(`获取存储键 ${key} 失败:`, error);
+              console.error(`[storage-manager] 获取存储键 ${key} 失败:`, error);
       return defaultValue;
     }
   }
@@ -254,7 +254,7 @@ export class StorageManager {
     try {
       return await storage.get(keys);
     } catch (error) {
-      console.error(`批量获取存储键失败:`, error);
+              console.error(`[storage-manager] 批量获取存储键失败:`, error);
       return {};
     }
   }
@@ -287,23 +287,23 @@ export class StorageManager {
   public async set<T>(key: string, value: T, area: StorageArea = 'local'): Promise<void> {
     // 根据键前缀确定最合适的存储区域，简化调用方的决策
     if (key.startsWith('settings.') && area !== 'sync') {
-      console.log(`[存储] 键 ${key} 以 'settings.' 开头，建议使用 sync 存储，但尊重调用方设置: ${area}`);
+      console.log(`[storage-manager] 键 ${key} 以 'settings.' 开头，建议使用 sync 存储，但尊重调用方设置: ${area}`);
     }
 
     const storage = this.getStorageArea(area);
     try {
       await storage.set({ [key]: value });
     } catch (error) {
-      console.error(`设置存储键 ${key} 失败:`, error);
+      console.error(`[storage-manager] 设置存储键 ${key} 失败:`, error);
       
       // 简化错误处理，不再进行降级
       // 但保留对特定错误的日志记录，方便调试
       if (error instanceof Error) {
         if (error.message.includes('Access to storage is not allowed') || 
             error.message.includes('Permission denied')) {
-          console.error(`[存储] 没有访问 ${area} 存储的权限，请检查上下文和权限设置`);
+          console.error(`[storage-manager] 没有访问 ${area} 存储的权限，请检查上下文和权限设置`);
         } else if (error.message.includes('QUOTA_BYTES')) {
-          console.error(`[存储] ${area} 存储配额已满，请考虑清理不必要的数据`);
+          console.error(`[storage-manager] ${area} 存储配额已满，请考虑清理不必要的数据`);
         }
       }
       
@@ -321,7 +321,7 @@ export class StorageManager {
     try {
       await storage.set(items);
     } catch (error) {
-      console.error(`批量设置存储失败:`, error);
+      console.error(`[storage-manager] 批量设置存储失败:`, error);
       throw error;
     }
   }
@@ -336,7 +336,7 @@ export class StorageManager {
     try {
       await storage.remove(keys);
     } catch (error) {
-      console.error(`移除存储键失败:`, error);
+      console.error(`[storage-manager] 移除存储键失败:`, error);
       throw error;
     }
   }
@@ -350,7 +350,7 @@ export class StorageManager {
     try {
       await storage.clear();
     } catch (error) {
-      console.error(`清除存储区域 ${area} 失败:`, error);
+      console.error(`[storage-manager] 清除存储区域 ${area} 失败:`, error);
       throw error;
     }
   }
@@ -374,7 +374,7 @@ export class StorageManager {
         isNearLimit: percentUsed > 80 // 使用超过80%视为接近限制
       };
     } catch (error) {
-      console.error(`获取存储配额信息失败:`, error);
+      console.error(`[storage-manager] 获取存储配额信息失败:`, error);
       return {
         usedBytes: 0,
         totalBytes: this.getStorageQuota(area),
@@ -411,12 +411,7 @@ export class StorageManager {
       
       // 如果接近限制，打印警告
       if (result[area]!.isNearLimit) {
-        console.warn(
-          `存储区域 ${area} 使用量接近限制: ` +
-          `${(result[area]!.usedBytes / 1024).toFixed(2)}KB / ` +
-          `${(result[area]!.totalBytes / 1024).toFixed(2)}KB ` +
-          `(${result[area]!.percentUsed.toFixed(1)}%)`
-        );
+        console.warn(`[storage-manager] 存储区域 ${area} 使用量接近限制: ${(result[area]!.usedBytes / 1024).toFixed(2)}KB / ${(result[area]!.totalBytes / 1024).toFixed(2)}KB (${result[area]!.percentUsed.toFixed(1)}%)`);
       }
     }
     

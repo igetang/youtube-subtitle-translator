@@ -195,6 +195,12 @@ interface Message {
 | 消息动作 | 描述 | 数据 |
 |---------|------|-----|
 | `openSidePanel` | 请求打开侧边栏 | 无 |
+| `closeSidePanel` | 请求关闭侧边栏 | 无 |
+| `getTranslationConfig` | 获取翻译配置 | `{ videoId, payload }` |
+| `checkTranslationCache` | 检查翻译缓存 | `{ videoId, params: TranslationParams }` |
+| `saveTrackCache` | 保存轨道缓存 | `{ videoId, tracks: CaptionTrack[] }` |
+| `saveTranslationCache` | 保存翻译结果 | `{ videoId, params: TranslationParams, result: TranslationResult }` |
+| `getAvailableTracks` | 获取可用字幕轨道（SidePanel专用） | `{ videoId }` |
 | `translateTexts` | 请求翻译文本 | `{ texts, sourceLang, targetLang, api }` |
 | `youtubeNavigationFinished` | 通知YouTube导航完成 | 无 |
 
@@ -202,6 +208,9 @@ interface Message {
 
 | 消息动作 | 描述 | 数据 |
 |---------|------|-----|
+| `translationConfigResult` | 返回翻译配置 | `{ config: TranslationConfig }` |
+| `translationCacheResult` | 返回缓存查询结果 | `{ cacheData: any, cacheHit: boolean }` |
+| `availableTracksResult` | 返回可用字幕轨道 | `{ tracks: CaptionTrack[] }` |
 | `youtubeNavigationOccurred` | 广播YouTube导航事件 | 无 |
 | `translationResults` | 返回翻译结果 | `{ results, error }` |
 
@@ -252,4 +261,11 @@ interface Message {
   "source": "main-world",
   "type": "MAIN_WORLD_READY"
 }
-``` 
+```
+
+---
+
+**📋 文档维护**: 2025-05-28  
+**🔄 版本**: v1.1.0-dev  
+**📍 状态**: API文档完整  
+**📡 接口版本**: 基于Manifest V3的完整API参考 

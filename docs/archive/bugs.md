@@ -4,7 +4,7 @@
 
 ## 已解决的Bug
 
-### Bug #1: 导航后字幕不自动启动 (2025-05-15)
+### Bug #1: 导航后字幕不自动启动 (2025-05-15) ✅ 已通过架构重构解决
 
 **问题描述**：
 在视频A开启翻译后，切换到视频B。虽然翻译按钮的图标因状态从`chrome.storage`读取而保持"开启"，但视频B不会自动显示字幕，需要手动关闭再开启一次。
@@ -12,13 +12,20 @@
 **问题原因**：
 `handleYoutubeNavigation`在导航时正确重置了内部状态，但缺少一个机制在新页面加载完成后，根据已激活的`translateActive`状态自动触发新字幕的获取和显示流程。
 
-**解决方案**：
-1. 将核心的翻译启动逻辑（查找video -> 获取轨道 -> 获取字幕 -> 处理 -> 启动循环）封装到新的异步函数`startTranslationProcess`
-2. 修改`injectControls`函数，让它在成功注入按钮之后，检查当前的`translateActive`状态，如果为`true`，则调用`startTranslationProcess`
-3. 移除`MutationObserver`中的旧逻辑，明确其职责仅为在需要时调用`injectControls`
+**解决方案** (已过时)：
+1. 将核心的翻译启动逻辑封装到新的异步函数`startTranslationProcess`
+2. 修改`injectControls`函数检查`translateActive`状态
+3. 移除`MutationObserver`中的旧逻辑
+
+**最终解决方案** (2025-05-26 架构重构)：
+此问题已通过**集中式Background缓存管理**和**三层缓存架构**彻底解决：
+- Background Script统一管理所有视频状态和翻译配置
+- 导航时自动从缓存恢复翻译状态和参数
+- 无需手动重启翻译，系统自动处理状态恢复
 
 **涉及的文件**：
-- `content/content-script.ts`
+- `background/background.ts` - 集中式状态管理
+- `content/content-script.ts` - 简化的状态处理逻辑
 
 ### Bug #2: 导航时按钮重复注入 (2025-05-15)
 
@@ -201,237 +208,146 @@ EventBus模块的初始化和共享机制存在设计缺陷：
 **验证方法**：
 确保编译后的dist/src/main-world.js包含内联的EventBus实现，并在YouTube页面加载时能够正确初始化并挂载到window对象。
 
-### Bug #17: 内容脚本ES模块导入错误（彻底解决方案）(2025-05-27)
+### Bug #17: 侧边栏初始化时误触发事件监听器问题 (2025-05-23)
 
 **问题描述**：
-在Chrome扩展中加载内容脚本时，控制台显示错误：`Uncaught SyntaxError: Cannot use import statement outside a module (at content-script.js:1:165)`。这导致扩展功能无法正常加载，播放器上没有显示翻译按钮和设置按钮。
+侧边栏收到`initializeSidePanelUI`消息并更新UI时，系统误认为是用户操作UI更改显示参数，触发了存储用户参数的操作。具体表现为：
+- 用户点击翻译设置按钮打开侧边栏
+- 侧边栏加载相应数据进行显示
+- 系统日志显示"sidepanel更新UI显示"
+- 随后触发"initializeSidePanelUI - 触发设置更新"误报
+- 导致不必要的设置保存操作
 
 **问题原因**：
-尽管在manifest.json中将content_scripts配置为`"type": "module"`，但内容脚本环境的模块处理与常规网页不同。当使用Vite等打包工具生成的代码可能仍然包含ES模块风格的import语句，这在内容脚本环境中不被正确解析。关键问题在于：
-
-1. 构建配置默认使用ES模块格式输出所有脚本
-2. 内容脚本编译后保留了对其他模块的`import`引用
-3. 即使添加了`"type": "module"`，Chrome的内容脚本环境对模块加载仍有限制
+侧边栏在收到`initializeSidePanelUI`消息并更新UI时，存在时序问题：
+1. `displaySettings()`函数在设置UI值时调用了`populateTargetLanguages()`
+2. `populateTargetLanguages()`函数会触发DOM更新，可能间接触发已添加的事件监听器
+3. 初始化标志`isInitializingSidePanelUI`的重置时机不当，未能有效保护初始化期间的操作
+4. 事件监听器在UI初始化期间就已经被添加，容易被UI更新操作意外触发
 
 **解决方案**：
-采用双重构建策略，为内容脚本和其他脚本使用不同的构建配置：
+1. **在关键函数中添加初始化保护机制**：
+   - 在`populateTargetLanguages()`函数开头添加`isInitializingSidePanelUI`检查
+   - 在`updateTargetLanguageDisplay()`函数中添加初始化模式，只更新显示不触发其他操作
 
-1. **调整构建系统**：
-   - 修改vite.config.ts，创建条件构建策略
-   - 使用`--mode content-script`参数区分内容脚本构建
-   - 为内容脚本指定IIFE格式（立即执行函数表达式）
-   - 为背景脚本、主世界脚本等保留ES模块格式
+2. **优化UI更新时序**：
+   - 修改`displaySettings()`函数，将`populateTargetLanguages()`调用移除
+   - 在初始化完成后，即`isInitializingSidePanelUI`重置为false后再调用`populateTargetLanguages()`
 
-2. **修改manifest.json**：
-   - 移除content_scripts中的`"type": "module"`属性
-   - 让内容脚本作为常规脚本加载，而不是模块
+3. **同步重置初始化标志**：
+   - 将异步的`setTimeout`方式改为同步重置`isInitializingSidePanelUI = false`
+   - 确保初始化流程的时序控制更加精确
 
-3. **更新构建脚本**：
-   - 将构建过程分为两个阶段：
-     ```json
-     "build": "npm run build:main && npm run build:content",
-     "build:main": "vite build",
-     "build:content": "vite build --mode content-script"
-     ```
-   - 确保内容脚本以IIFE格式独立构建，避免覆盖其他文件
+4. **增强saveSettings保护**：
+   - 在`saveSettings()`函数中添加多重检查，防止在初始化期间误触发
+   - 检查`isInitializingSidePanelUI`、`isLoading`和`listenersAttached`状态
 
-**效果**：
-- 完全解决了内容脚本的ES模块导入错误
-- 保留了背景脚本等组件的ES模块优势
-- 构建产生的内容脚本不再包含`import`语句，而是使用闭包包装所有依赖
-- 扩展功能正常工作，播放器控件能正确显示
+**技术细节**：
+```typescript
+// 在populateTargetLanguages函数中添加保护
+function populateTargetLanguages(searchTerm: string = '') {
+    if (isInitializingSidePanelUI) {
+        console.log('[sidepanel/sidepanel.ts] populateTargetLanguages: 跳过，正在初始化UI');
+        return;
+    }
+    // ... 原有逻辑
+}
 
-**技术背景**：
-IIFE（立即执行函数表达式）格式将所有代码包装在闭包内，避免全局命名空间污染，不需要ES模块支持。这种格式更适合注入到任意网页的内容脚本，而ES模块格式更适合在扩展自己的上下文（如背景脚本、扩展页面）中使用。
+// 在updateTargetLanguageDisplay中添加初始化模式
+function updateTargetLanguageDisplay(langCode: string | null) {
+    if (isInitializingSidePanelUI) {
+        console.log('[sidepanel/sidepanel.ts] updateTargetLanguageDisplay: 初始化模式，只更新显示');
+        // 只进行显示更新，不触发其他操作
+        return;
+    }
+    // ... 原有逻辑
+}
 
-### Bug #14: 按钮工具提示显示Unicode编码文本 (2025-05-22)
+// 优化初始化完成后的操作顺序
+isInitializingSidePanelUI = false;
+if (settings) {
+    populateTargetLanguages('');
+}
+```
+
+**验证方法**：
+1. 点击翻译设置按钮打开侧边栏
+2. 观察控制台日志，确认不再出现"initializeSidePanelUI - 触发设置更新"误报
+3. 验证侧边栏UI正确显示各项设置
+4. 确认用户真实操作时设置仍能正常保存
+
+**影响组件**：
+- 侧边栏UI (`sidepanel/sidepanel.ts`)
+- 设置管理 (`saveSettings`函数)
+- 初始化流程 (`initializeSidePanelUI`消息处理)
+
+**解决结果**：
+- 消除了初始化期间的误报设置更新
+- 提高了侧边栏加载的稳定性
+- 避免了不必要的存储操作
+- 确保初始化和用户操作的明确区分
+
+**涉及的文件**：
+- `sidepanel/sidepanel.ts`
+
+### Bug #18: 点击设置按钮错误触发翻译流程 (2025-05-25)
 
 **问题描述**：
-鼠标悬停在视频播放器控制按钮上时，工具提示(tooltip)显示的是Unicode编码文本(如"u5f00u542fu7ffbu8bd1")，而不是预期的中文文字("开启翻译")。
+点击"翻译设置"按钮时，系统错误地触发了完整的翻译处理流程，而不是仅仅打开侧边栏显示设置界面。这导致了三个问题：
+1. **错误的源语言选择**：系统选择了阿拉伯语(ar)作为源语言，而不是遵循项目文档中定义的优先级（英语 > 其他语言）
+2. **重复执行翻译逻辑**：Background和ControlPanel都执行了源语言选择算法，造成重复处理
+3. **意外的翻译启动**：仅点击设置按钮就触发翻译，违背了用户意图（用户只想查看设置，并未开启翻译开关）
 
 **问题原因**：
-在修复ES模块导入问题时，部分中文字符被错误转换为Unicode编码形式。此外，工具提示显示逻辑使用的是按钮创建时传入的初始文本，而非dataset.tooltipText属性值，导致即使更新了属性值，显示的仍是初始传入的(被编码的)文本。
+1. **事件触发逻辑混乱**：ContentScript在获取字幕轨道信息后，无条件发出`subtitles:loaded`事件，没有区分"获取轨道信息"和"开始翻译"两种不同的使用场景
+2. **源语言选择算法不一致**：
+   - Background Script使用正确的优先级算法：`非ASR英语 > ASR英语 > 第一个轨道`
+   - ControlPanel使用简化错误算法：`精确匹配 > 前缀匹配 > 第一个轨道`
+3. **缺乏翻译开关状态检查**：系统没有在触发翻译流程前检查用户的翻译开关状态
+
+**执行流程分析**：
+```
+用户点击设置按钮 
+→ UIManager发送openSidePanel 
+→ Background打开侧边栏，需要轨道信息
+→ Background请求ContentScript获取轨道 
+→ ContentScript→MainWorld获取轨道数据
+→ ContentScript发出subtitles:loaded事件  ❌ 问题点
+→ ControlPanel接收事件，开始翻译处理
+→ ControlPanel错误选择ar语言作为源语言  ❌ 问题点
+```
 
 **解决方案**：
-1. 修改createControlButton函数的mouseenter事件处理函数，优先使用dataset.tooltipText属性获取最新文本：
+1. **添加新的事件类型**：在`src/events/event-types.ts`中添加`TRACKS_AVAILABLE: 'tracks:available'`事件，用于区分仅提供轨道信息（不触发翻译）的场景
+
+2. **基于翻译开关状态的事件触发**：修改`content/content-script.ts`中的事件触发逻辑：
    ```typescript
-   // 修改前
-   button.addEventListener('mouseenter', () => showTooltip(button, tooltipText));
-   
-   // 修改后
-   button.addEventListener('mouseenter', () => {
-     // 使用dataset.tooltipText而不是传入的tooltipText参数，确保显示最新的文本
-     const currentTooltip = button.dataset.tooltipText || tooltipText;
-     showTooltip(button, currentTooltip);
+   chrome.storage.sync.get('translateActive', (result) => {
+     const isTranslateActive = !!result.translateActive;
+     
+     if (isTranslateActive) {
+       // 翻译开关打开 - 发出翻译事件，触发翻译流程
+       eventBus.emit(EventTypes.SUBTITLES_LOADED, {...});
+     } else {
+       // 翻译开关关闭 - 仅发出轨道信息事件，供侧边栏使用
+       eventBus.emit(EventTypes.TRACKS_AVAILABLE, {...});
+     }
    });
    ```
 
-2. 确保所有涉及工具提示文本的地方都使用了正确的中文字符，包括按钮创建和状态更新时：
-   ```typescript
-   button.dataset.tooltipText = active ? '关闭翻译' : '开启翻译';
-   ```
+3. **保持现有监听器不变**：
+   - ControlPanel继续监听`SUBTITLES_LOADED`（只在翻译开启时触发）
+   - Background通过`availableTracksResult`消息接收轨道信息（两种情况都会发送）
+
+**修复效果**：
+- ✅ 点击设置按钮只打开侧边栏，不触发翻译
+- ✅ 消除重复的源语言选择逻辑
+- ✅ 避免错误的ar语言选择
+- ✅ 翻译流程只在用户真正开启翻译开关时执行
 
 **涉及的文件**：
+- `src/events/event-types.ts`
 - `content/content-script.ts`
-
-### Bug #18: 控件嵌入按钮失败问题 (2025-05-25)
-
-**问题描述**：
-在部分用户环境中，YouTube播放器控件栏中的翻译按钮和设置按钮无法正确注入或显示，导致用户无法使用翻译功能。即使按钮成功注入，悬停显示的工具提示也会显示Unicode编码文本而非正确的中文提示，且位置显示在按钮下方而非原生YouTube按钮那样显示在上方。
-
-**问题原因**：
-通过对比之前能正常工作的代码和当前代码版本，发现几个关键差异：
-1. 按钮样式设置不完整：`overflow: visible`属性缺失，且使用了`display: flex`而非更符合YouTube原生按钮的`display: inline-flex`
-2. 工具提示处理机制不符合YouTube原生实现：
-   - 位置计算错误，显示在按钮下方而非上方
-   - 缺少YouTube原生的类名和样式
-   - 工具提示样式与YouTube原生工具提示不一致
-3. 没有使用CSS类`vid-translate-button`而是使用了`yt-translate-button`
-
-**解决方案**：
-1. 完全重构工具提示实现，采用与YouTube一致的方式：
-   ```typescript
-   private ensureTooltipExists(): void {
-     if (this.tooltipContainer && this.tooltipTextElement) return;
-     
-     // 创建容器
-     this.tooltipContainer = document.createElement('div');
-     this.tooltipContainer.className = 'ytp-tooltip ytp-top vid-translate-tooltip'; // 使用YouTube原生类名
-     this.tooltipContainer.setAttribute('aria-hidden', 'true');
-     this.tooltipContainer.style.cssText = `
-       position: fixed; /* 使用fixed相对于视口定位 */
-       max-width: 300px;
-       display: none; /* 初始隐藏 */
-       z-index: 2300;
-       pointer-events: none;
-       box-sizing: border-box;
-       /* 模拟YouTube工具提示样式 */
-       background-color: rgba(28, 28, 28, 0.9);
-       color: #fff;
-       padding: 6px 8px;
-       border-radius: 5px;
-       font-size: 1.2rem;
-       font-weight: 500;
-       white-space: nowrap; /* 防止文本换行 */
-       text-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
-       transition: opacity 0.1s cubic-bezier(0.4, 0, 1, 1);
-       opacity: 0;
-     `;
-     
-     // 用于文本的内部元素 (模拟ytp-tooltip-text)
-     this.tooltipTextElement = document.createElement('div');
-     this.tooltipTextElement.className = 'ytp-tooltip-text'; // 使用YouTube类名
-     this.tooltipContainer.appendChild(this.tooltipTextElement);
-     
-     // 添加到文档
-     document.body.appendChild(this.tooltipContainer);
-   }
-   ```
-
-2. 修改工具提示显示逻辑，确保位置在按钮上方：
-   ```typescript
-   private showTooltip(targetElement: HTMLElement, text: string): void {
-     this.ensureTooltipExists();
-     
-     // 更新文本 - 优先使用dataset.tooltipText，以确保显示最新的文本
-     const tooltipText = targetElement.dataset.tooltipText || text;
-     this.tooltipTextElement.textContent = tooltipText;
-     
-     // 技巧: 先设为可见但透明，用于测量尺寸
-     this.tooltipContainer.style.visibility = 'hidden';
-     this.tooltipContainer.style.display = 'block';
-     this.tooltipContainer.style.opacity = '0';
-     
-     // 计算尺寸和位置
-     const tooltipWidth = this.tooltipContainer.offsetWidth;
-     const targetRect = targetElement.getBoundingClientRect();
-     
-     // 计算位置（目标元素上方居中）
-     const centerX = targetRect.left + targetRect.width / 2;
-     const topY = targetRect.top;
-     const left = centerX - tooltipWidth / 2;
-     const top = topY - 40; // 固定偏移量，确保显示在按钮上方
-     
-     // 应用位置
-     this.tooltipContainer.style.left = `${left}px`;
-     this.tooltipContainer.style.top = `${top}px`;
-     
-     // 显示并设置为可见
-     this.tooltipContainer.style.visibility = 'visible';
-     this.tooltipContainer.style.opacity = '1';
-   }
-   ```
-
-3. 修复按钮样式和类名:
-   ```typescript
-   private createControlButton(
-     id: string,
-     tooltipText: string,
-     iconSrc: string,
-     onClick: () => void
-   ): { button: HTMLButtonElement; icon: HTMLImageElement } {
-     const button = document.createElement('button');
-     button.id = id;
-     button.className = 'ytp-button vid-translate-button'; // 使用YouTube原生的ytp-button类
-     button.setAttribute('aria-label', tooltipText);
-     // 应用关键的内联样式
-     button.style.cssText = `
-       position: relative; /* 用于子元素绝对定位 */
-       overflow: visible; /* 确保边框可见 */
-       width: 48px; /* 保持宽度 */
-       display: inline-flex; /* 让父容器知道如何处理 */
-       align-items: center; /* 垂直居中内部内容 */
-       justify-content: center; /* 水平居中内部内容 */
-     `;
-     
-     // 创建边框和图标
-     const border = this.createBorderImage();
-     const icon = this.createIconImage(iconSrc, tooltipText);
-     
-     // 添加到按钮
-     button.appendChild(border);
-     button.appendChild(icon);
-     
-     // 设置点击事件
-     button.addEventListener('click', onClick);
-     
-     // 添加tooltip数据属性，用于状态更新时更新提示文本
-     button.dataset.tooltipText = tooltipText;
-     
-     // 添加工具提示专用事件处理
-     button.addEventListener('mouseenter', () => this.showTooltip(button, tooltipText));
-     button.addEventListener('mouseleave', () => this.hideTooltip());
-     
-     return { button, icon };
-   }
-   ```
-
-**涉及的文件**：
-- `src/components/ui-manager.ts`
-
-**验证方法**：
-在不同YouTube版本和浏览器环境中验证按钮注入成功率和工具提示显示正确性。确认悬停时显示的是正确的中文提示而非Unicode编码文本，并且工具提示位于按钮上方。
-
-### Bug #19: 侧边栏样式修改无效 (2025-05-21)
-
-**问题描述**：
-开发者在 `sidepanel/sidepanel.css` 中对侧边栏 UI 样式进行了调整，但页面实际应用的却是静态拷贝至 `assets/sidepanel.css` 的旧版样式，因此新样式未生效。
-
-**问题原因**：
-项目中存在两个同名 CSS 文件：根目录 `assets/sidepanel.css`（通过构建插件拷贝并加载）和 `sidepanel/sidepanel.css`（未经过构建管道处理）。HTML 中引用的是前者，导致后者的修改未被加载。
-
-**解决方案**：
-将 `sidepanel/sidepanel.css` 中的全部更新合并到 `assets/sidepanel.css`，替换原始文件，并重新构建扩展。
-
-**涉及的文件**：
-- `sidepanel/sidepanel.css`
-- `assets/sidepanel.css`
-- `sidepanel/sidepanel.html`
-- `vite.config.ts`
-
-**验证方法**：
-1. 重建后打开侧边栏，确认新样式（如自定义下拉面板边框、选项高度等）生效。
-2. 在 `dist/assets/sidepanel.css` 中确认包含最新样式代码。
 
 ## 导航与状态重置问题
 

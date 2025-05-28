@@ -334,8 +334,6 @@ window.addEventListener('message', (event: MessageEvent) => {
     // 处理轨道请求
     if (data.type === 'REQUEST_CAPTION_TRACKS') {
       console.log('[Main World] 收到字幕轨道请求');
-      const requestId = data._requestId; // 🔧 新增：获取requestId
-      
       try {
         const player = document.getElementById('movie_player');
         if (player && typeof (player as any).getPlayerResponse === 'function') {
@@ -348,14 +346,13 @@ window.addEventListener('message', (event: MessageEvent) => {
             console.log('[Main World] API返回空的字幕轨道数据');
           }
 
-          // 向content-script发送轨道数据时携带requestId
+          // 向content-script发送轨道数据
           window.postMessage({
             source: 'main-world',
             type: 'CAPTION_TRACKS_RESPONSE',
             payload: {
               captionTracks: captionTracks || null
-            },
-            _requestId: requestId  // 🔧 新增：携带相同的requestId
+            }
           }, '*');
 
         } else {
@@ -363,8 +360,7 @@ window.addEventListener('message', (event: MessageEvent) => {
           window.postMessage({
             source: 'main-world',
             type: 'CAPTION_TRACKS_RESPONSE',
-            error: '找不到播放器或API',
-            _requestId: requestId  // 🔧 新增：错误时也携带requestId
+            error: '找不到播放器或API'
           }, '*');
         }
       } catch (error) {
@@ -372,8 +368,7 @@ window.addEventListener('message', (event: MessageEvent) => {
         window.postMessage({
           source: 'main-world',
           type: 'CAPTION_TRACKS_RESPONSE',
-          error: error instanceof Error ? error.message : '未知错误',
-          _requestId: requestId  // 🔧 新增：异常时也携带requestId
+          error: error instanceof Error ? error.message : '未知错误'
         }, '*');
       }
     }

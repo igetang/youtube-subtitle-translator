@@ -71,9 +71,8 @@ export class UIManager {
    * 私有构造函数，防止直接实例化
    */
   private constructor() {
+    console.log('[ui-manager] UIManager 初始化');
     this.eventBus = EventBus.getInstance();
-    
-    // 初始化状态
     this.state = {
       controlsInjected: false,
       overlayCreated: false,
@@ -83,13 +82,12 @@ export class UIManager {
       injectionAttempts: 0
     };
     
-    // 加载初始翻译状态
+    this.setupEventListeners();
     this.loadTranslateActiveState();
-    // 加载初始设置面板打开状态
     this.loadSettingPanelOpenState();
     
-    // 设置事件监听器
-    this.setupEventListeners();
+    // 新增：设置sidepanel状态监听器
+    this.setupSidePanelStateListener();
     
     // 预先创建Tooltip元素
     this.ensureTooltipExists();
@@ -109,44 +107,45 @@ export class UIManager {
    * 设置事件监听器
    */
   private setupEventListeners(): void {
-    // 页面导航完成时，尝试注入控件
-    this.eventBus.on('navigation:finished', () => {
+    console.log('[ui-manager] 设置事件监听器');
+    
+    // 监听页面导航事件
       this.handlePageNavigation();
-    }, EventPriority.HIGH);
     
-    // 扩展图标点击时，尝试注入控件
-    this.eventBus.on('icon:clicked', () => {
-      this.tryInjectControls('扩展图标点击');
-    });
+    // 启动控件检查
+    this.startControlsCheck();
     
-    // 视频播放器准备就绪时，尝试注入控件
-    this.eventBus.on('video:ready', () => {
-      this.tryInjectControls('视频播放器准备就绪');
-    });
+    // 监听视频事件（可在此处添加）
+    // TODO: 在后续版本中实现视频状态监听
+  }
+  
+  /**
+   * 设置sidepanel状态监听器
+   * 监听来自sidepanel的关闭通知，实现按钮状态同步
+   */
+  private setupSidePanelStateListener(): void {
+    console.log('[ui-manager] 设置sidepanel状态监听器');
     
-    // 监听翻译状态变更事件
-    this.eventBus.on('state:translate_active_changed', (active: boolean) => {
-      this.setTranslateActive(active);
-    });
-    // 新增：监听设置面板状态变更事件
-    this.eventBus.on('state:setting_panel_open_changed', (open: boolean) => {
-      this.setSettingPanelOpen(open);
-    });
-
-    // 监听请求创建字幕叠加层的事件
-    this.eventBus.on('request:subtitle_overlay', () => {
-      // 获取播放器容器
-      const playerContainer = document.querySelector('.html5-video-player');
-      if (!playerContainer || this.subtitleOverlayElement) return;
-
-      // 如果翻译功能已开启，则创建字幕容器
-      if (this.state.translateActive) {
-        console.log('[UIManager] 接收到请求，创建字幕叠加层');
-        this.createSubtitleOverlay(playerContainer as HTMLElement);
-      } else {
-        console.log('[UIManager] 接收到请求，但翻译未激活，不创建字幕叠加层');
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message.action === 'sidePanelClosed') {
+        console.log('[ui-manager] 收到sidepanel关闭通知', {
+          timestamp: message.timestamp,
+          source: message.source
+        });
+        
+        // 更新设置按钮状态为未激活
+        this.setSettingPanelOpen(false, message.source);
+        
+        // 发送确认回复
+        sendResponse({ 
+          received: true, 
+          timestamp: Date.now(),
+          action: 'button-state-updated'
+        });
       }
     });
+    
+    console.log('[ui-manager] sidepanel状态监听器设置完成');
   }
   
   /**
@@ -159,7 +158,7 @@ export class UIManager {
     chrome.storage.sync.get('translateActive', (result) => {
       const isActive = !!result.translateActive;
       this.state.translateActive = isActive;
-      console.log('[UIManager] 已加载翻译状态:', isActive);
+      console.log('[ui-manager] 已加载翻译状态:', isActive);
       
       // 如果按钮已经存在，更新按钮状态以匹配加载的状态
       this.updateTranslateButtonState(isActive);
@@ -174,7 +173,7 @@ export class UIManager {
     chrome.storage.sync.get('settingPanelOpen', (result) => {
       const open = !!result.settingPanelOpen;
       this.state.settingPanelOpen = open;
-      console.log('[UIManager] 已加载设置面板状态:', open);
+      console.log('[ui-manager] 已加载设置面板状态:', open);
       // 如果按钮已存在，更新状态以匹配加载的状态
       this.updateSettingsButtonState(open);
     });
@@ -184,7 +183,7 @@ export class UIManager {
    * 处理页面导航
    */
   private handlePageNavigation(): void {
-    console.log('[UIManager] 检测到页面导航，重置UI状态');
+    console.log('[ui-manager] 检测到页面导航，重置UI状态');
     
     // 停止持续监测
     this.stopControlsCheck();
@@ -202,7 +201,7 @@ export class UIManager {
     
     // 确保翻译状态保持不变
     this.state.translateActive = currentTranslateActive;
-    console.log(`[UIManager] 导航后保留翻译状态: ${this.state.translateActive}`);
+    console.log(`[ui-manager] 导航后保留翻译状态: ${this.state.translateActive}`);
     
     // 清除引用
     this.translateToggleButtonIcon = null;
@@ -220,7 +219,7 @@ export class UIManager {
       return;
     }
     
-    console.log('[UIManager] 启动控件持续监测');
+    console.log('[ui-manager] 启动控件持续监测');
     
     this.controlsCheckInterval = window.setInterval(() => {
       // 只有在控件已注入的情况下才检查
@@ -232,7 +231,7 @@ export class UIManager {
         
         // 如果按钮丢失并且自动播放按钮和右侧控制栏都存在，尝试重新注入
         if ((!translateButton || !settingsButton) && autoplayButton && rightControls) {
-          console.log('[UIManager] 检测到控件丢失且界面就绪，尝试重新注入');
+          console.log('[ui-manager] 检测到控件丢失且界面就绪，尝试重新注入');
           
           // 重置注入状态
           this.state.controlsInjected = false;
@@ -242,14 +241,14 @@ export class UIManager {
           this.injectControls().then(success => {
             // 如果成功重新注入，触发恢复事件
             if (success) {
-              console.log('[UIManager] 控件已成功恢复');
+              console.log('[ui-manager] 控件已成功恢复');
               this.eventBus.emit(UIEvent.CONTROLS_RECOVERED, {
                 timestamp: Date.now()
               });
             }
           });
         } else if (!translateButton || !settingsButton) {
-          console.log('[UIManager] 检测到控件丢失，但界面尚未就绪，等待中...');
+          console.log('[ui-manager] 检测到控件丢失，但界面尚未就绪，等待中...');
         }
       }
     }, this.CONTROL_CHECK_INTERVAL);
@@ -262,7 +261,7 @@ export class UIManager {
     if (this.controlsCheckInterval !== null) {
       window.clearInterval(this.controlsCheckInterval);
       this.controlsCheckInterval = null;
-      console.log('[UIManager] 已停止控件持续监测');
+      console.log('[ui-manager] 已停止控件持续监测');
     }
   }
   
@@ -276,17 +275,17 @@ export class UIManager {
     
     if (translateButton) {
       translateButton.remove();
-      console.log('[UIManager] 已移除翻译按钮');
+      console.log('[ui-manager] 已移除翻译按钮');
     }
     
     if (settingsButton) {
       settingsButton.remove();
-      console.log('[UIManager] 已移除设置按钮');
+      console.log('[ui-manager] 已移除设置按钮');
     }
     
     if (overlay) {
       overlay.remove();
-      console.log('[UIManager] 已移除字幕叠加层');
+      console.log('[ui-manager] 已移除字幕叠加层');
     }
   }
   
@@ -364,7 +363,7 @@ export class UIManager {
     // 添加到文档
     document.body.appendChild(this.tooltipContainer);
     
-    console.log('[UIManager] 已创建Tooltip元素');
+    console.log('[ui-manager] 已创建Tooltip元素');
   }
 
   /**
@@ -544,7 +543,7 @@ export class UIManager {
       element: overlay
     });
     
-    console.log('[UIManager] 已创建字幕叠加层');
+    console.log('[ui-manager] 已创建字幕叠加层');
     
     return overlay;
   }
@@ -559,19 +558,19 @@ export class UIManager {
       const autoplayButton = document.querySelector('.ytp-autonav-toggle-button') as HTMLElement;
       
       if (autoplayButton) {
-        console.log('[UIManager] 已找到自动播放按钮');
+        console.log('[ui-manager] 已找到自动播放按钮');
         resolve(autoplayButton);
         return;
       }
       
-      console.log('[UIManager] 未立即找到自动播放按钮，开始监听DOM变化...');
+      console.log('[ui-manager] 未立即找到自动播放按钮，开始监听DOM变化...');
       
       // 查找右侧控制栏
       const rightControls = document.querySelector('.ytp-right-controls');
       if (rightControls) {
-        console.log('[UIManager] 已找到右侧控制栏，继续等待自动播放按钮');
+        console.log('[ui-manager] 已找到右侧控制栏，继续等待自动播放按钮');
       } else {
-        console.log('[UIManager] 右侧控制栏也未找到，可能页面未完全加载');
+        console.log('[ui-manager] 右侧控制栏也未找到，可能页面未完全加载');
       }
       
       // 如果未找到，使用MutationObserver监视
@@ -579,7 +578,7 @@ export class UIManager {
         const foundButton = document.querySelector('.ytp-autonav-toggle-button') as HTMLElement;
         
         if (foundButton) {
-          console.log('[UIManager] 自动播放按钮加载完成');
+          console.log('[ui-manager] 自动播放按钮加载完成');
           obs.disconnect();
           resolve(foundButton);
         }
@@ -588,13 +587,13 @@ export class UIManager {
       // 设置超时，最多等待3秒
       setTimeout(() => {
         observer.disconnect();
-        console.log('[UIManager] 等待自动播放按钮超时');
+        console.log('[ui-manager] 等待自动播放按钮超时');
         
         // 超时时再次检查控件状态
         const finalButton = document.querySelector('.ytp-autonav-toggle-button') as HTMLElement;
         const finalRightControls = document.querySelector('.ytp-right-controls');
         
-        console.log('[UIManager] 等待超时时元素状态:', {
+        console.log('[ui-manager] 等待超时时元素状态:', {
           autoplayButton: !!finalButton,
           rightControls: !!finalRightControls
         });
@@ -608,7 +607,7 @@ export class UIManager {
         subtree: true
       });
       
-      console.log('[UIManager] 开始监听自动播放按钮');
+      console.log('[ui-manager] 开始监听自动播放按钮');
     });
   }
   
@@ -617,7 +616,7 @@ export class UIManager {
    * 将翻译按钮和设置按钮注入YouTube播放器
    */
   public async injectControls(): Promise<boolean> {
-    console.log(`[UIManager] 注入控件，当前状态: controlsInjected=${this.state.controlsInjected}, 尝试次数=${this.state.injectionAttempts}`);
+    console.log(`[ui-manager] 注入控件，当前状态: controlsInjected=${this.state.controlsInjected}, 尝试次数=${this.state.injectionAttempts}`);
     
     // 获取当前存在的按钮
     const existingTranslateButton = document.getElementById('vid-translate-toggle-button');
@@ -625,7 +624,7 @@ export class UIManager {
     
     // 扩展检查条件：如果任一按钮已存在，我们认为已经注入
     if (this.state.controlsInjected || existingTranslateButton || existingSettingsButton) {
-      console.log('[UIManager] 控件已存在，跳过注入', {
+      console.log('[ui-manager] 控件已存在，跳过注入', {
         stateFlag: this.state.controlsInjected,
         translateButton: !!existingTranslateButton,
         settingsButton: !!existingSettingsButton
@@ -642,7 +641,7 @@ export class UIManager {
     
     // 设置一个标志，防止重复注入
     if ((window as any).__uiManagerInjecting) {
-      console.log('[UIManager] 另一个注入操作正在进行中，跳过本次注入');
+      console.log('[ui-manager] 另一个注入操作正在进行中，跳过本次注入');
       return false;
     }
     
@@ -652,7 +651,7 @@ export class UIManager {
     try {
       // 检查注入尝试次数
       if (this.state.injectionAttempts >= this.MAX_INJECTION_ATTEMPTS) {
-        console.warn('[UIManager] 达到最大注入尝试次数，放弃注入');
+        console.warn('[ui-manager] 达到最大注入尝试次数，放弃注入');
         this.state.lastError = '达到最大注入尝试次数';
         
         // 触发注入失败事件
@@ -670,7 +669,7 @@ export class UIManager {
       // 等待自动播放按钮加载完成，作为界面就绪的信号
       const autoplayButton = await this.waitForAutoplayButton();
       if (!autoplayButton) {
-        console.log('[UIManager] 未找到自动播放按钮，稍后重试');
+        console.log('[ui-manager] 未找到自动播放按钮，稍后重试');
         
         // 设置重试定时器
         setTimeout(() => {
@@ -684,7 +683,7 @@ export class UIManager {
       // 查找YouTube播放器控件容器
       const rightControls = document.querySelector('.ytp-right-controls');
       if (!rightControls) {
-        console.log('[UIManager] 未找到.ytp-right-controls，稍后重试');
+        console.log('[ui-manager] 未找到.ytp-right-controls，稍后重试');
         
         // 设置重试定时器
         setTimeout(() => {
@@ -698,7 +697,7 @@ export class UIManager {
       // 再次检查是否已经注入 - 这是避免竞态条件的关键步骤
       if (document.getElementById('vid-translate-toggle-button') || 
           document.getElementById('vid-translate-settings-button')) {
-        console.log('[UIManager] 在注入过程中检测到控件已存在，避免重复注入');
+        console.log('[ui-manager] 在注入过程中检测到控件已存在，避免重复注入');
         this.state.controlsInjected = true;
         this.startControlsCheck();
         return true;
@@ -712,7 +711,7 @@ export class UIManager {
       
       // 获取第一个原生按钮作为插入参照点
       const firstNativeButton = rightControls.firstChild;
-      console.log('[UIManager] 获取到右侧控制栏第一个元素作为插入参照点');
+      console.log('[ui-manager] 获取到右侧控制栏第一个元素作为插入参照点');
       
       // 1. 创建设置按钮
       const { button: settingsButton, icon: settingsIcon } = this.createControlButton(
@@ -721,8 +720,10 @@ export class UIManager {
         this.state.settingPanelOpen ? this.ACTIVE_SETTING_ICON_URL : this.SETTING_ICON_URL,
         () => {
           const newState = !this.state.settingPanelOpen;
-          console.log(`[UIManager] 设置按钮点击，切换状态为: ${newState}`);
-          this.eventBus.emit('state:setting_panel_open_changed', newState);
+          console.log(`[ui-manager] 设置按钮点击，切换状态为: ${newState}`);
+          
+          // ✅ 直接调用，不发事件（简单操作）
+          this.setSettingPanelOpen(newState);
         }
       );
       
@@ -739,10 +740,10 @@ export class UIManager {
         () => {
           // 切换翻译状态
           const newState = !this.state.translateActive;
-          console.log(`[UIManager] 翻译按钮点击，切换状态为: ${newState}`);
+          console.log(`[ui-manager] 翻译按钮点击，切换状态为: ${newState}`);
           
-          // 触发翻译状态变更事件（事件处理函数中会调用setTranslateActive）
-          this.eventBus.emit('state:translate_active_changed', newState);
+          // ✅ 直接调用本组件方法（避免循环）
+          this.setTranslateActive(newState);
         }
       );
       
@@ -755,11 +756,11 @@ export class UIManager {
       // 插入按钮到播放器控制栏
       // 先将设置按钮插入到第一个原生按钮前面
       rightControls.insertBefore(settingsButton, firstNativeButton);
-      console.log('[UIManager] 已注入设置按钮');
+      console.log('[ui-manager] 已注入设置按钮');
       
       // 再将翻译按钮插入到设置按钮前面，确保翻译按钮在最左侧
       rightControls.insertBefore(translateButton, settingsButton);
-      console.log('[UIManager] 已注入翻译按钮');
+      console.log('[ui-manager] 已注入翻译按钮');
       
       // 更新状态标志
       this.state.controlsInjected = true;
@@ -775,32 +776,32 @@ export class UIManager {
         translateActive: this.state.translateActive
       });
       
-      console.log('[UIManager] 控件注入完成');
+      console.log('[ui-manager] 控件注入完成');
       
       // 如果翻译已激活，触发翻译开始事件
       if (this.state.translateActive) {
-        console.log('[UIManager] 翻译状态已激活(值为true)，自动开始翻译');
+        console.log('[ui-manager] 翻译状态已激活(值为true)，自动开始翻译');
         this.eventBus.emit('translation:start_requested', {});
       } else {
-        console.log('[UIManager] 翻译状态未激活(值为false)，不自动开始翻译');
+        console.log('[ui-manager] 翻译状态未激活(值为false)，不自动开始翻译');
       }
       
       // 在 injectControls 完成前，新增：如果设置面板已激活，则打开侧边栏
       if (this.state.settingPanelOpen) {
-        console.log('[UIManager] 设置面板已激活，打开侧边栏');
-        console.log('[UIManager] 即将发送 openSidePanel 消息');
+        console.log('[ui-manager] 设置面板已激活，打开侧边栏');
+        console.log('[ui-manager] 即将发送 openSidePanel 消息');
         chrome.runtime.sendMessage({ action: 'openSidePanel' }, (response) => {
-          console.log('[UIManager] openSidePanel 回调，lastError =', chrome.runtime.lastError, ', response =', response);
+          console.log('[ui-manager] openSidePanel 回调，lastError =', chrome.runtime.lastError, ', response =', response);
           if (chrome.runtime.lastError) {
-            console.error('[UIManager] 打开侧边栏出错:', chrome.runtime.lastError.message);
+            console.error('[ui-manager] 打开侧边栏出错:', chrome.runtime.lastError.message);
           }
         });
       } else {
-        console.log('[UIManager] 即将发送 closeSidePanel 消息');
+        console.log('[ui-manager] 即将发送 closeSidePanel 消息');
         chrome.runtime.sendMessage({ action: 'closeSidePanel' }, (response) => {
-          console.log('[UIManager] closeSidePanel 回调，lastError =', chrome.runtime.lastError, ', response =', response);
+          console.log('[ui-manager] closeSidePanel 回调，lastError =', chrome.runtime.lastError, ', response =', response);
           if (chrome.runtime.lastError) {
-            console.error('[UIManager] 关闭侧边栏出错:', chrome.runtime.lastError.message);
+            console.error('[ui-manager] 关闭侧边栏出错:', chrome.runtime.lastError.message);
           }
         });
       }
@@ -814,28 +815,37 @@ export class UIManager {
   
   /**
    * 设置翻译激活状态
+   * 按照架构文档C3-C9的流程实现
    */
   public setTranslateActive(active: boolean): void {
-    console.log(`[UIManager] 设置翻译状态: ${active}`);
+    console.log(`[ui-manager] 设置翻译状态: ${active}`);
     
-    // 更新状态
+    // C4: 更新 this.state.translateActive
     this.state.translateActive = active;
     
-    // 更新按钮图标和提示
+    // C5: 调用 updateTranslateButtonState
     this.updateTranslateButtonState(active);
     
-    // 保存状态到存储
+    // C6: 保存到 chrome.storage.sync
     chrome.storage.sync.set({ translateActive: active }, () => {
-      console.log(`[UIManager] 已保存翻译状态: ${active}`);
+      console.log(`[ui-manager] 已保存翻译状态: ${active}`);
     });
     
-    // 如果翻译已激活，触发翻译开始事件，否则停止翻译
+    // C7-C9: 根据翻译状态发出相应事件
     if (active) {
-      console.log('[UIManager] 翻译已激活，开始翻译');
-      this.eventBus.emit('translation:start_requested', {});
+      console.log('[ui-manager] 翻译已激活，发出translation:start_requested事件');
+      // C9: 发出 translation:start_requested
+      this.eventBus.emit('translation:start_requested', {
+        source: 'ui_button',
+        timestamp: Date.now()
+      });
     } else {
-      console.log('[UIManager] 翻译已停用');
-      this.eventBus.emit('translation:stop_requested', {});
+      console.log('[ui-manager] 翻译已停用，发出translation:stop_requested事件');
+      // C8: 发出 translation:stop_requested  
+      this.eventBus.emit('translation:stop_requested', {
+        source: 'ui_button',
+        timestamp: Date.now()
+      });
     }
   }
   
@@ -880,33 +890,42 @@ export class UIManager {
   
   /**
    * 设置设置面板打开状态
+   * @param open 是否打开
+   * @param source 调用来源，用于优化消息发送逻辑
    */
-  public setSettingPanelOpen(open: boolean): void {
-    console.log(`[UIManager] 设置设置面板状态: ${open}`);
+  public setSettingPanelOpen(open: boolean, source: string = 'user-action'): void {
+    console.log(`[ui-manager] 设置设置面板状态: ${open}, 来源: ${source}`);
     this.state.settingPanelOpen = open;
     // 更新按钮图标和提示
     this.updateSettingsButtonState(open);
     // 保存状态到存储
     chrome.storage.sync.set({ settingPanelOpen: open }, () => {
-      console.log(`[UIManager] 已保存设置面板状态: ${open}`);
+      console.log(`[ui-manager] 已保存设置面板状态: ${open}`);
     });
-    // 根据状态打开或关闭侧边栏
+    
+    // 根据状态和来源决定是否发送消息到background
     if (open) {
-      console.log('[UIManager] 即将发送 openSidePanel 消息');
+      console.log('[ui-manager] 即将发送 openSidePanel 消息');
       chrome.runtime.sendMessage({ action: 'openSidePanel' }, (response) => {
-        console.log('[UIManager] openSidePanel 回调，lastError =', chrome.runtime.lastError, ', response =', response);
+        console.log('[ui-manager] openSidePanel 回调，lastError =', chrome.runtime.lastError, ', response =', response);
         if (chrome.runtime.lastError) {
-          console.error('[UIManager] 打开侧边栏出错:', chrome.runtime.lastError.message);
+          console.error('[ui-manager] 打开侧边栏出错:', chrome.runtime.lastError.message);
         }
       });
     } else {
-      console.log('[UIManager] 即将发送 closeSidePanel 消息');
+      // 只有在用户主动关闭时才发送closeSidePanel消息
+      // 如果是由于sidepanel检测到关闭而触发的，则跳过发送消息
+      if (source === 'user-action') {
+        console.log('[ui-manager] 用户主动关闭，发送 closeSidePanel 消息');
       chrome.runtime.sendMessage({ action: 'closeSidePanel' }, (response) => {
-        console.log('[UIManager] closeSidePanel 回调，lastError =', chrome.runtime.lastError, ', response =', response);
+        console.log('[ui-manager] closeSidePanel 回调，lastError =', chrome.runtime.lastError, ', response =', response);
         if (chrome.runtime.lastError) {
-          console.error('[UIManager] 关闭侧边栏出错:', chrome.runtime.lastError.message);
+          console.error('[ui-manager] 关闭侧边栏出错:', chrome.runtime.lastError.message);
         }
       });
+      } else {
+        console.log(`[ui-manager] 由${source}触发的关闭，跳过发送closeSidePanel消息`);
+      }
     }
   }
   
@@ -915,11 +934,11 @@ export class UIManager {
    * 当页面结构变化时自动注入控件
    */
   public setupObserver(): void {
-    console.log('[UIManager] 开始设置DOM变化观察器');
+    console.log('[ui-manager] 开始设置DOM变化观察器');
     
     // 防止重复设置观察器
     if ((window as any).__uiManagerObserverSetup) {
-      console.log('[UIManager] DOM变化观察器已经设置过，跳过');
+      console.log('[ui-manager] DOM变化观察器已经设置过，跳过');
       return;
     }
     
@@ -936,7 +955,7 @@ export class UIManager {
     
     // 如果按钮已存在，记录状态并跳过注入
     if (existingTranslateButton || existingSettingsButton) {
-      console.log('[UIManager] 观察器初始化时检测到控件已存在', {
+      console.log('[ui-manager] 观察器初始化时检测到控件已存在', {
         translateButton: !!existingTranslateButton,
         settingsButton: !!existingSettingsButton
       });
@@ -946,7 +965,7 @@ export class UIManager {
     
     // 执行初始检查，如果必要元素都存在，尝试执行初始注入
     if (currentRightControls && currentAutoplayButton && !this.state.controlsInjected) {
-      console.log('[UIManager] 初始检测到必要元素已存在，安排注入');
+      console.log('[ui-manager] 初始检测到必要元素已存在，安排注入');
       // 使用setTimeout来确保当前执行栈完成后再进行注入，避免干扰DOM观察器的设置
       setTimeout(() => this.tryInjectControls('初始检测'), 0);
     }
@@ -972,7 +991,7 @@ export class UIManager {
                   node.classList.contains('html5-video-player')
                 )) {
                 hasRelevantChanges = true;
-                console.log('[UIManager] 检测到关键元素添加:', node.className);
+                console.log('[ui-manager] 检测到关键元素添加:', node.className);
               }
               
               // 也检查子元素
@@ -980,7 +999,7 @@ export class UIManager {
               const autoplayButton = node.querySelector('.ytp-autonav-toggle-button');
               if (rightControls || autoplayButton) {
                 hasRelevantChanges = true;
-                console.log('[UIManager] 检测到节点内部包含关键元素:', rightControls ? '.ytp-right-controls' : '', autoplayButton ? '.ytp-autonav-toggle-button' : '');
+                console.log('[ui-manager] 检测到节点内部包含关键元素:', rightControls ? '.ytp-right-controls' : '', autoplayButton ? '.ytp-autonav-toggle-button' : '');
               }
             }
           });
@@ -997,7 +1016,7 @@ export class UIManager {
         const playerContainer = document.querySelector('.html5-video-player');
         const autoplayButton = document.querySelector('.ytp-autonav-toggle-button');
         
-        console.log('[UIManager] DOM变化后的元素状态:', {
+        console.log('[ui-manager] DOM变化后的元素状态:', {
           rightControls: !!rightControls,
           playerContainer: !!playerContainer,
           autoplayButton: !!autoplayButton,
@@ -1009,14 +1028,14 @@ export class UIManager {
         if (autoplayButton && rightControls) {
           this.tryInjectControls('DOM变化检测');
         } else if (rightControls && !autoplayButton) {
-          console.log('[UIManager] 已找到右侧控制栏，但自动播放按钮尚未加载，等待中...');
+          console.log('[ui-manager] 已找到右侧控制栏，但自动播放按钮尚未加载，等待中...');
         } else if (!rightControls) {
-          console.log('[UIManager] 右侧控制栏尚未加载，等待中...');
+          console.log('[ui-manager] 右侧控制栏尚未加载，等待中...');
         }
         
         // 如果找到播放器容器但叠加层不存在，创建叠加层
         if (playerContainer && !this.subtitleOverlayElement) {
-          console.log('[UIManager] 检测到播放器容器，创建字幕叠加层');
+          console.log('[ui-manager] 检测到播放器容器，创建字幕叠加层');
           this.createSubtitleOverlay(playerContainer as HTMLElement);
         }
       }
@@ -1030,14 +1049,14 @@ export class UIManager {
       attributeFilter: ['class', 'style'] // 仅监听class和style属性
     });
     
-    console.log('[UIManager] 已设置DOM变化观察器');
+    console.log('[ui-manager] 已设置DOM变化观察器');
     
     // 添加超时检查，确保在合理时间后尝试注入
     setTimeout(() => {
       if (!this.state.controlsInjected && 
           !document.getElementById('vid-translate-toggle-button') && 
           !document.getElementById('vid-translate-settings-button')) {
-        console.log('[UIManager] 超时检查 - 控件尚未注入，重新尝试');
+        console.log('[ui-manager] 超时检查 - 控件尚未注入，重新尝试');
         
         const rightControls = document.querySelector('.ytp-right-controls');
         const autoplayButton = document.querySelector('.ytp-autonav-toggle-button');
@@ -1045,7 +1064,7 @@ export class UIManager {
         if (rightControls && autoplayButton) {
           this.tryInjectControls('超时检查');
         } else {
-          console.log('[UIManager] 超时检查 - 必要元素不存在:', {
+          console.log('[ui-manager] 超时检查 - 必要元素不存在:', {
             rightControls: !!rightControls,
             autoplayButton: !!autoplayButton
           });
@@ -1059,9 +1078,9 @@ export class UIManager {
    * @param source 触发注入的来源
    */
   private tryInjectControls(source: string): void {
-    console.log(`[UIManager] ${source}触发尝试注入控件`);
+    console.log(`[ui-manager] ${source}触发尝试注入控件`);
     this.injectControls().then(success => {
-      console.log(`[UIManager] ${source}触发的注入${success ? '成功' : '失败'}`);
+      console.log(`[ui-manager] ${source}触发的注入${success ? '成功' : '失败'}`);
     });
   }
   

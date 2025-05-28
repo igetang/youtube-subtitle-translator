@@ -72,11 +72,11 @@ class LocalStorageProxy {
   }
 
   /**
-   * 保存轨道Memory Cache
+   * 保存轨道本地存储
    * @param videoId 视频ID
    * @param tracks 轨道数据
    */
-  async saveTrackMemoryCache(videoId: string, tracks: any[]): Promise<any> {
+  async saveTrackLocalStorage(videoId: string, tracks: any[]): Promise<any> {
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({
         action: 'saveTrackCache',
@@ -116,10 +116,10 @@ class LocalStorageProxy {
   }
 
   /**
-   * 获取轨道Memory Cache
+   * 获取轨道本地存储
    * @param videoId 视频ID
    */
-  async getTrackMemoryCache(videoId: string): Promise<any> {
+  async getTrackLocalStorage(videoId: string): Promise<any> {
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({
         action: 'getTrackCache',
@@ -270,8 +270,7 @@ function setupMessageHandlers() {
         // 向 background 回复错误信息
         chrome.runtime.sendMessage({
           action: 'availableTracksResult',
-          error: data.error,
-          _requestId: data._requestId  // 🔧 新增：携带requestId
+          error: data.error
         });
         
         return;
@@ -290,8 +289,7 @@ function setupMessageHandlers() {
         // 向 background 回复无字幕信息
         chrome.runtime.sendMessage({
           action: 'availableTracksResult',
-          tracks: [],
-          _requestId: data._requestId  // 🔧 新增：携带requestId
+          tracks: []
         });
         
         return;
@@ -313,36 +311,35 @@ function setupMessageHandlers() {
         kind: track.kind || 'standard'
       }));
       
-      console.log(`[content-script] 轨道信息处理完成，准备保存到Memory Cache`);
+      console.log(`[content-script] 轨道信息处理完成，准备保存到local storage`);
       
       // C33: ContentScript发送: saveTrackCache
-      console.log('[content-script] C33: 发送saveTrackCache到Background (保存到Memory Cache)');
-      LocalStorageProxy.getInstance().saveTrackMemoryCache(videoId, processedTracks)
-        .then((result: any) => {
+      console.log('[content-script] C33: 发送saveTrackCache到Background (保存到local storage)');
+      LocalStorageProxy.getInstance().saveTrackLocalStorage(videoId, processedTracks)
+        .then((result) => {
           if (result.success) {
-            console.log('[content-script] C34: Background轨道Memory Cache保存成功 ⚡');
+            console.log('[content-script] C34: Background轨道local storage保存成功');
             
             // C35: ContentScript: startTranslationProcess
             console.log('[content-script] C35: 开始翻译处理流程');
             handleTranslationProcessAfterTracks(captionTracks, videoId);
             
           } else {
-            console.warn('[content-script] 轨道Memory Cache保存失败:', result.error);
-            // 即使Memory Cache失败也继续翻译流程
+            console.warn('[content-script] 轨道local storage保存失败:', result.error);
+            // 即使local storage失败也继续翻译流程
             handleTranslationProcessAfterTracks(captionTracks, videoId);
           }
         })
-        .catch((error: any) => {
-          console.error('[content-script] 保存轨道Memory Cache出错:', error);
-          // 即使Memory Cache失败也继续翻译流程
+        .catch((error) => {
+          console.error('[content-script] 保存轨道local storage出错:', error);
+          // 即使local storage失败也继续翻译流程
           handleTranslationProcessAfterTracks(captionTracks, videoId);
         });
       
       // 同时发送轨道信息到后台（供侧边栏使用）
       chrome.runtime.sendMessage({
         action: 'availableTracksResult',
-        tracks: processedTracks,
-        _requestId: data._requestId  // 🔧 新增：携带requestId
+        tracks: processedTracks
       });
     }
     
@@ -545,32 +542,14 @@ async function handleTranslationStartRequest(data: any): Promise<void> {
         displayTranslatedSubtitles(cacheCheckResponse.data);
         return;
       } else {
-        console.log('[content-script] C27: 翻译结果缓存未完全匹配，检查Memory Cache字幕轨道');
-        
-        // 🔥 新增：L → M 路径 - 检查Memory Cache字幕轨道
-        try {
-          const trackCacheResponse = await localStorageProxy.getTrackMemoryCache(videoId);
-          
-          if (trackCacheResponse.success && trackCacheResponse.data && trackCacheResponse.data.length > 0) {
-            console.log('[content-script] M: Memory Cache命中 ⚡，使用内存缓存轨道数据执行翻译');
-            // N: 使用内存缓存轨道数据
-            await startTranslationProcess(trackCacheResponse.data, videoId);
-            return;
-          } else {
-            console.log('[content-script] M: Memory Cache未命中，调用API获取字幕轨道');
-            // O: 调用API获取字幕轨道
-          }
-        } catch (error) {
-          console.error('[content-script] 检查Memory Cache轨道数据失败:', error);
-          console.log('[content-script] 降级到API获取字幕轨道');
-        }
+        console.log('[content-script] C27: 翻译local storage未完全匹配，继续执行翻译流程');
       }
     } else {
       console.log('[content-script] C23: 使用默认配置，直接执行翻译流程');
     }
     
-    // C25-C30: 执行翻译流程（API获取轨道）
-    console.log('[content-script] C25: 执行翻译流程 - API获取字幕轨道');
+    // C25-C30: 直接执行翻译流程
+    console.log('[content-script] C25: 直接执行翻译流程');
     
     // C30: ContentScript: ControlPanel.setCurrentVideo
     const controlPanel = ControlPanel.getInstance();
@@ -1040,26 +1019,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'getAvailableTracks') {
     console.log(`[content-script] 收到来自background的getAvailableTracks请求，videoId: ${message.videoId}`);
     
-    // 向主世界脚本请求字幕轨道信息，传递requestId
+    // 向主世界脚本请求字幕轨道信息
     window.postMessage({
       source: 'content-script',
       type: 'REQUEST_CAPTION_TRACKS',
-      videoId: message.videoId || getVideoId(),
-      _requestId: message._requestId  // 🔧 新增：传递requestId
+      videoId: message.videoId || getVideoId()
     }, '*');
     
-    sendResponse({ status: 'processing' });
-    return true;
-  }
-  
-  // 🔧 新增：处理requestCurrentVideoId请求
-  if (message.action === 'requestCurrentVideoId') {
-    const videoId = getVideoId();
+    // 告诉 background 我们正在处理请求
     sendResponse({ 
-      videoId: videoId,
-      _requestId: message._requestId  // 🔧 新增：携带requestId
+      status: 'processing', 
+      message: '正在请求字幕轨道信息'
     });
-    return false;
+    
+    return true; // 表示我们会异步回复
   }
   
   // 🆕 处理设置更新消息

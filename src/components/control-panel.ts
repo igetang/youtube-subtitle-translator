@@ -181,7 +181,7 @@ export class ControlPanel {
         });
         this.emitEvent(ControlPanelEvent.TRANSLATION_COMPLETED, {
           processedEvents: data.processedEvents,
-          fromCache: data.fromCache
+          fromLocalStorage: data.fromLocalStorage
         });
       }
     );
@@ -207,7 +207,7 @@ export class ControlPanel {
   private setupUIListeners(): void {
     // 监听UI控件注入完成事件
     this.eventBus.on('ui.controlsInjected', (data) => {
-      console.log('[ControlPanel] 收到UI控件注入完成事件:', data);
+      console.log('[control-panel] 收到UI控件注入完成事件:', data);
       
       // 如果翻译已激活，可以自动开始翻译流程
       if (this.state.settings.translateActive && this.state.currentVideoId) {
@@ -219,7 +219,7 @@ export class ControlPanel {
     
     // 监听UI控件恢复事件
     this.eventBus.on('ui.controlsRecovered', (data) => {
-      console.log('[ControlPanel] 收到UI控件恢复事件:', data);
+      console.log('[control-panel] 收到UI控件恢复事件:', data);
       
       // 如果翻译已激活，重新开始翻译流程
       if (this.state.settings.translateActive && this.state.currentVideoId) {
@@ -231,19 +231,19 @@ export class ControlPanel {
     
     // 监听UI叠加层创建完成事件
     this.eventBus.on('ui.overlayCreated', (data) => {
-      console.log('[ControlPanel] 收到UI叠加层创建完成事件:', data);
+      console.log('[control-panel] 收到UI叠加层创建完成事件:', data);
     });
     
     // 监听UI注入失败事件
     this.eventBus.on('ui.injectionFailed', (data) => {
-      console.log('[ControlPanel] 收到UI注入失败事件:', data);
+      console.log('[control-panel] 收到UI注入失败事件:', data);
       this.updateState({
         lastError: `UI注入失败: ${data.reason || '未知错误'}`
       });
       
       // 如果是由于达到最大尝试次数，记录额外信息
       if (data.reason === 'MAX_ATTEMPTS_REACHED') {
-        console.error(`[ControlPanel] UI注入失败，已尝试 ${data.attempts} 次`);
+        console.error(`[control-panel] UI注入失败，已尝试 ${data.attempts} 次`);
       }
     });
   }
@@ -254,30 +254,30 @@ export class ControlPanel {
   private setupSubtitleListeners(): void {
     // 监听字幕加载事件
     this.eventBus.on('subtitles:loaded', (data) => {
-      console.log('[ControlPanel] 收到字幕轨道加载事件:', data);
+      console.log('[control-panel] 收到字幕轨道加载事件:', data);
       
       if (this.state.isTranslating) {
-        console.log('[ControlPanel] 翻译已在进行中，忽略此次字幕加载');
+        console.log('[control-panel] 翻译已在进行中，忽略此次字幕加载');
         return;
       }
       
       if (!data.tracks || data.tracks.length === 0) {
-        console.warn('[ControlPanel] 字幕轨道为空');
+        console.warn('[control-panel] 字幕轨道为空');
         this.handleTranslationError('没有可用的字幕轨道');
         return;
       }
       
       if (!data.videoId) {
-        console.warn('[ControlPanel] 字幕事件缺少videoId');
+        console.warn('[control-panel] 字幕事件缺少videoId');
         this.handleTranslationError('缺少视频ID信息');
         return;
       }
       
       // 确保当前视频ID与加载的字幕匹配
       if (this.state.currentVideoId !== data.videoId) {
-        console.log(`[ControlPanel] 更新当前视频ID: ${data.videoId}`);
+        console.log(`[control-panel] 更新当前视频ID: ${data.videoId}`);
         this.setCurrentVideo(data.videoId).catch(error => {
-          console.error('[ControlPanel] 设置当前视频ID失败:', error);
+          console.error('[control-panel] 设置当前视频ID失败:', error);
         });
       }
       
@@ -293,7 +293,7 @@ export class ControlPanel {
    */
   private async processSubtitleTracks(tracks: any[], videoId: string): Promise<void> {
     try {
-      console.log(`[ControlPanel] 处理${tracks.length}个字幕轨道`);
+      console.log(`[control-panel] 处理${tracks.length}个字幕轨道`);
       
       // 检查字幕轨道数据
       if (!tracks || !Array.isArray(tracks) || tracks.length === 0) {
@@ -302,7 +302,7 @@ export class ControlPanel {
       
       // 记录轨道信息以便调试
       tracks.forEach((track, index) => {
-        console.log(`[ControlPanel] 轨道 #${index}: 语言=${track.languageCode || '未知'}, 种类=${track.kind || '未知'}, 名称=${track.name?.simpleText || '未命名'}`);
+        console.log(`[control-panel] 轨道 #${index}: 语言=${track.languageCode || '未知'}, 种类=${track.kind || '未知'}, 名称=${track.name?.simpleText || '未命名'}`);
       });
       
       // 设置状态为翻译中
@@ -316,7 +316,7 @@ export class ControlPanel {
       
       // 获取当前设置
       const { sourceLang, targetLang } = this.state.settings;
-      console.log(`[ControlPanel] 使用语言设置: 源语言=${sourceLang}, 目标语言=${targetLang}`);
+      console.log(`[control-panel] 使用语言设置: 源语言=${sourceLang}, 目标语言=${targetLang}`);
       
       // 查找最匹配的源语言轨道
       const sourceTrack = this.findBestTrack(tracks, sourceLang);
@@ -324,22 +324,22 @@ export class ControlPanel {
         throw new Error(`未找到匹配的${sourceLang}源语言轨道，请检查轨道数据或尝试其他源语言`);
       }
       
-      console.log(`[ControlPanel] 找到源语言轨道: ${sourceTrack.languageCode || '未知语言'}, 名称: ${sourceTrack.name?.simpleText || '未命名'}`);
+      console.log(`[control-panel] 找到源语言轨道: ${sourceTrack.languageCode || '未知语言'}, 名称: ${sourceTrack.name?.simpleText || '未命名'}`);
       
       // 获取字幕数据
-      console.log(`[ControlPanel] 开始获取源字幕数据...`);
+      console.log(`[control-panel] 开始获取源字幕数据...`);
       const subtitles = await this.fetchSubtitleData(sourceTrack);
       if (!subtitles || subtitles.length === 0) {
         throw new Error('未能获取字幕数据，请检查网络连接或尝试刷新页面');
       }
       
-      console.log(`[ControlPanel] 成功获取${subtitles.length}条字幕`);
+      console.log(`[control-panel] 成功获取${subtitles.length}条字幕`);
       
       // 开始翻译字幕
       await this.translateSubtitles(subtitles);
       
     } catch (error) {
-      console.error('[ControlPanel] 处理字幕轨道失败:', error);
+      console.error('[control-panel] 处理字幕轨道失败:', error);
       const errorMessage = error instanceof Error ? error.message : '未知错误';
       this.handleTranslationError(`处理字幕轨道失败: ${errorMessage}`);
       
@@ -401,7 +401,7 @@ export class ControlPanel {
       
       // 检查是否有baseUrl
       if (!track.baseUrl) {
-        console.warn('[ControlPanel] 字幕轨道缺少baseUrl:', track);
+        console.warn('[control-panel] 字幕轨道缺少baseUrl:', track);
         
         // 如果没有baseUrl但有其他可用数据，尝试使用
         if (track.url) {
@@ -417,12 +417,12 @@ export class ControlPanel {
       // 这里需要实现通过baseUrl获取字幕数据的逻辑
       // 在实际应用中，可能需要与content-script通信
       
-      console.log(`[ControlPanel] 通过baseUrl获取字幕数据: ${track.baseUrl.substring(0, 100)}...`);
+      console.log(`[control-panel] 通过baseUrl获取字幕数据: ${track.baseUrl.substring(0, 100)}...`);
       
       // 此处为临时占位，实际实现中需要修改
       return [];
     } catch (error) {
-      console.error('[ControlPanel] 获取字幕数据失败:', error);
+      console.error('[control-panel] 获取字幕数据失败:', error);
       throw error;
     }
   }
@@ -453,7 +453,7 @@ export class ControlPanel {
         settings
       });
       
-      console.log('控制面板初始化完成');
+      console.log('[control-panel] 控制面板初始化完成');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '未知错误';
       this.updateState({
@@ -465,7 +465,7 @@ export class ControlPanel {
         error: errorMessage
       });
       
-      console.error('控制面板初始化失败:', error);
+              console.error('[control-panel] 控制面板初始化失败:', error);
     }
   }
   
@@ -602,7 +602,7 @@ export class ControlPanel {
       processedEvents,
       'local' // 明确指定使用local存储
     ).catch(error => {
-      console.error('保存翻译结果到本地存储失败:', error);
+              console.error('[control-panel] 保存翻译结果到本地存储失败:', error);
     });
   }
   
@@ -673,26 +673,26 @@ export class ControlPanel {
   }
   
   /**
-   * 清除翻译缓存
-   * @param videoId 可选的视频ID，不提供则清除所有缓存
+   * 清除翻译本地存储
+   * @param videoId 可选的视频ID，不提供则清除所有local storage
    */
-  public async clearTranslationCache(videoId?: string): Promise<void> {
+  public async clearTranslationLocalStorage(videoId?: string): Promise<void> {
     if (videoId) {
-      // 获取与特定视频相关的所有缓存键
-      const cachePrefix = `${StorageKeys.CACHE.TRANSLATIONS_PREFIX}${videoId}`;
-      const caches = await this.storageManager.getByPrefix(cachePrefix, 'local');
+      // 获取与特定视频相关的所有local storage键
+      const cachePrefix = `${StorageKeys.LOCAL.TRANSLATIONS_PREFIX}${videoId}`;
+      const localStorageEntries = await this.storageManager.getByPrefix(cachePrefix, 'local');
       
-      if (Object.keys(caches).length > 0) {
-        await this.storageManager.remove(Object.keys(caches), 'local');
-        console.log(`已清除视频 ${videoId} 的翻译缓存`);
+      if (Object.keys(localStorageEntries).length > 0) {
+        await this.storageManager.remove(Object.keys(localStorageEntries), 'local');
+        console.log(`[control-panel] 已清除视频 ${videoId} 的翻译local storage`);
       }
     } else {
-      // 清除所有翻译缓存
-      const allCaches = await this.storageManager.getByPrefix(StorageKeys.CACHE.TRANSLATIONS_PREFIX, 'local');
+      // 清除所有翻译local storage
+      const allLocalStorageEntries = await this.storageManager.getByPrefix(StorageKeys.LOCAL.TRANSLATIONS_PREFIX, 'local');
       
-      if (Object.keys(allCaches).length > 0) {
-        await this.storageManager.remove(Object.keys(allCaches), 'local');
-        console.log('已清除所有翻译缓存');
+      if (Object.keys(allLocalStorageEntries).length > 0) {
+        await this.storageManager.remove(Object.keys(allLocalStorageEntries), 'local');
+        console.log('[control-panel] 已清除所有翻译local storage');
       }
     }
   }

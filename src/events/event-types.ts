@@ -27,6 +27,7 @@ export const EventTypes = {
   SUBTITLES_LOADED: 'subtitles:loaded',
   SUBTITLES_UPDATED: 'subtitles:updated',
   SUBTITLE_MODE_CHANGED: 'subtitles:mode_changed',
+  TRACKS_AVAILABLE: 'tracks:available',
 
   // 设置相关事件
   SETTINGS_CHANGED: 'settings:changed',
@@ -36,6 +37,7 @@ export const EventTypes = {
   // 状态相关事件
   STATE_CHANGED: 'state:changed',
   TRANSLATE_ACTIVE_CHANGED: 'state:translate_active_changed',
+  TRANSLATE_STATE_CHANGED_NOTIFICATION: 'translate_state_changed_notification',
 
   // 消息/请求类事件
   REQUEST_CAPTION_TRACKS: 'request:track_info'

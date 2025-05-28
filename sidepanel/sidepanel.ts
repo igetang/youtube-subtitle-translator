@@ -2,12 +2,12 @@
  * Side Panel Logic
  */
 import { targetLanguages, Language } from '../src/utils/languages'; // 导入语言列表
-import { VideoSettingsCache, VideoSettings } from '../src/storage/video-settings-cache'; // 导入视频设置缓存
+import { VideoSettingsLocalStorage, VideoSettings } from '../src/storage/video-settings-local-storage'; // 导入视频设置本地存储
 import { StorageManager, StorageKeys } from '../src/storage/storage-manager'; // 导入 StorageManager 和 StorageKeys
 // 导入新的语言处理工具
 import { isLanguageRelevantToUI } from '../src/utils/language-processing';
 
-console.log('[sidepanel/sidepanel.ts] Side Panel Script Loaded.');
+console.log('[sidepanel] Side Panel Script Loaded.');
 
 // --- DOM 元素引用 ---
 // 源语言自定义下拉菜单元素
@@ -75,14 +75,18 @@ const eyeClosedIcon = togglePasswordBtn?.querySelector('.eye-closed') as SVGElem
 let currentTabId: number | null = null;
 /** 存储当前侧边栏关联的视频 ID */
 let currentVideoId: string | null = null;
-/** 缓存从存储加载的目标语言 */
+/** Memory cache从存储加载的目标语言 */
 let loadedTargetLang: string | null = null;
 /** 跟踪当前选中的目标语言代码 */
 let currentSelectedTargetLang: string | null = null;
-/** 缓存浏览器 UI 语言 - Sidepanel不再自行获取和使用，将由background提供 */
+/** 跟踪当前选中的源语言轨道类型 - 新增 */
+let currentSelectedSourceTrackKind: string | null = null;
+/** 跟踪上次保存的源语言轨道类型，用于变化检测 - 新增 */
+let previousSavedSourceTrackKind: string | null = null;
+/** Memory cache浏览器 UI 语言 - Sidepanel不再自行获取和使用，将由background提供 */
 let uiLangCode: string | null = null;
-/** 缓存从内容脚本获取的可用视频轨道信息，用于填充源语言下拉列表 */
-let availableTracksForSelect: { languageCode: string, languageName: string, kind: string }[] = [];
+/** Memory cache从内容脚本获取的可用视频轨道信息，用于填充源语言下拉列表 */
+let uiTrackData: { languageCode: string, languageName: string, kind: string }[] = [];
 
 /** 标志位，表示侧边栏UI是否正在通过后台数据进行初始化 */
 let isInitializingSidePanelUI = false;
@@ -220,23 +224,23 @@ async function handleSocialLogin(provider: LoginProvider): Promise<void> {
             //     membershipCredentials: loginState
             // }, () => {
             //     if (chrome.runtime.lastError) {
-            //         console.error('保存登录状态时出错:', chrome.runtime.lastError);
+            //         console.error('[sidepanel] 保存登录状态时出错:', chrome.runtime.lastError);
             //     } else {
-            //         console.log('登录状态已保存:', loginState);
+            //         console.log('[sidepanel] 登录状态已保存:', loginState);
             //     }
             // });
             try {
               await StorageManager.getInstance().set(StorageKeys.SETTINGS.MEMBERSHIP_CREDENTIALS, loginState, 'local'); // 修改为 local
-              console.log('登录状态已保存:', loginState);
+              console.log('[sidepanel] 登录状态已保存:', loginState);
             } catch (error) {
-              console.error('保存登录状态时出错:', error);
+              console.error('[sidepanel] 保存登录状态时出错:', error);
             }
         } else {
             loginResultSpan.textContent = result.message || '登录失败，请重试';
             loginResultSpan.className = 'result-text error';
         }
     } catch (error) {
-        console.error('第三方登录出错:', error);
+        console.error('[sidepanel] 第三方登录出错:', error);
         loginResultSpan.textContent = error instanceof Error ? error.message : '登录过程中发生错误';
         loginResultSpan.className = 'result-text error';
     }
@@ -292,43 +296,43 @@ let isLoading = true;
 function findMatchingTargetLanguage(codeToMatch: string): Language | undefined {
     if (!codeToMatch) return undefined;
 
-    console.log(`[sidepanel/sidepanel.ts] 尝试匹配语言代码: ${codeToMatch}`);
+    console.log(`[sidepanel] 尝试匹配语言代码: ${codeToMatch}`);
     let matchedLang: Language | undefined = undefined;
     const normalizedCodeToMatch = codeToMatch.toLowerCase(); // Normalize for comparison
 
     // Priority 1: Exact Match (case-insensitive)
     matchedLang = targetLanguages.find(lang => lang.code.toLowerCase() === normalizedCodeToMatch);
     if (matchedLang) {
-        console.log(`[sidepanel/sidepanel.ts] 精确匹配: ${matchedLang.code}`);
+        console.log(`[sidepanel] 精确匹配: ${matchedLang.code}`);
         return matchedLang;
     }
 
     // Priority 2: Handle Chinese Script/Region Variants explicitly
     const baseLang = normalizedCodeToMatch.split(/[-_]/)[0];
-    console.log(`[sidepanel/sidepanel.ts] 基础语言代码: ${baseLang}`);
+    console.log(`[sidepanel] 基础语言代码: ${baseLang}`);
     
     if (baseLang === 'zh') {
-        console.log(`[sidepanel/sidepanel.ts] 处理中文变体. 完整代码: ${normalizedCodeToMatch}`);
+        console.log(`[sidepanel] 处理中文变体. 完整代码: ${normalizedCodeToMatch}`);
         const regionOrScript = normalizedCodeToMatch.split(/[-_]/)[1];
-        console.log(`[sidepanel/sidepanel.ts] 区域/脚本代码: ${regionOrScript}`);
+        console.log(`[sidepanel] 区域/脚本代码: ${regionOrScript}`);
         
         // 强化中文匹配: 所有中国大陆区域代码使用简体中文
         // Prefer Hans for CN/SG UI, Hant for TW/HK UI
         if (regionOrScript === 'cn' || regionOrScript === 'sg' || regionOrScript === 'hans') {
-            console.log('[sidepanel/sidepanel.ts] 匹配简体中文 (zh-Hans)');
+            console.log('[sidepanel] 匹配简体中文 (zh-Hans)');
             matchedLang = targetLanguages.find(lang => lang.code === 'zh-Hans');
         } else if (regionOrScript === 'tw' || regionOrScript === 'hk' || regionOrScript === 'hant') {
-            console.log('[sidepanel/sidepanel.ts] 匹配繁体中文 (zh-Hant)');
+            console.log('[sidepanel] 匹配繁体中文 (zh-Hant)');
             matchedLang = targetLanguages.find(lang => lang.code === 'zh-Hant');
         }
         // If UI is just 'zh', default to Hans
         else if (normalizedCodeToMatch === 'zh') {
-            console.log('[sidepanel/sidepanel.ts] 纯zh代码，默认使用简体中文');
+            console.log('[sidepanel] 纯zh代码，默认使用简体中文');
             matchedLang = targetLanguages.find(lang => lang.code === 'zh-Hans') || targetLanguages.find(lang => lang.code === 'zh-Hant');
         }
         // 添加默认中文处理
         else {
-            console.log('[sidepanel/sidepanel.ts] 未知中文变体，默认使用简体中文');
+            console.log('[sidepanel] 未知中文变体，默认使用简体中文');
             matchedLang = targetLanguages.find(lang => lang.code === 'zh-Hans');
         }
         
@@ -342,7 +346,7 @@ function findMatchingTargetLanguage(codeToMatch: string): Language | undefined {
         normalizedCodeToMatch.startsWith(lang.code.toLowerCase() + '_')
     );
     if (matchedLang) {
-        console.log(`[sidepanel/sidepanel.ts] 匹配前缀(特定到通用): ${matchedLang.code}`);
+        console.log(`[sidepanel] 匹配前缀(特定到通用): ${matchedLang.code}`);
         return matchedLang;
     }
 
@@ -354,9 +358,9 @@ function findMatchingTargetLanguage(codeToMatch: string): Language | undefined {
     );
     
     if (matchedLang) {
-        console.log(`[sidepanel/sidepanel.ts] 匹配前缀(通用到特定): ${matchedLang.code}`);
+        console.log(`[sidepanel] 匹配前缀(通用到特定): ${matchedLang.code}`);
     } else {
-        console.log(`[sidepanel/sidepanel.ts] 未找到匹配`);
+        console.log(`[sidepanel] 未找到匹配`);
     }
     
     return matchedLang; // Return whatever was found, or undefined
@@ -373,6 +377,28 @@ function updateTargetLanguageTriggerDisplay(langCode: string | null) { /* */ }
  * @param langCode 语言代码
  */
 function updateTargetLanguageDisplay(langCode: string | null) {
+    // 添加保护：如果正在初始化，则只设置显示值，不触发其他操作
+    if (isInitializingSidePanelUI) {
+        console.log('[sidepanel] updateTargetLanguageDisplay: 初始化模式，只更新显示');
+        if (targetLangSelectedValue) {
+            if (langCode) {
+                const matchedLang = targetLanguages.find(lang => lang.code === langCode);
+                if (matchedLang) {
+                    const key = 'lang_' + matchedLang.code.replace(/-/g, '_');
+                    const localizedName = chrome.i18n.getMessage(key);
+                    targetLangSelectedValue.textContent = localizedName || 
+                        (uiLangCode && uiLangCode.toLowerCase().startsWith('zh') ? matchedLang.name : matchedLang.englishName);
+                    targetLangSelectedValue.setAttribute('data-value', langCode);
+                }
+            } else {
+                targetLangSelectedValue.textContent = '选择语言...';
+                targetLangSelectedValue.removeAttribute('data-value');
+            }
+        }
+        return;
+    }
+
+    console.log(`[sidepanel] 更新目标语言显示: ${langCode}`);
     if (!targetLangSelectedValue) return;
     if (langCode) {
         const lang = findMatchingTargetLanguage(langCode);
@@ -394,13 +420,19 @@ function updateTargetLanguageDisplay(langCode: string | null) {
 function populateTargetLanguages(searchTerm: string = '') {
     if (!targetLangOptions) return;
 
-    console.log(`[sidepanel/sidepanel.ts] populateTargetLanguages 调用，当前 uiLangCode: ${uiLangCode}`);
+    // 添加保护：如果正在初始化，则跳过可能触发事件的操作
+    if (isInitializingSidePanelUI) {
+        console.log('[sidepanel] populateTargetLanguages: 跳过，正在初始化UI');
+        return;
+    }
+
+    console.log(`[sidepanel] populateTargetLanguages 调用，当前 uiLangCode: ${uiLangCode}`);
 
     // 筛选语言（如果提供了搜索词）
     let filteredLanguages = targetLanguages;
     if (searchTerm && searchTerm.trim() !== '') {
         const lowerSearchTerm = searchTerm.toLowerCase().trim();
-        console.log(`[sidepanel/sidepanel.ts] 搜索语言，关键词: "${lowerSearchTerm}"`);
+        console.log(`[sidepanel] 搜索语言，关键词: "${lowerSearchTerm}"`);
         
         filteredLanguages = targetLanguages.filter(lang => {
             // 记录每个语言的匹配情况，便于调试
@@ -410,19 +442,19 @@ function populateTargetLanguages(searchTerm: string = '') {
             
             // 1. 精确匹配语言代码 (如"es", "en-US")
             if (langCode === lowerSearchTerm) {
-                console.log(`[搜索] 精确匹配语言代码: ${lang.code} = ${lowerSearchTerm}`);
+                console.log(`[sidepanel] 精确匹配语言代码: ${lang.code} = ${lowerSearchTerm}`);
                 return true;
             }
             
             // 2. 语言代码前缀匹配 (如"zh"匹配"zh-Hans")
             if (langCode.startsWith(lowerSearchTerm)) {
-                console.log(`[搜索] 语言代码前缀匹配: ${lang.code} 以 ${lowerSearchTerm} 开头`);
+                console.log(`[sidepanel] 语言代码前缀匹配: ${lang.code} 以 ${lowerSearchTerm} 开头`);
                 return true;
             }
             
             // 3. 语言代码中的国家/地区代码匹配 (如"cn"匹配"zh-CN")
             if (langCode.includes(`-${lowerSearchTerm}`)) {
-                console.log(`[搜索] 国家/地区代码匹配: ${lang.code} 包含 -${lowerSearchTerm}`);
+                console.log(`[sidepanel] 国家/地区代码匹配: ${lang.code} 包含 -${lowerSearchTerm}`);
                     return true;
                 }
             
@@ -492,7 +524,7 @@ function populateTargetLanguages(searchTerm: string = '') {
             };
             
             if (countryCodeMap[lowerSearchTerm] && countryCodeMap[lowerSearchTerm].some(code => langCode.startsWith(code) || langCode.includes(`-${code}`))) {
-                console.log(`[搜索] 国家代码别名匹配: ${lowerSearchTerm} -> ${lang.code}`);
+                console.log(`[sidepanel] 国家代码别名匹配: ${lowerSearchTerm} -> ${lang.code}`);
                 return true;
             }
             
@@ -547,27 +579,27 @@ function populateTargetLanguages(searchTerm: string = '') {
             };
             
             if (countryCallingCodeMap[lowerSearchTerm] && countryCallingCodeMap[lowerSearchTerm].some(code => langCode.startsWith(code) || langCode.includes(`-${code}`))) {
-                console.log(`[搜索] 国际区号匹配: ${lowerSearchTerm} -> ${lang.code}`);
+                console.log(`[sidepanel] 国际区号匹配: ${lowerSearchTerm} -> ${lang.code}`);
                 return true;
             }
             
             // 6. 按语言名称处理 - 所有语言一律只匹配开头
             if (langName.startsWith(lowerSearchTerm)) {
-                console.log(`[搜索] 名称前缀匹配: ${lang.name} 以 ${lowerSearchTerm} 开头`);
+                console.log(`[sidepanel] 名称前缀匹配: ${lang.name} 以 ${lowerSearchTerm} 开头`);
                 return true;
             }
             
             // 7. 英文名称匹配开头
             if (langEnglishName.startsWith(lowerSearchTerm)) {
-                console.log(`[搜索] 英文名称前缀匹配: ${lang.englishName} 以 ${lowerSearchTerm} 开头`);
+                console.log(`[sidepanel] 英文名称前缀匹配: ${lang.englishName} 以 ${lowerSearchTerm} 开头`);
                 return true;
             }
             
             return false;
         });
         
-        console.log(`[sidepanel/sidepanel.ts] 搜索结果: 找到 ${filteredLanguages.length} 个匹配语言`);
-        filteredLanguages.forEach(lang => console.log(`- ${lang.code}: ${lang.name}`));
+        console.log(`[sidepanel] 搜索结果: 找到 ${filteredLanguages.length} 个匹配语言`);
+        filteredLanguages.forEach(lang => console.log(`[sidepanel] - ${lang.code}: ${lang.name}`));
     }
 
     // --- 排序逻辑 ---
@@ -606,12 +638,16 @@ function populateTargetLanguages(searchTerm: string = '') {
             option.classList.add('selected');
         }
         
-        // 如果与源语言相同，设为禁用状态
+        // 应用语言族互斥逻辑：如果与源语言属于同一语言族，设为禁用状态
         const currentSourceLang = sourceLangSelectedValue?.getAttribute('data-value');
-        if (currentSourceLang === lang.code) {
+        if (currentSourceLang && isSameLanguageFamily(currentSourceLang, lang.code)) {
             option.classList.add('disabled');
+            option.setAttribute('data-disabled-reason', 'same-language-family');
+            option.title = `无法选择同语言族的语言：${option.textContent} 与源语言冲突`;
+            console.log(`[sidepanel] populateTargetLanguages: 目标语言 ${lang.code} 因与源语言 ${currentSourceLang} 冲突而被禁用`);
         }
         
+        // 步骤2.6: 将选项添加到DOM
         targetLangOptions.appendChild(option);
     });
     
@@ -623,14 +659,14 @@ function populateTargetLanguages(searchTerm: string = '') {
         targetLangOptions.appendChild(option);
     }
     
-    console.log("[sidepanel/sidepanel.ts] populateTargetLanguages: 目标语言列表已填充并排序。");
+    console.log("[sidepanel] populateTargetLanguages: 目标语言列表已填充并排序。");
 }
 
 /**
- * 从缓存中获取当前视频的设置
+ * 从local storage中获取当前视频的设置
  * @deprecated 已弃用 - 保留以便向后兼容，应避免直接调用。设置获取应通过 background 进行。
  * @param videoId 视频ID
- * @returns 缓存的视频设置或null
+ * @returns local storage的视频设置或null
  */
 async function getVideoSettingsFromCache(videoId: string): Promise<VideoSettings | null> {
   console.warn('[SidePanel] getVideoSettingsFromCache: 已弃用的函数被调用');
@@ -641,7 +677,7 @@ async function getVideoSettingsFromCache(videoId: string): Promise<VideoSettings
 }
 
 /**
- * 将当前设置保存到视频缓存
+ * 将当前设置保存到视频local storage
  * @deprecated 已弃用 - 保留以便向后兼容，应避免直接调用。设置保存应通过 saveSettings 和 background 进行。
  * @param videoId 视频ID
  * @param hasSubtitles 是否有字幕
@@ -652,15 +688,15 @@ async function saveCurrentSettingsToCache(videoId: string, hasSubtitles: boolean
   if (!videoId) return;
 
   // 简化为只记录日志，实际保存应通过 saveSettings 和 background 进行
-  console.log(`[SidePanel] 不再直接保存设置到缓存。请使用 saveSettings() 函数。`);
+  console.log(`[sidepanel] 不再直接保存设置到local storage。请使用 saveSettings() 函数。`);
 }
 
 /**
- * 显示缓存的视频设置到界面
+ * 显示local storage的视频设置到界面
  * @param settings 视频设置
  */
 function displayCachedVideoSettings(settings: VideoSettings): void {
-    console.log('[SidePanel] 显示缓存的视频特定设置:', settings);
+    console.log('[sidepanel] 显示local storage的视频特定设置:', settings);
     if (settings.sourceLang) {
         updateSourceLanguageDisplay(settings.sourceLang);
     }
@@ -701,7 +737,7 @@ function disableTranslationFeatures(message: string): void {
   }
   
   // 可以在界面添加一个提示
-  console.log(`[SidePanel] 禁用翻译功能: ${message}`);
+  console.log(`[sidepanel] 禁用翻译功能: ${message}`);
 }
 
 /**
@@ -710,35 +746,58 @@ function disableTranslationFeatures(message: string): void {
  * @returns 视频ID或null
  */
 function extractVideoIdFromUrl(url: string): string | null {
-  return VideoSettingsCache.extractVideoId(url);
+      return VideoSettingsLocalStorage.extractVideoId(url);
 }
 
 /**
- * 为给定的源语言选择一个合适的备选目标语言。
- * @param sourceLangCode 源语言代码。
- * @returns 备选目标语言代码。
+ * 为给定的源语言选择一个合适的备选目标语言
+ * 功能：使用语言族互斥逻辑，确保备选语言与源语言不冲突
+ * 新增功能：基于语言族而非精确匹配进行互斥判断
+ * 
+ * @param sourceLangCode 源语言代码
+ * @returns 备选目标语言代码
+ * 
+ * @example
+ * getFallbackTargetLang("en-US") // 返回: "zh-Hans" (避免所有英语变种)
+ * getFallbackTargetLang("zh-Hans") // 返回: "fr" (避免所有中文变种)
  */
 function getFallbackTargetLang(sourceLangCode: string): string {
-    // 不同语言族的代表语言优先级
+    console.log(`[sidepanel] getFallbackTargetLang: 为源语言 ${sourceLangCode} 选择备选目标语言`);
+    
+    // 不同语言族的代表语言优先级列表
+    // 按照使用频率和翻译质量排序
     const fallbackPriorities = [
-        'zh-Hans',  // 中文简体
-        'fr',       // 法语
-        'ja',       // 日语
-        'de',       // 德语
-        'es',       // 西班牙语
-        'ru',       // 俄语
-        'ar',       // 阿拉伯语
-        'en-GB'     // 英国英语 (如果源语言是美式英语)
+        'zh-Hans',  // 中文简体 - 全球第二大语言
+        'fr',       // 法语 - 国际通用语言
+        'ja',       // 日语 - 东亚重要语言
+        'de',       // 德语 - 欧洲重要语言
+        'es',       // 西班牙语 - 拉美通用语言
+        'ru',       // 俄语 - 东欧通用语言
+        'ar',       // 阿拉伯语 - 中东通用语言
+        'ko',       // 韩语 - 东亚语言
+        'pt',       // 葡萄牙语 - 巴西等地使用
+        'it',       // 意大利语 - 欧洲语言
+        'en'        // 英语 - 作为最后备选（如果源语言不是英语族）
     ];
     
-    // 返回第一个不与源语言相同的语言
-    for (const langCode of fallbackPriorities) {
-        if (langCode !== sourceLangCode) {
-            return langCode;
+    console.log(`[sidepanel] getFallbackTargetLang: 开始遍历备选语言列表，共 ${fallbackPriorities.length} 个选项`);
+    
+    // 遍历备选语言列表，找到第一个与源语言不属于同一语言族的语言
+    for (let i = 0; i < fallbackPriorities.length; i++) {
+        const candidateLang = fallbackPriorities[i];
+        
+        // 使用语言族互斥逻辑进行判断
+        if (!isSameLanguageFamily(sourceLangCode, candidateLang)) {
+            console.log(`[sidepanel] getFallbackTargetLang: 找到合适的备选语言 ${candidateLang} (与源语言 ${sourceLangCode} 不冲突)`);
+            return candidateLang;
+        } else {
+            console.log(`[sidepanel] getFallbackTargetLang: 跳过 ${candidateLang} (与源语言 ${sourceLangCode} 属于同一语言族)`);
         }
     }
     
-    // 极端情况下的最终备选
+    // 极端情况下的最终备选（理论上不应该到达这里）
+    // 如果所有备选都与源语言冲突，返回法语作为安全备选
+    console.warn(`[sidepanel] getFallbackTargetLang: 警告 - 所有备选语言都与源语言 ${sourceLangCode} 冲突，使用法语作为最终备选`);
     return 'fr';
 }
 
@@ -747,7 +806,7 @@ function getFallbackTargetLang(sourceLangCode: string): string {
  * @param apiType 当前选择的API类型
  */
 function updateApiPanels(apiType: string) {
-    console.log(`[sidepanel/sidepanel.ts] 更新API面板: ${apiType}`);
+    console.log(`[sidepanel] 更新API面板: ${apiType}`);
     
     // 重置所有面板为隐藏
     if (apiKeyPanel) apiKeyPanel.style.display = 'none';
@@ -766,7 +825,7 @@ function updateApiPanels(apiType: string) {
     
     // 非付费API，不显示任何面板
     if (!apiInfo) {
-        console.log(`[updateApiPanels] 未找到API信息: ${apiType}`);
+        console.log(`[sidepanel] 未找到API信息: ${apiType}`);
         return;
     }
     
@@ -838,16 +897,16 @@ function updateAuthPanels() {
  * 设置加载应该通过 background 的 initializeSidePanel 流程完成。
  */
 async function loadSettings() {
-    console.log("[sidepanel/sidepanel.ts] loadSettings: 已弃用的直接加载方法被调用");
+    console.log("[sidepanel] loadSettings: 已弃用的直接加载方法被调用");
     
     if (currentTabId === null) {
-        console.warn("[sidepanel/sidepanel.ts] loadSettings: 没有当前标签页ID，无法请求设置");
+        console.warn("[sidepanel] loadSettings: 没有当前标签页ID，无法请求设置");
         return;
     }
     
     try {
         // 向 background 请求初始化数据
-        console.log("[sidepanel/sidepanel.ts] loadSettings: 请求 background 提供设置");
+        console.log("[sidepanel] loadSettings: 请求 background 提供设置");
         chrome.runtime.sendMessage({
             action: 'sidePanelOpened',
             tabId: currentTabId,
@@ -856,7 +915,7 @@ async function loadSettings() {
         
         // background 将通过 initializeSidePanelUI 消息返回数据，在消息监听器中处理
     } catch (error) {
-        console.error("[sidepanel/sidepanel.ts] loadSettings: 请求设置失败", error);
+        console.error("[sidepanel] loadSettings: 请求设置失败", error);
     }
 }
 
@@ -894,19 +953,11 @@ function updateApiUI(settings: {
 
 // --- 更新 UI (除了目标语言显示) --- 
 function updateUI(settings: Partial<typeof defaultSettings>) { 
-    // 更新源语言
+    // 更新源语言 - 直接信任从Background传来的数据，无需验证
     if (settings.sourceLang !== undefined) {
-        // 查找是否在可用的轨道中
-        const trackExists = availableTracksForSelect.some(track => track.languageCode === settings.sourceLang);
-        if (trackExists) {
-            updateSourceLanguageDisplay(settings.sourceLang);
-               // 源语言改变后，需要重新填充目标语言选项以更新禁用状态和选中状态
-               populateTargetLanguages(); 
-        } else {
-             console.warn(`[updateUI] Saved sourceLang (${settings.sourceLang}) not in options, skipping update.`);
-             // 如果加载的源语言无效，也要确保目标语言状态更新
-             populateTargetLanguages(); 
-        }
+        updateSourceLanguageDisplay(settings.sourceLang);
+        // 源语言改变后，需要重新填充目标语言选项以更新禁用状态和选中状态
+        populateTargetLanguages(); 
     } else {
         // 如果没有加载的源语言设置，也要根据当前选中的源语言更新目标语言状态
         populateTargetLanguages(); 
@@ -932,25 +983,26 @@ function updateUI(settings: Partial<typeof defaultSettings>) {
 async function saveSettings() { 
     // 双重保护 - 检查是否正在初始化
     if (isInitializingSidePanelUI) {
-        console.log('[sidepanel/sidepanel.ts] saveSettings: 由于UI正在初始化，跳过保存和通知。');
+        console.log('[sidepanel] saveSettings: 由于UI正在初始化，跳过保存和通知。');
         return;
     }
 
     if (isLoading) {
-        console.log("[sidepanel/sidepanel.ts] saveSettings: 正在加载初始设置，跳过保存。");
+        console.log("[sidepanel] saveSettings: 正在加载初始设置，跳过保存。");
         return;
     }
 
     // 额外保护 - 如果事件监听器还没有完全添加，也跳过
     if (!listenersAttached) {
-        console.log("[sidepanel/sidepanel.ts] saveSettings: 事件监听器尚未完全添加，跳过保存。");
+        console.log("[sidepanel] saveSettings: 事件监听器尚未完全添加，跳过保存。");
         return;
     }
 
-    console.log("[sidepanel/sidepanel.ts] saveSettings: 开始保存设置...");
-    console.log("[sidepanel/sidepanel.ts] saveSettings: 开始收集设置。");
+    console.log("[sidepanel] saveSettings: 开始保存设置...");
+    console.log("[sidepanel] saveSettings: 开始收集设置。");
 
     const uiSourceLang = sourceLangSelectedValue?.getAttribute('data-value') || initialSettingsFromBackground?.sourceLang || defaultSettings.sourceLang;
+    const uiSourceTrackKind = sourceLangSelectedValue?.getAttribute('data-kind') || 'standard'; // 新增：获取源语言轨道类型
     const uiTargetLang = targetLangSelectedValue?.getAttribute('data-value') || currentSelectedTargetLang || initialSettingsFromBackground?.targetLang || defaultSettings.targetLang;
     const uiSubtitleMode = subtitleTypeSwitch ? (subtitleTypeSwitch.checked ? 'bilingual' : 'targetOnly') : (initialSettingsFromBackground?.subtitleMode || defaultSettings.subtitleMode);
     const uiTranslationApi = translationApiSelect?.value || initialSettingsFromBackground?.translationApi || defaultSettings.translationApi;
@@ -981,12 +1033,13 @@ async function saveSettings() {
         openaiConfig: uiOpenaiConfig
     };
 
-    // 检查是否有实际更改
+    // 检查是否有实际更改（包括sourceTrackKind检查）
     let hasChanges = false;
     if (!initialSettingsFromBackground) {
         hasChanges = true; // 如果没有初始设置记录，则认为有更改
-        console.log("[sidepanel/sidepanel.ts] saveSettings: 没有 initialSettingsFromBackground，强制保存。");
+        console.log("[sidepanel] saveSettings: 没有 initialSettingsFromBackground，强制保存。");
     } else {
+        // 首先检查常规设置的变化
         for (const key in settingsToSave) {
             const k = key as keyof typeof settingsToSave;
             if (typeof settingsToSave[k] === 'object' && settingsToSave[k] !== null) {
@@ -994,24 +1047,33 @@ async function saveSettings() {
                 const initialObj = initialSettingsFromBackground[k] as any;
                 const currentObj = settingsToSave[k] as any;
                 if (JSON.stringify(initialObj) !== JSON.stringify(currentObj)) {
-                    console.log(`[sidepanel/sidepanel.ts] saveSettings: 检测到对象更改 - ${k}: 从`, initialObj, '到', currentObj);
+                    console.log(`[sidepanel] saveSettings: 检测到对象更改 - ${k}: 从`, initialObj, '到', currentObj);
                     hasChanges = true;
                     break;
                 }
             } else if (settingsToSave[k] !== initialSettingsFromBackground[k]) {
-                console.log(`[sidepanel/sidepanel.ts] saveSettings: 检测到更改 - ${k}: 从 '${initialSettingsFromBackground[k]}' 到 '${settingsToSave[k]}'`);
+                console.log(`[sidepanel] saveSettings: 检测到更改 - ${k}: 从 '${initialSettingsFromBackground[k]}' 到 '${settingsToSave[k]}'`);
                 hasChanges = true;
                 break;
+            }
+        }
+        
+        // 新增：检查源语言轨道类型的变化
+        if (!hasChanges) {
+            // 如果常规设置没有变化，检查轨道类型是否有变化
+            if (uiSourceTrackKind !== previousSavedSourceTrackKind) {
+                console.log(`[sidepanel] saveSettings: 检测到源语言轨道类型变化: 从 '${previousSavedSourceTrackKind}' 到 '${uiSourceTrackKind}'`);
+                hasChanges = true;
             }
         }
     }
 
     if (!hasChanges) {
-        console.log("[sidepanel/sidepanel.ts] saveSettings: 未检测到实际设置更改，跳过发送消息。");
+        console.log("[sidepanel] saveSettings: 未检测到实际设置更改，跳过发送消息。");
         return;
     }
 
-    console.log("[sidepanel/sidepanel.ts] saveSettings: 检测到更改，准备发送消息。新的设置:", settingsToSave);
+    console.log("[sidepanel] saveSettings: 检测到更改，准备发送消息。新的设置:", settingsToSave);
 
     try {
         const updateMessage = {
@@ -1026,7 +1088,7 @@ async function saveSettings() {
             updateMessage.sourceTrackKind = sourceTrackKind;
         }
 
-        console.log("[sidepanel/sidepanel.ts] 向background发送设置更新请求:", updateMessage);
+        console.log("[sidepanel] 向background发送设置更新请求:", updateMessage);
         
         const response = await new Promise<{success: boolean, message?: string}>((resolve, reject) => {
             chrome.runtime.sendMessage(updateMessage, (result) => {
@@ -1039,15 +1101,17 @@ async function saveSettings() {
         });
 
         if (response.success) {
-            console.log("[sidepanel/sidepanel.ts] 设置已成功保存:", response.message);
+            console.log("[sidepanel] 设置已成功保存:", response.message);
             // 更新 initialSettingsFromBackground 为最新保存的设置
             initialSettingsFromBackground = { ...settingsToSave }; 
+            // 更新之前的轨道类型记录 - 新增
+            previousSavedSourceTrackKind = uiSourceTrackKind;
         } else {
-            console.error("[sidepanel/sidepanel.ts] 设置保存失败:", response.message);
+            console.error("[sidepanel] 设置保存失败:", response.message);
         }
 
     } catch (error) {
-        console.error('[sidepanel/sidepanel.ts] 保存设置过程中出错:', error);
+        console.error('[sidepanel] 保存设置过程中出错:', error);
     }
 }
 
@@ -1062,7 +1126,7 @@ async function requestAndFillSourceLanguages(tabId: number): Promise<void> {
     return;
   }
   
-  console.log(`[SidePanel] 正在等待字幕轨道数据，标签页ID: ${tabId}`);
+  console.log(`[sidepanel] 正在等待字幕轨道数据，标签页ID: ${tabId}`);
   // 显示加载状态
   if (sourceLangSelectedValue) {
     sourceLangSelectedValue.textContent = '加载中...';
@@ -1074,7 +1138,7 @@ async function requestAndFillSourceLanguages(tabId: number): Promise<void> {
   
   try {
     // 简化为直接通知 background 需要初始化数据
-    console.log('[SidePanel] 请求 background 初始化数据');
+    console.log('[sidepanel] 请求 background 初始化数据');
     
     // 获取当前视频ID (用于通知 background)
     let videoId = null;
@@ -1244,8 +1308,10 @@ function addEventListeners() {
             if (!option || option.classList.contains('disabled')) return;
             
             const value = option.getAttribute('data-value');
+            const kind = option.getAttribute('data-kind');
             if (value) {
-                updateSourceLanguageDisplay(value);
+                // 更新源语言显示，同时传递轨道类型信息
+                updateSourceLanguageDisplay(value, kind || 'standard');
                 
                 // 关闭下拉菜单
                 sourceLangContainer?.classList.remove('open');
@@ -1324,7 +1390,7 @@ function addEventListeners() {
     if (translationApiSelect) {
         addManagedEventListener(translationApiSelect, 'change', () => {
             const apiType = translationApiSelect.value;
-            console.log(`[事件] API类型更改为: ${apiType}`);
+            console.log(`[sidepanel] API类型更改为: ${apiType}`);
             updateApiPanels(apiType);
             // 通过调用saveSettings保存变化
             saveSettings();
@@ -1383,7 +1449,7 @@ function addEventListeners() {
     
     // 标记监听器已添加
     listenersAttached = true;
-    console.log('[sidepanel/sidepanel.ts] 事件监听器添加完成，共管理', formEventListeners.length, '个表单事件监听器');
+    console.log('[sidepanel] 事件监听器添加完成，共管理', formEventListeners.length, '个表单事件监听器');
 }
 
 /**
@@ -1411,7 +1477,7 @@ function togglePasswordVisibility() {
  */
 function ensureApiKeyPanelVisible() {
     if (apiKeyPanel) {
-        console.log('[ensureApiKeyPanelVisible] 强制显示API密钥输入框');
+        console.log('[sidepanel] 强制显示API密钥输入框');
         apiKeyPanel.style.display = 'flex';
         apiKeyPanel.classList.add('visible'); // 添加visible类以确保面板真正可见
     }
@@ -1419,32 +1485,32 @@ function ensureApiKeyPanelVisible() {
 
 // --- 初始化 ---
 document.addEventListener('DOMContentLoaded', () => {
-    console.log("[sidepanel/sidepanel.ts] ===== 侧边栏DOMContentLoaded开始 ======");
+    console.log("[sidepanel] ===== 侧边栏DOMContentLoaded开始 ======");
     
-    // 1. UI 语言获取和匹配逻辑已移除，将由 background 处理
-    // uiLangCode = chrome.i18n.getUILanguage();
-    // console.log(`[sidepanel/sidepanel.ts] 获取UI语言: ${uiLangCode}`); // 移至background
+    // 1. 获取UI语言仅用于本地化显示（不参与逻辑处理）
+    uiLangCode = chrome.i18n.getUILanguage();
+    console.log(`[sidepanel] 获取UI语言用于本地化显示: ${uiLangCode}`);
     
     // --- 打印所有受支持的语言 (可以保留，因为它不依赖 uiLangCode 的直接匹配结果) ---
-    console.log(`[sidepanel/sidepanel.ts] 支持的目标语言列表 (来自languages.ts):`, targetLanguages.map(l => `${l.code}:${l.name}`).join(', '));
+    console.log(`[sidepanel] 支持的目标语言列表 (来自languages.ts):`, targetLanguages.map(l => `${l.code}:${l.name}`).join(', '));
     
     // --- 诊断信息：测试UI语言匹配 (移除) ---
     // const uiLangMatch = findMatchingTargetLanguage(uiLangCode); // 移除
-    // console.log(`[sidepanel/sidepanel.ts] UI语言(${uiLangCode})匹配结果:`, uiLangMatch ? `找到匹配 - ${uiLangMatch.code}: ${uiLangMatch.name}` : "没有找到匹配"); // 移除
+    // console.log(`[sidepanel] UI语言(${uiLangCode})匹配结果:`, uiLangMatch ? `找到匹配 - ${uiLangMatch.code}: ${uiLangMatch.name}` : "没有找到匹配"); // 移除
     
     // 2. 添加事件监听器 (包括自定义下拉框的)
-    console.log("[sidepanel/sidepanel.ts] 添加事件监听器");
+    console.log("[sidepanel] 添加事件监听器");
     addEventListeners();
     
     // 3. 初步填充目标语言列表 (修改)
     // populateTargetLanguages() 将依赖从 background 获取的 uiLangCode 或预处理的列表。
     // 现在可以先进行一次不依赖 uiLangCode 的填充，或者等待 background 的消息。
     // 为了避免UI空白，可以先用无特定排序的方式填充。
-    console.log("[sidepanel/sidepanel.ts] 初步填充目标语言列表 (无特定UI语言排序，将在收到background数据后可能刷新)");
+    console.log("[sidepanel] 初步填充目标语言列表 (无特定UI语言排序，将在收到background数据后可能刷新)");
     populateTargetLanguages(); // 调用时不传入searchTerm，也不依赖全局uiLangCode
     
     // 4. 获取当前标签页 ID 并通知 background
-    console.log("[sidepanel/sidepanel.ts] 开始查询当前标签页");
+    console.log("[sidepanel] 开始查询当前标签页");
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
         if (chrome.runtime.lastError) {
             console.error("[Error] 查询标签页失败:", chrome.runtime.lastError);
@@ -1455,7 +1521,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     sourceLangSelectedValue.textContent = 'Error';
                 }
             }
-            console.log("[sidepanel/sidepanel.ts] 查询标签页失败，不发送 sidePanelOpened 通知。");
+            console.log("[sidepanel] 查询标签页失败，不发送 sidePanelOpened 通知。");
             return;
         }
         
@@ -1468,9 +1534,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentVideoId = videoId; // 更新全局变量
             }
             
-            console.log(`[sidepanel/sidepanel.ts] 关联标签页ID ${currentTabId}，URL: ${tabUrl}, Video ID: ${videoId}。通知 Background。`);
+            console.log(`[sidepanel] 关联标签页ID ${currentTabId}，URL: ${tabUrl}, Video ID: ${videoId}。通知 Background。`);
             if (typeof currentTabId === 'number') {
-                console.log(`[sidepanel/sidepanel.ts] 侧边栏打开，通知 Background。Tab ID: ${currentTabId}, Video ID: ${videoId}`);
+                console.log(`[sidepanel] 侧边栏打开，通知 Background。Tab ID: ${currentTabId}, Video ID: ${videoId}`);
                 chrome.runtime.sendMessage({
                     action: 'sidePanelOpened',
                     tabId: currentTabId,
@@ -1491,117 +1557,66 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     });
-    console.log("[sidepanel/sidepanel.ts] ===== 侧边栏DOMContentLoaded完成 ======");
+    console.log("[sidepanel] ===== 侧边栏DOMContentLoaded完成 ======");
 });
 
 // --- 监听来自背景脚本的导航通知 --- 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'initializeSidePanelUI') {
-        isInitializingSidePanelUI = true; // 在处理开始时设置标志
-        console.log('[sidepanel/sidepanel.ts] initializeSidePanelUI 消息收到，数据:', message.data);
-        console.log('[sidepanel/sidepanel.ts] 设置 isInitializingSidePanelUI = true，开始初始化流程');
+        console.log('[sidepanel] initializeSidePanelUI 消息收到，数据:', message.data);
         
-        // 更新UI语言，确保后续列表显示本地化名称
-        uiLangCode = chrome.i18n.getUILanguage();
-        console.log(`[sidepanel/sidepanel.ts] initializeSidePanelUI - 浏览器UI语言: ${uiLangCode}`);
-        console.log('[SidePanel] 收到 Background 的初始化数据:', message.data);
+        // ✅ 关键修复：预先设置初始化标志，避免updateAllUI中的警告
+        isInitializingSidePanelUI = true;
+        
+        // 🔥 架构优化：移除冗余的UI语言获取，信任Background的处理结果
+        // uiLangCode = chrome.i18n.getUILanguage(); // ❌ 已移除：Background已处理
+        // console.log(`[sidepanel] initializeSidePanelUI - 浏览器UI语言: ${uiLangCode}`); // ❌ 已移除
+        
         const { availableTracks, settings, videoId: bgVideoId, tabId: bgTabId } = message.data;
 
-        // 确保这个消息是针对当前侧边栏实例的tabId (如果background发送了tabId)
+        // 确保这个消息是针对当前侧边栏实例的tabId
         if (bgTabId && currentTabId !== bgTabId) {
-            console.warn(`[SidePanel] 收到 tab ${bgTabId} 的初始化数据，但当前是 tab ${currentTabId}，忽略。`);
-            // 重置标志并返回
-            isInitializingSidePanelUI = false;
+            console.warn(`[sidepanel] 收到 tab ${bgTabId} 的初始化数据，但当前是 tab ${currentTabId}，忽略。`);
             return false;
         }
 
-        // 更新当前视频ID
-        if (bgVideoId) {
-            currentVideoId = bgVideoId;
-            console.log(`[SidePanel] 更新当前视频ID: ${currentVideoId}`);
-        }
-
-        // 从 settings 中获取 background 决定的源语言
-        const determinedSourceLangFromBg = settings?.determinedSourceLang;
-
-        if (availableTracks) {
-            console.log('[SidePanel] 使用 Background 提供的轨道数据更新UI。');
-            // 将 determinedSourceLangFromBg 传递给 processTracksAndUpdateUI
-            processTracksAndUpdateUI(availableTracks, determinedSourceLangFromBg);
-        } else {
-            handleEmptyOrErrorResponse('正在等待轨道数据...');
-        }
-
-        if (settings) {
-            console.log('[SidePanel] 使用 Background 提供的设置更新UI。');
+        if (availableTracks && settings) {
+            // 使用统一的UI更新函数，一次性更新所有UI
             const globalSettings = settings.globalSettings || {};
-
-            // 使用已经从 background 获取并可能被 processTracksAndUpdateUI 使用的 determinedSourceLangFromBg
-            const finalSourceLang = determinedSourceLangFromBg; 
+            const finalSourceLang = settings.determinedSourceLang;
             const finalTargetLang = settings.determinedTargetLang;
-            loadedTargetLang = finalTargetLang;
-
-            displaySettings({
-                sourceLang: finalSourceLang, 
-                targetLang: finalTargetLang, 
-                subtitleMode: globalSettings[StorageKeys.SETTINGS.SUBTITLE_MODE] || defaultSettings.subtitleMode
-            });
-            displayApiSettings({ 
-                translationApi: globalSettings[StorageKeys.SETTINGS.TRANSLATION_API] || defaultSettings.translationApi,
-                apiKey: globalSettings[StorageKeys.SETTINGS.API_KEY] || defaultSettings.apiKey,
-                serviceType: globalSettings[StorageKeys.SETTINGS.SERVICE_TYPE] || defaultSettings.serviceType,
-                membershipCredentials: globalSettings[StorageKeys.SETTINGS.MEMBERSHIP_CREDENTIALS] || defaultSettings.membershipCredentials,
-                customApiConfig: globalSettings[StorageKeys.SETTINGS.CUSTOM_API_CONFIG] || defaultSettings.customApiConfig,
-                openaiConfig: globalSettings[StorageKeys.SETTINGS.OPENAI_CONFIG] || defaultSettings.openaiConfig
+            
+            updateAllUI({
+                availableTracks: availableTracks,
+                determinedSourceLang: finalSourceLang,
+                videoId: bgVideoId,
+                settings: {
+                    sourceLang: finalSourceLang,
+                    targetLang: finalTargetLang,
+                    subtitleMode: globalSettings[StorageKeys.SETTINGS.SUBTITLE_MODE] || defaultSettings.subtitleMode,
+                    translationApi: globalSettings[StorageKeys.SETTINGS.TRANSLATION_API] || defaultSettings.translationApi,
+                    apiKey: globalSettings[StorageKeys.SETTINGS.API_KEY] || defaultSettings.apiKey,
+                    serviceType: globalSettings[StorageKeys.SETTINGS.SERVICE_TYPE] || defaultSettings.serviceType,
+                    membershipCredentials: globalSettings[StorageKeys.SETTINGS.MEMBERSHIP_CREDENTIALS] || defaultSettings.membershipCredentials,
+                    customApiConfig: globalSettings[StorageKeys.SETTINGS.CUSTOM_API_CONFIG] || defaultSettings.customApiConfig,
+                    openaiConfig: globalSettings[StorageKeys.SETTINGS.OPENAI_CONFIG] || defaultSettings.openaiConfig
+                }
             });
             
-            // currentSelectedTargetLang = finalTargetLang; // 已在 displaySettings 中处理
-            // updateTargetLanguageDisplay(finalTargetLang); // 已在 displaySettings 中处理
-            // populateTargetLanguages(); // 已在 displaySettings 中处理
-
-            // 所有UI更新完成后，记录初始设置并标记加载完成
-            const effectiveSettings = {
-                sourceLang: finalSourceLang,
-                targetLang: finalTargetLang,
-                subtitleMode: globalSettings[StorageKeys.SETTINGS.SUBTITLE_MODE] || defaultSettings.subtitleMode,
-                translationApi: globalSettings[StorageKeys.SETTINGS.TRANSLATION_API] || defaultSettings.translationApi,
-                apiKey: globalSettings[StorageKeys.SETTINGS.API_KEY] || defaultSettings.apiKey,
-                serviceType: globalSettings[StorageKeys.SETTINGS.SERVICE_TYPE] || defaultSettings.serviceType,
-                customApiConfig: globalSettings[StorageKeys.SETTINGS.CUSTOM_API_CONFIG] || defaultSettings.customApiConfig,
-                openaiConfig: globalSettings[StorageKeys.SETTINGS.OPENAI_CONFIG] || defaultSettings.openaiConfig,
-                membershipCredentials: globalSettings[StorageKeys.SETTINGS.MEMBERSHIP_CREDENTIALS] || defaultSettings.membershipCredentials,
-            };
-            initialSettingsFromBackground = { ...effectiveSettings };
-            isLoading = false;
-            console.log("[sidepanel/sidepanel.ts] initializeSidePanelUI: 初始化完成, isLoading 设置为 false");
-
+            // 保存加载的目标语言
+            loadedTargetLang = finalTargetLang;
+            
         } else {
-            // 清理旧的UI状态，准备接收新数据
-            uiLangCode = chrome.i18n.getUILanguage(); 
-            if (sourceLangTrigger) {
-                if (sourceLangSelectedValue) {
-                    sourceLangSelectedValue.textContent = '加载中...';
-                }
-                sourceLangTrigger.classList.add('disabled');
-                sourceLangTrigger.style.pointerEvents = 'none';
-            }
-            if (targetLangSelectedValue) { 
-                targetLangSelectedValue.textContent = '选择语言...';
-                targetLangSelectedValue.removeAttribute('data-value');
-            }
-            currentSelectedTargetLang = null; 
-            currentVideoId = null; 
+            // 处理无数据情况
+            handleEmptyOrErrorResponse(availableTracks ? '正在等待设置数据...' : '正在等待轨道数据...');
         }
         
-        // 同步重置初始化标志，不使用setTimeout
-        isInitializingSidePanelUI = false;
-        console.log('[sidepanel/sidepanel.ts] initializeSidePanelUI: 初始化流程完成，同步重置 isInitializingSidePanelUI = false');
-        return true; 
+        return false; // 表明消息已同步处理
     }
     else if (message.action === 'youtubeNavigationOccurred' && message.navigatedTabId) {
-        console.log(`[SidePanel] Received navigation notification for Tab ${message.navigatedTabId}. Current: ${currentTabId}.`);
+        console.log(`[sidepanel] Received navigation notification for Tab ${message.navigatedTabId}. Current: ${currentTabId}.`);
         if (currentTabId !== null && currentTabId !== undefined && message.navigatedTabId === currentTabId) {
-            console.log(`[SidePanel] Navigation matches. Notifying background to re-initialize... Tab ID: ${currentTabId}`);
+            console.log(`[sidepanel] Navigation matches. Notifying background to re-initialize... Tab ID: ${currentTabId}`);
             
             // 清理旧的UI状态，准备接收新数据
             uiLangCode = chrome.i18n.getUILanguage(); // 重新获取UI语言以防万一
@@ -1626,7 +1641,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             if (currentTabUrl) {
                 navigatedVideoId = extractVideoIdFromUrl(currentTabUrl);
             }
-            console.log(`[SidePanel] YouTube navigation detected. Current URL: ${currentTabUrl}, Video ID: ${navigatedVideoId}`);
+            console.log(`[sidepanel] YouTube navigation detected. Current URL: ${currentTabUrl}, Video ID: ${navigatedVideoId}`);
 
             chrome.runtime.sendMessage({
                 action: 'sidePanelOpened', // 重新发送打开通知，让 background 重新加载数据
@@ -1654,7 +1669,7 @@ function displayApiSettings(settings: {
     customApiConfig: typeof defaultSettings.customApiConfig;
     openaiConfig: typeof defaultSettings.openaiConfig;
 }) {
-    console.log('[sidepanel/sidepanel.ts] displayApiSettings: 开始设置API相关UI，使用静默模式');
+    console.log('[sidepanel] displayApiSettings: 开始设置API相关UI，使用静默模式');
     
     // 设置翻译API下拉框 - 使用静默模式
     if (translationApiSelect) {
@@ -1706,7 +1721,7 @@ function displayApiSettings(settings: {
         }
     }
     
-    console.log('[sidepanel/sidepanel.ts] displayApiSettings: API设置UI更新完成');
+    console.log('[sidepanel] displayApiSettings: API设置UI更新完成');
 }
 
 /**
@@ -1718,7 +1733,7 @@ function displaySettings(settings: {
     targetLang: string;
     subtitleMode: string;
 }) {
-    console.log('[sidepanel/sidepanel.ts] displaySettings: 开始设置基本UI，使用静默模式');
+    console.log('[sidepanel] displaySettings: 开始设置基本UI，使用静默模式');
     
     // 设置源语言选择器
     updateSourceLanguageDisplay(settings.sourceLang);
@@ -1726,14 +1741,14 @@ function displaySettings(settings: {
     // 设置目标语言显示
     currentSelectedTargetLang = settings.targetLang;
     updateTargetLanguageDisplay(currentSelectedTargetLang);
-    populateTargetLanguages(''); // 更新目标语言列表
+    // 注意：不在这里调用 populateTargetLanguages，将在初始化完成后调用
     
     // 设置字幕模式 - 使用静默模式
     if (subtitleTypeSwitch) {
         setCheckedSilently(subtitleTypeSwitch, settings.subtitleMode === 'bilingual');
     }
     
-    console.log('[sidepanel/sidepanel.ts] displaySettings: 基本设置UI更新完成');
+    console.log('[sidepanel] displaySettings: 基本设置UI更新完成');
 }
 
 /**
@@ -1794,7 +1809,7 @@ function formatDateTime(date: Date): string {
 }
 
 /**
- * 从后台服务工作器获取缓存的轨道数据
+ * 从后台服务工作器获取local storage的轨道数据
  * @deprecated 已弃用 - 保留以便向后兼容，应避免直接调用。轨道数据应通过 background 的 initializeSidePanelUI 消息获取。
  * @returns Promise<轨道数据数组 | null>
  */
@@ -1849,10 +1864,11 @@ function processTracksAndUpdateUI(availableTracks: { languageCode: string, langu
         return;
     }
     
-    console.log('[SidePanel] 处理获取到的轨道信息，共', availableTracks.length, '条');
+    console.log('[sidepanel] 处理获取到的轨道信息，共', availableTracks.length, '条');
     
-    // 缓存轨道信息供未来使用
-    availableTracksForSelect = [...availableTracks];
+    // Memory cache轨道信息供未来使用
+    uiTrackData = [...availableTracks];
+    console.log(`[sidepanel] 轨道信息已保存到sidepanel memory cache: ${uiTrackData.length}条记录`);
     
     // 填充源语言选项 (这必须在设置选中项之前完成)
     populateSourceLanguages();
@@ -1860,14 +1876,14 @@ function processTracksAndUpdateUI(availableTracks: { languageCode: string, langu
     // 使用 background 传递过来的 determinedSourceLangFromBg (如果有效)
     // 否则，作为备选，使用列表中的第一个轨道 (如果列表不为空)
     let langToSet = determinedSourceLangFromBg;
-    if (!langToSet && availableTracksForSelect.length > 0) {
-        langToSet = availableTracksForSelect[0].languageCode;
-        console.log(`[SidePanel] Background 未提供有效源语言，自动选择列表第一个: ${langToSet}`);
+    if (!langToSet && uiTrackData.length > 0) {
+        langToSet = uiTrackData[0].languageCode;
+        console.log(`[sidepanel] Background 未提供有效源语言，自动选择列表第一个: ${langToSet}`);
     }
     
     if (langToSet) {
         updateSourceLanguageDisplay(langToSet);
-        console.log(`[SidePanel] 设置源语言 (来自Background或备选): ${langToSet}`);
+        console.log(`[sidepanel] 设置源语言 (来自Background或备选): ${langToSet}`);
     } else {
         // 如果 langToSet 还是 null/undefined (理论上不应发生，因为有备选逻辑)，则显示提示
         updateSourceLanguageDisplay(null); 
@@ -1888,7 +1904,7 @@ function processTracksAndUpdateUI(availableTracks: { languageCode: string, langu
     const currentSourceLang = sourceLangSelectedValue?.getAttribute('data-value');
     if (currentSourceLang) {
         initialSourceLangToSave = currentSourceLang;
-        console.log(`[SidePanel] 初始源语言: ${initialSourceLangToSave}.`);
+        console.log(`[sidepanel] 初始源语言: ${initialSourceLangToSave}.`);
     }
 }
 
@@ -1914,61 +1930,127 @@ function handleEmptyOrErrorResponse(message: string) {
         }
     }
     
-    console.log(`[SidePanel] ${message}.`);
+    console.log(`[sidepanel] ${message}.`);
 }
 
 /**
  * 更新源语言显示
+ * 功能：更新源语言选择器的显示文本和数据属性
+ * 新增功能：为ASR轨道添加"（自动生成）"标识
+ * 
  * @param langCode 语言代码
+ * @param trackKind 轨道类型（可选），如果提供则直接使用，否则查找轨道数据
  */
-function updateSourceLanguageDisplay(langCode: string | null) {
-    if (!sourceLangSelectedValue) return;
+function updateSourceLanguageDisplay(langCode: string | null, trackKind?: string) {
+    console.log(`[sidepanel] updateSourceLanguageDisplay: 更新源语言显示为 ${langCode}, kind: ${trackKind}`);
+    
+    // 安全检查：确保DOM元素存在
+    if (!sourceLangSelectedValue) {
+        console.warn('[sidepanel] updateSourceLanguageDisplay: sourceLangSelectedValue元素不存在');
+        return;
+    }
+    
     if (langCode) {
-        // 查找匹配的轨道信息
-        const trackInfo = availableTracksForSelect.find(track => track.languageCode === langCode);
+        // 步骤1: 查找或使用提供的轨道信息
+        let trackInfo: { languageCode: string, languageName: string, kind: string } | undefined;
+        
+        if (trackKind) {
+            // 如果提供了kind参数，优先查找匹配的轨道
+            trackInfo = uiTrackData.find(track => 
+                track.languageCode === langCode && 
+                (track.kind || 'standard') === trackKind
+            );
+        }
+        
+        // 如果没有找到匹配的轨道，使用第一个匹配语言代码的轨道作为备选
+        if (!trackInfo) {
+            trackInfo = uiTrackData.find(track => track.languageCode === langCode);
+        }
+        
+        console.log(`[sidepanel] updateSourceLanguageDisplay: 查找轨道 ${langCode}，结果:`, trackInfo);
+        
         if (trackInfo) {
-            sourceLangSelectedValue.textContent = trackInfo.languageName;
+            // 步骤2: 使用新的工具函数生成显示名称（包含ASR标识）
+            const displayName = generateLanguageDisplayName(trackInfo);
+            
+            // 步骤3: 更新UI显示
+            sourceLangSelectedValue.textContent = displayName;
             sourceLangSelectedValue.setAttribute('data-value', trackInfo.languageCode);
+            sourceLangSelectedValue.setAttribute('data-kind', trackInfo.kind || 'standard');
+            
+            // 步骤4: 更新全局轨道类型变量 - 新增
+            currentSelectedSourceTrackKind = trackInfo.kind || 'standard';
+            
+            console.log(`[sidepanel] updateSourceLanguageDisplay: 源语言显示已更新为 "${displayName}" (${trackInfo.kind})`);
+        } else {
+            // 步骤4: 如果找不到轨道信息，使用基础显示（向后兼容）
+            console.warn(`[sidepanel] updateSourceLanguageDisplay: 未找到轨道信息 ${langCode}，使用基础显示`);
+            sourceLangSelectedValue.textContent = langCode;
+            sourceLangSelectedValue.setAttribute('data-value', langCode);
+            sourceLangSelectedValue.setAttribute('data-kind', trackKind || 'standard');
+            
+            // 更新全局轨道类型变量 - 新增
+            currentSelectedSourceTrackKind = trackKind || 'standard';
         }
     } else {
+        // 步骤5: 重置为默认状态
         sourceLangSelectedValue.textContent = '选择语言...';
         sourceLangSelectedValue.removeAttribute('data-value');
+        sourceLangSelectedValue.removeAttribute('data-kind');
+        
+        // 重置全局轨道类型变量 - 新增
+        currentSelectedSourceTrackKind = null;
+        
+        console.log('[sidepanel] updateSourceLanguageDisplay: 源语言显示已重置');
     }
 }
 
 /**
  * 填充源语言选项列表
+ * 功能：根据可用轨道数据生成源语言下拉菜单选项
+ * 特性：
+ * 1. 为ASR轨道添加"（自动生成）"标识
+ * 2. 允许用户选择任何可用轨道，包括同语言族的不同变种
+ * 注意：源语言选择不应用互斥逻辑，用户可以在不同轨道间自由切换
  */
 function populateSourceLanguages() {
-    if (!sourceLangOptions) return;
+    // 安全检查：确保DOM元素存在
+    if (!sourceLangOptions) {
+        console.warn('[sidepanel] populateSourceLanguages: sourceLangOptions元素不存在');
+        return;
+    }
     
-    // 清空当前选项
+    // 清空现有选项
     sourceLangOptions.innerHTML = '';
     
-    // 填充选项
-    availableTracksForSelect.forEach((trackInfo) => {
+    // 遍历所有可用轨道，为每个轨道创建选项
+    uiTrackData.forEach((trackInfo) => {
+        // 创建选项DOM元素
         const option = document.createElement('div');
         option.className = 'custom-select-option';
+        
+        // 设置选项的数据属性
         option.setAttribute('data-value', trackInfo.languageCode);
-        option.setAttribute('data-kind', trackInfo.kind); // 保存轨道类型为数据属性
-        // 使用 Chrome i18n 消息适配语言名，若存在消息则使用之，否则使用 trackInfo.languageName
-        const srcKey = 'lang_' + trackInfo.languageCode.replace(/-/g, '_');
-        const srcLocalized = chrome.i18n.getMessage(srcKey);
-        option.textContent = srcLocalized || trackInfo.languageName;
+        option.setAttribute('data-kind', trackInfo.kind || 'standard');
         
-        // 如果与当前选中的目标语言相同，设为禁用状态
-        if (currentSelectedTargetLang === trackInfo.languageCode) {
-            option.classList.add('disabled');
-        }
+        // 生成显示文本（关键功能：为ASR轨道添加标识）
+        const displayName = generateLanguageDisplayName(trackInfo);
+        option.textContent = displayName;
         
-        // 如果是当前选中的语言，设为选中状态
+        // 标记当前选中的源语言（需要同时匹配语言代码和轨道类型）
         const currentSourceLang = sourceLangSelectedValue?.getAttribute('data-value');
-        if (currentSourceLang === trackInfo.languageCode) {
+        const currentSourceKind = sourceLangSelectedValue?.getAttribute('data-kind') || 'standard';
+        
+        if (currentSourceLang === trackInfo.languageCode && 
+            currentSourceKind === (trackInfo.kind || 'standard')) {
             option.classList.add('selected');
         }
         
+        // 将选项添加到DOM
         sourceLangOptions.appendChild(option);
     });
+    
+    console.log(`[sidepanel] populateSourceLanguages: 已填充 ${uiTrackData.length} 个源语言选项`);
 }
 
 // --- 事件监听器管理辅助函数 ---
@@ -1992,7 +2074,7 @@ function addManagedEventListener(
  * 临时移除所有表单事件监听器
  */
 function temporarilyRemoveFormListeners(): void {
-    console.log('[sidepanel/sidepanel.ts] 临时移除表单事件监听器');
+    console.log('[sidepanel] 临时移除表单事件监听器');
     formEventListeners.forEach(({ element, event, handler, options }) => {
         element.removeEventListener(event, handler, options);
     });
@@ -2002,7 +2084,7 @@ function temporarilyRemoveFormListeners(): void {
  * 重新添加所有表单事件监听器
  */
 function reattachFormListeners(): void {
-    console.log('[sidepanel/sidepanel.ts] 重新添加表单事件监听器');
+    console.log('[sidepanel] 重新添加表单事件监听器');
     formEventListeners.forEach(({ element, event, handler, options }) => {
         element.addEventListener(event, handler, options);
     });
@@ -2051,9 +2133,338 @@ function setCheckedSilently(element: HTMLInputElement, checked: boolean): void {
 }
 
 // --- 解决方案验证代码 ---
-console.log('[sidepanel/sidepanel.ts] ✅ 双重保护解决方案已加载：');
-console.log('[sidepanel/sidepanel.ts] 1. 事件监听器管理系统 - 可以临时移除和重新添加');
-console.log('[sidepanel/sidepanel.ts] 2. 静默设置函数 - setValueSilently, setCheckedSilently');
-console.log('[sidepanel/sidepanel.ts] 3. 改进的初始化标志管理 - 同步重置 isInitializingSidePanelUI');
-console.log('[sidepanel/sidepanel.ts] 4. 增强的saveSettings保护 - 多重检查防止误触发');
-console.log('[sidepanel/sidepanel.ts] 🎯 问题：初始化时误发送updateSettings消息 - 预期已解决');
+        console.log('[sidepanel] 双重保护解决方案已加载：');
+console.log('[sidepanel] 1. 事件监听器管理系统 - 可以临时移除和重新添加');
+console.log('[sidepanel] 2. 静默设置函数 - setValueSilently, setCheckedSilently');
+console.log('[sidepanel] 3. 改进的初始化标志管理 - 同步重置 isInitializingSidePanelUI');
+console.log('[sidepanel] 4. 增强的saveSettings保护 - 多重检查防止误触发');
+console.log('[sidepanel] 🎯 问题：初始化时误发送updateSettings消息 - 预期已解决');
+
+/**
+ * 统一的UI更新函数 - 一次性更新所有UI元素
+ * @param data 包含所有UI更新所需的数据
+ */
+function updateAllUI(data: {
+    availableTracks?: { languageCode: string, languageName: string, kind: string }[];
+    determinedSourceLang?: string;
+    settings?: {
+        sourceLang: string;
+        targetLang: string;
+        subtitleMode: string;
+        translationApi: string;
+        apiKey: string;
+        serviceType: string;
+        membershipCredentials: typeof defaultSettings.membershipCredentials;
+        customApiConfig: typeof defaultSettings.customApiConfig;
+        openaiConfig: typeof defaultSettings.openaiConfig;
+    };
+    videoId?: string;
+}) {
+    console.log('[sidepanel] updateAllUI: 开始统一更新所有UI，使用静默模式');
+    
+    // 确保在初始化保护期间
+    if (!isInitializingSidePanelUI) {
+        console.warn('[sidepanel] updateAllUI: 当前不在初始化状态，设置保护标志');
+        isInitializingSidePanelUI = true;
+    }
+    
+    try {
+        // 1. 更新视频ID
+        if (data.videoId) {
+            currentVideoId = data.videoId;
+            console.log(`[sidepanel] 更新当前视频ID: ${currentVideoId}`);
+        }
+        
+        // 2. 处理轨道数据和源语言
+        if (data.availableTracks && data.availableTracks.length > 0) {
+            console.log('[sidepanel] 更新轨道数据，共', data.availableTracks.length, '条');
+            
+            // Memory cache轨道信息
+            uiTrackData = [...data.availableTracks];
+            console.log(`[sidepanel] updateAllUI: 轨道信息已更新到sidepanel memory cache: ${uiTrackData.length}条记录`);
+            
+            // 填充源语言选项 (静默模式)
+            if (sourceLangOptions) {
+                sourceLangOptions.innerHTML = '';
+                data.availableTracks.forEach(track => {
+                    const option = document.createElement('div');
+                    option.className = 'custom-select-option';
+                    option.setAttribute('data-value', track.languageCode);
+                    option.setAttribute('data-kind', track.kind || 'standard');
+                    option.textContent = track.languageName;
+                    sourceLangOptions.appendChild(option);
+                });
+            }
+            
+            // 设置源语言显示
+            if (data.determinedSourceLang && sourceLangSelectedValue) {
+                const matchedTrack = data.availableTracks.find(t => t.languageCode === data.determinedSourceLang);
+                if (matchedTrack) {
+                    sourceLangSelectedValue.textContent = matchedTrack.languageName;
+                    sourceLangSelectedValue.setAttribute('data-value', data.determinedSourceLang);
+                }
+            }
+            
+            // 启用源语言选择器
+            if (sourceLangTrigger) {
+                sourceLangTrigger.classList.remove('disabled');
+                sourceLangTrigger.style.pointerEvents = 'auto';
+            }
+        } else {
+            // 处理无轨道情况
+            if (sourceLangSelectedValue) {
+                sourceLangSelectedValue.textContent = '无可用字幕';
+            }
+            if (sourceLangTrigger) {
+                sourceLangTrigger.classList.add('disabled');
+                sourceLangTrigger.style.pointerEvents = 'none';
+            }
+        }
+        
+        // 3. 更新所有设置相关UI
+        if (data.settings) {
+            const settings = data.settings;
+            
+            // 3.1 基本语言设置
+            currentSelectedTargetLang = settings.targetLang;
+            if (targetLangSelectedValue) {
+                const matchedLang = targetLanguages.find(lang => lang.code === settings.targetLang);
+                if (matchedLang) {
+                    const key = 'lang_' + matchedLang.code.replace(/-/g, '_');
+                    const localizedName = chrome.i18n.getMessage(key);
+                    targetLangSelectedValue.textContent = localizedName || 
+                        (uiLangCode && uiLangCode.toLowerCase().startsWith('zh') ? matchedLang.name : matchedLang.englishName);
+                    targetLangSelectedValue.setAttribute('data-value', settings.targetLang);
+                }
+            }
+            
+            // 3.2 字幕模式设置
+            if (subtitleTypeSwitch) {
+                setCheckedSilently(subtitleTypeSwitch, settings.subtitleMode === 'bilingual');
+            }
+            
+            // 3.3 翻译API设置
+            if (translationApiSelect) {
+                setValueSilently(translationApiSelect, settings.translationApi);
+            }
+            updateApiPanels(settings.translationApi);
+            
+            // 3.4 API密钥设置
+            if (apiKeyInput) {
+                setValueSilently(apiKeyInput, settings.apiKey);
+            }
+            
+            // 3.5 服务类型设置
+            if (serviceTypeMembership && serviceTypeApiKey) {
+                if (settings.serviceType === 'membership') {
+                    setCheckedSilently(serviceTypeMembership, true);
+                    setCheckedSilently(serviceTypeApiKey, false);
+                } else {
+                    setCheckedSilently(serviceTypeMembership, false);
+                    setCheckedSilently(serviceTypeApiKey, true);
+                }
+            }
+            
+            // 3.6 自定义API配置
+            if (customApiUrl) setValueSilently(customApiUrl, settings.customApiConfig.url);
+            if (customApiMethod) setValueSilently(customApiMethod, settings.customApiConfig.method);
+            if (customApiHeaders) setValueSilently(customApiHeaders, settings.customApiConfig.headers);
+            if (customApiBody) setValueSilently(customApiBody, settings.customApiConfig.body);
+            if (customApiResponsePath) setValueSilently(customApiResponsePath, settings.customApiConfig.responsePath);
+            
+            // 3.7 OpenAI配置
+            if (openaiModelSelect) {
+                setValueSilently(openaiModelSelect, settings.openaiConfig.model);
+                if (settings.openaiConfig.model === 'custom' && openaiCustomModel) {
+                    openaiCustomModel.style.display = 'block';
+                    setValueSilently(openaiCustomModel, settings.openaiConfig.customModel);
+                } else if (openaiCustomModel) {
+                    openaiCustomModel.style.display = 'none';
+                }
+            }
+            
+            if (openaiTemperature) {
+                setValueSilently(openaiTemperature, settings.openaiConfig.temperature.toString());
+                if (openaiTemperatureValue) {
+                    openaiTemperatureValue.textContent = settings.openaiConfig.temperature.toString();
+                }
+            }
+            
+            // 3.8 更新目标语言列表（在保护期内）
+            if (targetLangOptions && data.availableTracks) {
+                // 清空当前选项
+                targetLangOptions.innerHTML = '';
+                
+                // 排序目标语言
+                const sortedLanguages = [...targetLanguages].sort((a, b) => {
+                    const aIsRelevant = uiLangCode ? isLanguageRelevantToUI(a.code, uiLangCode) : false;
+                    const bIsRelevant = uiLangCode ? isLanguageRelevantToUI(b.code, uiLangCode) : false;
+                    if (aIsRelevant && !bIsRelevant) return -1;
+                    if (!aIsRelevant && bIsRelevant) return 1;
+                    return a.englishName.localeCompare(b.englishName);
+                });
+                
+                // 填充选项
+                sortedLanguages.forEach(lang => {
+                    const option = document.createElement('div');
+                    option.className = 'custom-select-option';
+                    option.setAttribute('data-value', lang.code);
+                    
+                    // 使用本地化名称
+                    const key = 'lang_' + lang.code.replace(/-/g, '_');
+                    const localizedName = chrome.i18n.getMessage(key);
+                    option.textContent = localizedName || 
+                        (uiLangCode && uiLangCode.toLowerCase().startsWith('zh') ? lang.name : lang.englishName);
+                    
+                    // 设置选中状态
+                    if (settings.targetLang === lang.code) {
+                        option.classList.add('selected');
+                    }
+                    
+                    // 应用语言族互斥逻辑：如果与源语言属于同一语言族，设为禁用状态
+                    if (data.determinedSourceLang && isSameLanguageFamily(data.determinedSourceLang, lang.code)) {
+                        option.classList.add('disabled');
+                        option.setAttribute('data-disabled-reason', 'same-language-family');
+                        option.title = `无法选择同语言族的语言：${option.textContent} 与源语言冲突`;
+                        console.log(`[sidepanel] updateAllUI: 目标语言 ${lang.code} 因与源语言 ${data.determinedSourceLang} 冲突而被禁用`);
+                    }
+                    
+                    targetLangOptions.appendChild(option);
+                });
+            }
+            
+            // 启用目标语言选择器
+            if (targetLangTrigger) {
+                targetLangTrigger.classList.remove('disabled');
+                targetLangTrigger.style.pointerEvents = 'auto';
+            }
+            
+            // 4. 保存初始设置状态
+            initialSettingsFromBackground = { ...settings };
+            isLoading = false;
+            
+            console.log('[sidepanel] updateAllUI: 所有UI更新完成');
+        }
+        
+    } finally {
+        // 5. 重置初始化标志（确保在所有操作完成后）
+        isInitializingSidePanelUI = false;
+        console.log('[sidepanel] updateAllUI: 重置初始化标志，UI更新流程完成');
+    }
+}
+
+// --- 新增: 语言处理工具函数 ---
+
+/**
+ * 生成语言显示名称
+ * 主要功能：为ASR轨道添加（自动生成）标识，同时优先使用chrome.i18n的本地化名称
+ * 
+ * @param trackInfo 轨道信息对象
+ * @param trackInfo.languageCode 语言代码，如"en-US"
+ * @param trackInfo.languageName 原始语言名称，如"英语（自动生成）"或"英语"
+ * @param trackInfo.kind 轨道类型，"asr"表示自动生成，"standard"表示手动字幕
+ * @returns 格式化后的显示名称
+ * 
+ * @example
+ * // ASR轨道示例
+ * generateLanguageDisplayName({
+ *   languageCode: "en-US", 
+ *   languageName: "English (auto-generated)", 
+ *   kind: "asr"
+ * })
+ * // 返回: "英语（自动生成）" (如果UI语言是中文)
+ * 
+ * // 手动轨道示例  
+ * generateLanguageDisplayName({
+ *   languageCode: "en-US",
+ *   languageName: "English", 
+ *   kind: "standard"
+ * })
+ * // 返回: "英语" (如果UI语言是中文)
+ */
+function generateLanguageDisplayName(trackInfo: { 
+    languageCode: string, 
+    languageName: string, 
+    kind: string 
+}): string {
+    // 步骤1: 尝试获取chrome.i18n的本地化语言名称
+    // 将语言代码转换为i18n消息键，如"en-US" -> "lang_en_US"
+    const i18nKey = 'lang_' + trackInfo.languageCode.replace(/-/g, '_');
+    const localizedName = chrome.i18n.getMessage(i18nKey);
+    
+    // 步骤2: 确定基础语言名称
+    let baseName: string;
+    
+    if (localizedName && localizedName.trim() !== '') {
+        // 如果找到了本地化名称，直接使用（如"英语"）
+        baseName = localizedName;
+    } else {
+        // 如果没有本地化名称，从原始名称中提取基础名称
+        // 移除各种可能的自动生成标识
+        baseName = trackInfo.languageName
+            .replace(/\s*\(自动生成\)/g, '')           // 中文标识
+            .replace(/\s*\(auto-generated\)/g, '')      // 英文标识
+            .replace(/\s*\(自動生成\)/g, '')            // 繁体中文标识
+            .trim();
+    }
+    
+    // 步骤3: 根据轨道类型决定是否添加ASR标识
+    if (trackInfo.kind === 'asr') {
+        // ASR轨道：添加"（自动生成）"标识
+        return `${baseName}（自动生成）`;
+    } else {
+        // 手动轨道：直接返回基础名称
+        return baseName;
+    }
+}
+
+/**
+ * 提取基础语言代码
+ * 功能：从完整的BCP 47语言代码中提取基础语言部分
+ * 
+ * @param langCode 完整语言代码
+ * @returns 基础语言代码
+ * 
+ * @example
+ * getBaseLangCode("en-US") // 返回: "en"
+ * getBaseLangCode("zh-Hans") // 返回: "zh" 
+ * getBaseLangCode("fr") // 返回: "fr"
+ */
+function getBaseLangCode(langCode: string): string {
+    // 使用"-"分割语言代码，取第一部分
+    // 例如："en-US" -> ["en", "US"] -> "en"
+    const baseCode = langCode.split('-')[0];
+    return baseCode;
+}
+
+/**
+ * 检查两个语言是否属于同一语言族
+ * 功能：通过比较基础语言代码判断是否互斥
+ * 互斥原则：基础代码相同的语言不能同时作为源语言和目标语言
+ * 
+ * @param sourceLang 源语言代码
+ * @param targetLang 目标语言代码  
+ * @returns true表示属于同一语言族（应该互斥），false表示可以配对使用
+ * 
+ * @example
+ * isSameLanguageFamily("en-US", "en-GB") // 返回: true（都是英语族，应该互斥）
+ * isSameLanguageFamily("zh-Hans", "zh-Hant") // 返回: true（都是中文族，应该互斥）
+ * isSameLanguageFamily("en-US", "fr") // 返回: false（英语和法语，可以配对）
+ */
+function isSameLanguageFamily(sourceLang: string, targetLang: string): boolean {
+    // 提取两个语言的基础代码
+    const sourceBase = getBaseLangCode(sourceLang);
+    const targetBase = getBaseLangCode(targetLang);
+    
+    // 比较基础代码是否相同
+    const isSame = sourceBase === targetBase;
+    
+    // 只在发生互斥时打印日志
+    if (isSame) {
+        console.log(`[sidepanel] 语言族互斥: "${sourceLang}"(${sourceBase}) 与 "${targetLang}"(${targetBase}) 属于同一语言族，禁用选择`);
+    }
+    
+    return isSame;
+}
+
+// --- End 新增: 语言处理工具函数 ---

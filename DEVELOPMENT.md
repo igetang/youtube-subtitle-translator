@@ -1,4 +1,4 @@
-# YouTube 字幕翻译 Chrome 扩展 - 开发指南
+# YouTube字幕翻译助手 - 开发指南
 
 本文档提供扩展项目的开发环境设置、工作流程和贡献指南，帮助开发者参与项目开发。
 
@@ -34,6 +34,9 @@ npm run build
 
 # 代码检查
 npm run lint
+
+# 类型检查
+npm run type-check
 ```
 
 ## 加载扩展进行测试
@@ -46,53 +49,269 @@ npm run lint
 6. 访问任意 YouTube 视频页面进行测试
 7. 每次修改代码后，点击扩展卡片上的"重新加载"按钮应用更改
 
+### 开发环境配置验证
+
+```bash
+# 验证Node.js版本
+node --version
+
+# 验证npm可用性
+npm --version
+
+# 检查项目依赖
+npm ls
+```
+
 ## 项目结构
 
 ```
 youtube-subtitle-translator/
-├── background/               # 后台脚本
-│   └── background.ts         # 服务工作者脚本
-├── content/                  # 内容脚本
-│   ├── content-script.ts     # 注入YouTube页面的主要脚本
-│   └── main-world.ts         # 注入主世界的辅助脚本
-├── sidepanel/                # 侧边栏
-│   ├── sidepanel.html        # 侧边栏HTML
-│   ├── sidepanel.css         # 侧边栏样式
-│   └── sidepanel.ts          # 侧边栏脚本
-├── icons/                    # 扩展图标
-├── docs/                     # 文档
-├── dist/                     # 构建输出目录
-├── manifest.json             # 扩展清单文件
-├── vite.config.ts            # Vite配置
-├── package.json              # 项目依赖
-└── tsconfig.json             # TypeScript配置
+├── .cursor/                 # Cursor编辑器配置
+│   └── rules/               # 编辑器规则
+│       └── chrome-rules.mdc # Chrome扩展开发规则
+├── .git/                    # Git版本控制（自动生成）
+├── _locales/                # 国际化文件
+│   └── zh_CN/               # 中文本地化
+│       └── messages.json    # 中文消息定义
+├── assets/                  # 静态资源和构建产物
+│   ├── sidepanel.css        # 侧边栏样式文件
+│   ├── storage-manager.js   # 存储管理器编译产物
+│   └── storage-manager.js.map # 存储管理器源码映射
+├── background/              # 后台脚本
+│   ├── background.ts        # 主要服务工作者脚本
+│   ├── background.ts.backup # 备份文件
+│   ├── batch-processor.ts   # 批处理器
+│   ├── index.ts             # 后台脚本入口
+│   ├── openai-translator.ts # OpenAI翻译API实现
+│   ├── rate-limit-manager.ts # API限流管理器
+│   ├── subtitle-local-storage.ts # 字幕本地存储
+│   └── translation-local-storage.ts # 翻译本地存储
+├── content/                 # 内容脚本
+│   ├── content-script.ts    # 主要内容脚本
+│   ├── content-script.ts.backup # 备份文件
+│   ├── content-script.ts.bak # 备份文件
+│   ├── content-script.ts.original # 原始版本
+│   ├── content-script-external.js # 外部内容脚本
+│   ├── content-script-new-event.ts.deprecated # 已弃用的事件版本
+│   ├── content.ts           # 内容处理脚本
+│   ├── event-bus.ts_DEPRECATED # 已弃用的事件总线
+│   ├── main-world.ts        # 主世界注入脚本
+│   └── main-world.ts.backup # 主世界脚本备份
+├── docs/                    # 项目文档
+│   ├── archive/             # 归档文档
+│   │   ├── ARCHITECTURE_CHANGE_LOG.md     # 架构变更日志
+│   │   ├── CACHE_FUNCTION_NAMING_REVIEW.md # 缓存函数命名审查
+│   │   ├── LOG_FORMAT_IMPROVEMENTS.md     # 日志格式改进
+│   │   ├── NAMING_CONVENTION_OPTIMIZATION.md # 命名规范优化
+│   │   ├── OPTIMIZATION_COMPLETED.md      # 优化完成记录
+│   │   ├── REFACTOR_MESSAGE_COMMUNICATION.md # 消息通信重构
+│   │   ├── REFACTOR_PLAN.md               # 重构计划
+│   │   ├── SESSION_STORAGE_FIX.md         # Session存储修复
+│   │   ├── TEST_RESULTS.md                # 测试结果
+│   │   ├── TRANSLATION_CACHE_FLOW.md      # 翻译缓存流程
+│   │   ├── VERIFICATION_CACHE_IMPLEMENTATION.md # 缓存实现验证
+│   │   └── bugs.md                        # Bug记录
+│   ├── README.md            # 文档中心导航
+│   ├── api.md               # API参考文档
+│   ├── architecture.md      # 技术架构文档（权威）
+│   ├── decision-log.md      # 技术决策记录
+│   ├── optimization-verification.md # 优化验证指南
+│   ├── performance.md       # 性能优化文档
+│   ├── roadmap.md           # 开发路线图
+│   ├── translation-flow.md  # 翻译流程说明
+│   └── troubleshooting.md   # 故障排除指南
+├── icons/                   # 扩展图标
+│   ├── .DS_Store            # macOS系统文件
+│   ├── icon16.png           # 16x16 图标
+│   ├── icon48.png           # 48x48 图标
+│   ├── icon128.png          # 128x128 图标
+│   ├── l-setting.svg        # 设置按钮图标
+│   ├── l-setting-active.svg # 激活状态设置图标
+│   ├── normal-border.svg    # 普通边框图标
+│   ├── off.svg              # 关闭状态图标
+│   └── on.svg               # 开启状态图标
+├── options/                 # 选项页面（备用）
+│   ├── options.html         # 选项页面HTML
+│   └── options.ts           # 选项页面脚本
+├── popup/                   # 弹出页面（备用）
+│   ├── popup.html           # 弹出页面HTML
+│   └── popup.ts             # 弹出页面脚本
+├── rules/                   # 规则配置文件（空目录）
+├── scripts/                 # 构建和部署脚本
+│   └── verify-build.sh      # 构建验证脚本
+├── sidepanel/               # 侧边栏
+│   ├── sidepanel.css        # 侧边栏样式
+│   ├── sidepanel.html       # 侧边栏HTML
+│   ├── sidepanel.ts         # 侧边栏脚本
+│   └── template.ts          # 侧边栏模板
+├── src/                     # 通用组件和工具
+│   ├── components/          # 可复用组件
+│   │   ├── control-panel.ts # 控制面板组件
+│   │   └── ui-manager.ts    # UI组件管理器
+│   ├── events/              # 事件系统
+│   │   ├── event-bus.ts     # 事件总线
+│   │   └── event-types.ts   # 事件类型定义
+│   ├── storage/             # 存储管理
+│   │   ├── settings-manager.ts      # 设置管理器
+│   │   ├── storage-manager.ts       # 存储管理器
+│   │   ├── storage-test.ts          # 存储测试
+│   │   └── video-settings-local-storage.ts # 视频设置本地存储
+│   ├── translation/         # 翻译相关
+│   │   └── translation-dispatcher.ts # 翻译调度器
+│   └── utils/               # 工具函数
+│       ├── language-processing.ts   # 语言处理工具
+│       └── languages.ts             # 语言定义
+├── tmp/                     # 临时文件
+│   └── event-system.ts      # 事件系统临时文件
+├── dist/                    # 构建输出目录（构建时生成）
+│   ├── _locales/            # 本地化文件输出
+│   ├── assets/              # 资源文件输出
+│   ├── icons/               # 图标文件输出
+│   ├── sidepanel/           # 侧边栏输出
+│   ├── background.js        # 编译后的后台脚本
+│   ├── background.js.map    # 后台脚本源码映射
+│   ├── content-script.js    # 编译后的内容脚本
+│   ├── content-script.js.map # 内容脚本源码映射
+│   ├── main-world.js        # 编译后的主世界脚本
+│   ├── main-world.js.map    # 主世界脚本源码映射
+│   ├── sidepanel.js         # 编译后的侧边栏脚本
+│   ├── sidepanel.js.map     # 侧边栏脚本源码映射
+│   └── manifest.json        # 复制的清单文件
+├── node_modules/            # 依赖包（自动生成）
+├── .DS_Store                # macOS系统文件
+├── .gitignore               # Git忽略文件
+├── CHANGELOG.md             # 更新日志
+├── DEVELOPMENT.md           # 开发指南（本文档）
+├── README.md                # 用户使用指南
+├── TODO.md                  # 待办事项
+├── manifest.json            # 扩展清单文件
+├── package-lock.json        # 依赖版本锁定
+├── package.json             # 项目依赖和脚本
+├── tsconfig.json            # TypeScript配置
+└── vite.config.ts           # Vite构建配置
 ```
+
+### 目录功能说明
+
+#### 核心脚本目录
+- **`background/`**: 扩展后台服务工作者，处理翻译请求、缓存管理和消息路由
+  - `background.ts`: 主要的服务工作者脚本，消息路由和缓存管理
+  - `batch-processor.ts`: 字幕批处理器，优化翻译性能
+  - `openai-translator.ts`: OpenAI翻译API的专门实现
+  - `rate-limit-manager.ts`: API调用频率控制和限流管理
+  - `subtitle-local-storage.ts`: 字幕数据的本地存储管理
+  - `translation-local-storage.ts`: 翻译结果的本地存储管理
+  - `*.backup`: 各种备份文件，用于版本回退和对比
+
+- **`content/`**: 内容脚本，与YouTube页面交互，注入UI组件和处理用户交互
+  - `content-script.ts`: 主要内容脚本，处理UI注入和用户交互
+  - `main-world.ts`: 主世界注入脚本，访问YouTube播放器API
+  - `content.ts`: 内容处理和字幕显示逻辑
+  - `*.backup` / `*.deprecated`: 备份文件和已弃用的版本
+
+- **`sidepanel/`**: 侧边栏界面，提供用户设置、语言选择和翻译API配置
+  - `sidepanel.html`: 侧边栏页面结构
+  - `sidepanel.ts`: 侧边栏交互逻辑和设置管理，包含智能语言选择系统
+    * **ASR轨道识别**: `generateLanguageDisplayName()` 函数自动为ASR轨道添加"（自动生成）"标识
+    * **语言族互斥**: `isSameLanguageFamily()` 函数实现基于语言族的互斥逻辑
+    * **轨道切换检测**: 增强的变化检测机制，支持轨道类型切换时触发翻译更新
+  - `sidepanel.css`: 侧边栏样式定义
+  - `template.ts`: 侧边栏模板和组件
+
+#### 共享代码目录
+- **`src/`**: 可复用的组件和工具库
+  - `components/`: UI组件管理，包含翻译按钮、设置按钮等界面元素管理
+    - `control-panel.ts`: 控制面板的核心逻辑，统一管理翻译流程
+    - `ui-manager.ts`: UI元素的创建、更新和状态管理
+  - `events/`: 事件系统，实现组件间高效通信机制
+    - `event-bus.ts`: 发布/订阅模式的事件总线实现
+    - `event-types.ts`: 所有事件类型的TypeScript定义
+  - `storage/`: 数据存储和缓存管理，包含三层缓存架构实现
+    - `storage-manager.ts`: 统一的存储访问层，支持多种存储区域
+    - `settings-manager.ts`: 用户设置的专门管理器
+    - `video-settings-local-storage.ts`: 视频级别设置的本地存储
+    - `storage-test.ts`: 存储功能的测试代码
+  - `translation/`: 翻译相关逻辑和多API封装
+    - `translation-dispatcher.ts`: 翻译任务的调度和优先级管理
+  - `utils/`: 通用工具函数和帮助类
+    - `language-processing.ts`: 语言检测、匹配和处理工具
+      * **语言相关性检测**: `isLanguageRelevantToUI()` 函数判断语言与UI语言的相关性
+      * **语言族互斥逻辑**: 支持基于语言基础代码的互斥判断
+    - `languages.ts`: 支持的语言列表和元数据
+
+#### 文档目录
+- **`docs/`**: 完整的项目文档集合
+  - `architecture.md`: **权威技术架构文档**，所有技术设计的唯一参考
+  - `translation-flow.md`: 字幕翻译完整流程说明
+  - `decision-log.md`: 重要技术决策记录和背景说明  
+  - `performance.md`: 性能优化策略和三层缓存实现
+  - `api.md`: 内部和外部API接口文档
+  - `roadmap.md`: 开发路线图和功能规划
+  - `optimization-verification.md`: 性能验证和测试指南
+  - `troubleshooting.md`: 故障排除和问题解决
+  - `archive/`: 历史文档和已解决问题的详细记录
+    - 包含架构变更、优化记录、重构计划、测试结果等历史文档
+
+#### 配置和资源目录
+- **`_locales/`**: Chrome扩展国际化支持，当前支持中文
+- **`icons/`**: 扩展图标资源，包含多种尺寸和状态的图标文件
+  - 支持16px、48px、128px多种尺寸
+  - 包含开启/关闭状态、设置按钮等SVG图标
+- **`assets/`**: 静态资源文件和编译产物
+- **`.cursor/`**: Cursor编辑器的项目配置，包含Chrome扩展开发规则
+
+#### 构建和工具目录
+- **`scripts/`**: 自动化构建、部署和维护脚本
+  - `verify-build.sh`: 构建验证脚本，确保输出正确
+- **`tmp/`**: 临时文件、开发缓存和实验性代码
+- **`dist/`**: Vite构建输出目录，Chrome扩展的最终运行文件
+  - 包含所有编译后的JavaScript文件和源码映射
+  - 复制的静态资源和清单文件
+
+#### 备用功能目录
+- **`options/`**: 选项页面（当前未使用，侧边栏为主要设置界面）
+- **`popup/`**: 弹出式界面（当前未使用，侧边栏为主要交互界面）
+- **`rules/`**: 扩展行为规则和策略配置（当前为空）
+
+### 架构特点
+
+#### 模块化设计
+- **职责分离**: 后台脚本处理数据和API，内容脚本处理UI和交互，侧边栏提供设置界面
+- **事件驱动**: 使用事件总线实现组件间松耦合通信
+- **三层缓存**: Memory Cache (Background内存) → Local Storage → API调用的完整缓存策略
+
+#### 性能优化
+- **懒加载**: 仅在用户首次交互时完整初始化核心功能
+- **渐进式翻译**: 优先翻译当前播放位置附近的字幕
+- **智能缓存**: 基于视频ID、语言和API的多维度缓存机制
+- **资源管理**: 页面导航时自动清理资源和事件监听器
+
+#### 开发体验
+- **TypeScript**: 全面的类型安全和开发时错误检查
+- **Vite构建**: 快速的热重载和现代化构建工具链
+- **模块导入**: 标准ES模块支持，避免全局污染
+- **文档完整**: 从用户指南到技术架构的完整文档体系
+
+### 文件流转关系
+
+```
+开发源码 (src/, background/, content/, sidepanel/)
+    ↓ (Vite构建)
+构建输出 (dist/)
+    ↓ (Chrome加载)
+扩展运行时
+```
+
+### 重要配置文件
+
+- **`manifest.json`**: Chrome扩展配置，定义权限、脚本加载等
+- **`vite.config.ts`**: 构建配置，处理TypeScript编译和模块打包
+- **`tsconfig.json`**: TypeScript编译选项
+- **`package.json`**: 项目元信息、依赖管理和脚本定义
 
 ## 构建系统
 
 项目使用 Vite 进行构建，配置了多入口点以生成所需的各个脚本：
-
-```typescript
-// vite.config.ts 主要配置
-export default defineConfig(({ command, mode }) => {
-  // 内容脚本配置 - 使用IIFE格式
-  if (mode === 'content-script') {
-    return mergeConfig(baseConfig, {
-      build: {
-        // ...内容脚本特定配置
-        rollupOptions: {
-          output: { format: 'iife' } // 使用IIFE格式
-        }
-      }
-    });
-  }
-  
-  // 默认配置 - 其他脚本使用ES模块
-  return mergeConfig(baseConfig, {
-    // ...ES模块脚本配置
-  });
-});
-```
 
 ### 内容脚本特殊构建说明
 
@@ -101,30 +320,23 @@ export default defineConfig(({ command, mode }) => {
 1. **为什么内容脚本需要特殊处理？**
    - 内容脚本直接注入到网页环境中，该环境可能不支持ES模块
    - 使用`import`语句会导致`Uncaught SyntaxError: Cannot use import statement outside a module`错误
-   - 即使在manifest.json中设置`"type": "module"`也可能不完全兼容
 
-2. **IIFE格式 vs ES模块格式**
+2. **构建格式差异**
    - 内容脚本使用IIFE（立即执行函数表达式）格式构建
    - 背景脚本和其他扩展部分使用ES模块格式
-   - IIFE格式将所有代码和依赖打包在一个闭包中，避免使用`import`语句
 
 3. **构建命令**
-   - `npm run build:main` - 构建背景脚本、侧边栏等（ES模块格式）
-   - `npm run build:content` - 构建内容脚本（IIFE格式）
+   - `npm run build:main` - 构建背景脚本、侧边栏等
+   - `npm run build:content` - 构建内容脚本
    - `npm run build` - 依次执行上述两个命令
-
-4. **注意事项**
-   - 修改内容脚本后，必须重新运行构建命令
-   - 不要在内容脚本中使用动态导入（`import()`）语法
-   - 尽量避免内容脚本与其他脚本之间的复杂依赖关系
 
 ## 开发工作流
 
 ### 1. 功能开发流程
 
-1. 从主分支创建新的功能分支：`feature/名称`
+1. 从主分支创建新的功能分支：`feature/功能名称`
 2. 实现功能并编写相关文档
-3. 测试功能是否正常工作
+3. 本地测试功能是否正常工作
 4. 提交代码，遵循提交信息规范
 5. 创建Pull Request，等待审核
 
@@ -136,231 +348,414 @@ export default defineConfig(({ command, mode }) => {
 4. 提交代码，包含问题和解决方案的清晰描述
 5. 创建Pull Request，等待审核
 
+### 3. 代码热重载开发
+
+```bash
+# 启动开发模式
+npm run dev
+
+# 在另一个终端监控文件变化
+npm run watch
+```
+
 ## 调试技巧
 
 ### Chrome DevTools调试
 
-1. 在扩展卡片上点击"查看视图: 后台页面"打开Service Worker调试器
-2. 在YouTube页面上打开开发者工具，在控制台中可以看到内容脚本日志
-3. 使用"Elements"面板检查注入的UI元素
-4. 使用"Network"面板监控API请求
+1. **后台脚本调试**：
+   - 在扩展卡片上点击"查看视图: 后台页面"打开Service Worker调试器
+   - 使用`console.log`输出调试信息
+   - 在"应用程序"标签查看Storage数据
+
+2. **内容脚本调试**：
+   - 在YouTube页面上打开开发者工具
+   - 在控制台中可以看到内容脚本日志
+   - 使用"Elements"面板检查注入的UI元素
+
+3. **侧边栏调试**：
+   - 右键点击侧边栏，选择"检查"
+   - 独立的DevTools窗口用于调试侧边栏
 
 ### 常见调试方法
 
-* 使用`console.log`和`console.error`输出调试信息
-* 在关键位置添加断点，跟踪代码执行流程
-* 使用Chrome的"存储"面板检查扩展的存储数据
-* 查看扩展的错误日志：`chrome://extensions` -> 在扩展卡片上勾选"错误"
+```javascript
+// 使用带标识的日志输出
+console.log('[background] 处理翻译请求:', data);
+console.error('[content-script] 错误信息:', error);
+
+// 检查扩展存储
+chrome.storage.local.get(null, console.log);
+
+// 监控消息传递
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  console.log('收到消息:', message, '来自:', sender);
+});
+```
+
+### 性能分析
+
+1. **内存使用监控**：
+   - 在背景页面DevTools中使用"内存"标签
+   - 定期检查是否存在内存泄漏
+
+2. **网络请求监控**：
+   - 使用"Network"面板监控API请求
+   - 检查翻译API的响应时间和成功率
+
+## 代码规范
+
+### TypeScript代码风格
+
+```typescript
+// 函数命名：使用驼峰命名法
+function handleTranslationRequest(data: any): Promise<void> {
+  // 函数体
+}
+
+// 接口定义：使用PascalCase
+interface TranslationResult {
+  sourceText: string;
+  targetText: string;
+  confidence: number;
+}
+
+// 常量：使用UPPER_SNAKE_CASE
+const MAX_RETRY_COUNT = 3;
+const API_TIMEOUT = 5000;
+
+// 类命名：使用PascalCase
+class TranslationManager {
+  private apiKey: string;
+  
+  constructor(apiKey: string) {
+    this.apiKey = apiKey;
+  }
+}
+```
+
+### 错误处理规范
+
+```typescript
+// 使用try-catch包装异步操作
+async function translateText(text: string): Promise<string> {
+  try {
+    const result = await callTranslationAPI(text);
+    return result.translatedText;
+  } catch (error) {
+    console.error('[translator] 翻译失败:', error);
+    throw new Error(`翻译失败: ${error.message}`);
+  }
+}
+
+// 消息处理中的错误处理
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  try {
+    handleMessage(message).then(result => {
+      sendResponse({ success: true, data: result });
+    }).catch(error => {
+      sendResponse({ success: false, error: error.message });
+    });
+  } catch (error) {
+    sendResponse({ success: false, error: error.message });
+  }
+  return true; // 保持消息通道开放
+});
+```
+
+### 文档注释规范
+
+   ```typescript
+/**
+ * 翻译字幕文本
+ * @param subtitles - 字幕数组
+ * @param sourceLang - 源语言代码
+ * @param targetLang - 目标语言代码
+ * @returns Promise<翻译结果数组>
+ */
+async function translateSubtitles(
+  subtitles: SubtitleEvent[],
+  sourceLang: string,
+  targetLang: string
+): Promise<TranslatedSubtitle[]> {
+  // 实现
+}
+```
+
+## 测试策略
+
+### 单元测试
+
+```bash
+# 运行测试
+npm run test
+
+# 运行测试并生成覆盖率报告
+npm run test:coverage
+```
+
+### 集成测试
+
+1. **扩展加载测试**：验证扩展能否正常加载
+2. **YouTube集成测试**：在不同类型的YouTube视频上测试
+3. **API集成测试**：测试各种翻译API的调用
+
+### 手动测试清单
+
+- [ ] 扩展安装和卸载
+- [ ] 翻译按钮显示和隐藏
+- [ ] 字幕翻译功能
+- [ ] 设置保存和恢复
+- [ ] 错误处理和恢复
+- [ ] 不同语言对的翻译
+- [ ] 页面导航后的功能
 
 ## 贡献指南
 
-### 代码风格
+### 提交信息规范
 
-* 使用TypeScript类型注解，确保类型安全
-* 遵循功能模块化原则
-* 使用异步/await处理异步操作
-* 添加JSDoc注释说明函数用途和参数
+```bash
+# 格式：类型(范围): 描述
+git commit -m "feat(translation): 添加Google翻译API支持"
+git commit -m "fix(sidepanel): 修复语言选择重置问题"
+git commit -m "docs(readme): 更新安装说明"
+```
 
-### 提交要求
+**类型说明**：
+- `feat`: 新功能
+- `fix`: Bug修复
+- `docs`: 文档更新
+- `style`: 代码格式调整
+- `refactor`: 代码重构
+- `test`: 测试相关
+- `chore`: 构建或工具变动
 
-* 确保代码通过lint检查：`npm run lint`
-* 编写清晰的提交信息，格式：`类型(范围): 描述`
-  * 类型：feat, fix, docs, style, refactor, test, chore
-  * 范围：影响的模块，如content, background, sidepanel
-  * 描述：简明扼要的变更说明
-* 保持提交内容小而集中，便于审核和回退
+### 代码审查清单
 
-### 文档更新
+- [ ] 代码遵循项目风格规范
+- [ ] 添加了必要的类型注解
+- [ ] 包含适当的错误处理
+- [ ] 添加了JSDoc注释
+- [ ] 通过了所有测试
+- [ ] 更新了相关文档
 
-* 代码变更需同步更新相关文档
-* 新功能需添加用户文档和开发文档
-* 遵循现有文档风格和组织结构
+### Pull Request模板
+
+```markdown
+## 变更描述
+[简要描述此PR的变更内容]
+
+## 变更类型
+- [ ] Bug修复
+- [ ] 新功能
+- [ ] 重构
+- [ ] 文档更新
+
+## 测试
+- [ ] 本地测试通过
+- [ ] 添加了新的测试
+- [ ] 所有现有测试通过
+
+## 相关Issue
+[关联的Issue编号]
+```
 
 ## 发布流程
 
+### 版本管理
+
+```bash
+# 更新版本号
+npm version patch  # 补丁版本
+npm version minor  # 次版本
+npm version major  # 主版本
+```
+
 ### 发布前检查清单
 
-- [ ] 确保所有功能正常工作
-- [ ] 验证在不同YouTube视频上的兼容性
-- [ ] 检查资源使用情况（内存、CPU）
-- [ ] 确认错误处理机制正常
-- [ ] 更新版本号和变更日志
-- [ ] 准备Chrome Web Store说明和截图
+- [ ] 所有测试通过
+- [ ] 代码审查完成
+- [ ] 文档更新到位
+- [ ] 版本号已更新
+- [ ] 构建成功无错误
+- [ ] 在真实环境中验证
 
-### 打包与发布
+### 构建和打包
 
-1. 更新`manifest.json`中的版本号
-2. 运行`npm run build`生成生产版本
-3. 压缩`dist`目录为zip文件
-4. 在Chrome Web Store开发者控制台上传新版本
-5. 填写变更说明
-6. 提交审核
+```bash
+# 生产构建
+npm run build
 
-## 参考资源
+# 验证构建结果
+ls -la dist/
 
-* [Chrome扩展开发文档](https://developer.chrome.com/docs/extensions/)
-* [Manifest V3指南](https://developer.chrome.com/docs/extensions/mv3/intro/)
-* [YouTube Player API参考](https://developers.google.com/youtube/iframe_api_reference)
-* [TypeScript文档](https://www.typescriptlang.org/docs/)
-* [Vite文档](https://vitejs.dev/guide/)
+# 打包用于Chrome Web Store
+npm run package
+```
 
-## 常见问题
+## 故障排除
 
-### Q: 我的扩展无法获取字幕轨道，可能是什么原因？
-A: 检查main-world.js是否正确注入，以及YouTube播放器API是否发生变化。可以在控制台中检查是否有相关错误信息。
+### 常见构建错误
 
-### Q: 为什么我的翻译按钮在导航后消失了？
-A: 导航处理是扩展的关键挑战之一。检查MutationObserver是否正常工作，以及导航后的重新注入逻辑是否执行。
+1. **依赖版本冲突**：
+   ```bash
+   # 清理并重新安装
+   rm -rf node_modules package-lock.json
+   npm install
+   ```
 
-### Q: 如何查看存储的翻译缓存数据？
-A: 在Chrome扩展页面点击"查看视图: 后台页面"，然后在控制台中输入`chrome.storage.local.get(null, console.log)`查看所有本地存储数据。
+2. **TypeScript类型错误**：
+   ```bash
+   # 检查类型定义
+   npm run type-check
+   ```
 
-## 核心数据流：侧边栏初始化
+3. **Vite构建失败**：
+   - 检查vite.config.ts配置
+   - 验证入口文件路径
+   - 确认依赖项已正确安装
 
-当用户打开扩展的侧边栏 (Side Panel) 时，会触发以下初始化数据流：
+### 扩展运行时错误
 
-1.  **侧边栏 (`sidepanel.ts`) 启动**:
-    *   当侧边栏的 DOM 内容加载完成后 (`DOMContentLoaded`)。
-    *   它会通过 `chrome.tabs.query({ active: true, currentWindow: true })` 获取当前活动标签页的 `tabId` 和 `url`。
-    *   如果 `url` 存在，它会调用 `extractVideoIdFromUrl(url)` (该函数来自 `src/storage/video-settings-cache.ts`) 来尝试提取 YouTube 页面的 `videoId`。
-    *   `sidepanel.ts` 随后向后台脚本 (`background.ts`) 发送一条 `sidePanelOpened` 消息，该消息包含获取到的 `tabId` 和 `videoId` (如果 `videoId` 存在，否则为 `null`)。
+1. **Service Worker错误**：
+   - 检查background.ts中的异步操作
+   - 确认消息监听器正确设置
+   - 验证chrome API调用
 
-2.  **后台脚本 (`background.ts`) 响应**:
-    *   `background.ts` 监听 `sidePanelOpened` 消息。
-    *   收到消息后，它会调用内部的 `initializeSidePanel(tabId, videoIdFromSidePanel)` 函数。
-    *   **获取数据**: 
-        *   使用 `StorageManager.getInstance().getBatch()` 从 `chrome.storage.local` 加载全局设置 (例如默认源语言、目标语言、API配置等)。
-        *   **`videoId` 处理**: 优先使用从 `sidepanel.ts` 传递过来的 `videoIdFromSidePanel`。如果此 `videoId` 不存在，`background.ts` 会尝试通过传入的 `tabId` 调用 `chrome.tabs.get(tabId)` 获取标签页的 `url`，然后再次调用 `VideoSettingsCache.extractVideoId(tabUrl)` 来提取 `videoId`。
-        *   如果最终获得了有效的 `currentVideoId`，则会调用 `VideoSettingsCache.getInstance().getVideoSettings(currentVideoId)` 来获取该视频的特定缓存设置。
-        *   使用 `tabId` (通过 `chrome.tabs.sendMessage(tabId, { action: 'requestAvailableTracks' })`) 向当前标签页的内容脚本发送消息，请求该视频可用的字幕轨道列表。
-    *   **数据整合与发送**: 
-        *   `background.ts` 会合并全局设置和视频特定设置（视频特定设置具有较高优先级，但通常不覆盖账户相关的全局API密钥等）。
-        *   最后，`background.ts` 将包含最终合并后的设置对象 (`combinedSettings`)、获取到的字幕轨道列表 (`availableTracks`)、实际使用的 `videoId` 以及 `tabId` 打包，通过 `chrome.runtime.sendMessage({ action: 'initializeSidePanelUI', data: { ... } })` 消息发送回侧边栏。
+2. **内容脚本注入失败**：
+   - 检查manifest.json配置
+   - 验证内容脚本权限
+   - 确认YouTube页面匹配规则
 
-3.  **侧边栏 (`sidepanel.ts`) 更新UI**:
-    *   `sidepanel.ts` 监听 `initializeSidePanelUI` 消息。
-    *   收到数据后，它会使用提供的数据 (设置、轨道信息) 来渲染和更新侧边栏的用户界面元素 (如填充语言下拉列表、设置开关状态等)。
-    *   此流程确保了侧边栏显示的是最新的、与当前视频和用户配置相关的正确信息。
+3. **存储访问错误**：
+   - 验证存储权限声明
+   - 检查存储键名规范
+   - 确认异步操作正确处理
 
-4.  **页面内导航处理**:
-    *   如果用户在已打开侧边栏的 YouTube 标签页内导航到新的视频页面，内容脚本会检测到此变化并通知后台脚本 (`youtubeNavigationFinished` 消息)。
-    *   后台脚本再将此导航事件广播为 `youtubeNavigationOccurred` 消息。
-    *   侧边栏接收到 `youtubeNavigationOccurred` 消息后，会重新从当前标签页的 `sender.tab.url` 提取 `videoId`，并再次向后台脚本发送 `sidePanelOpened` 消息 (包含新的 `videoId` 和 `tabId`)，从而触发上述数据加载和UI更新流程，以确保侧边栏内容与新视频同步。
+## 相关文档
 
-这个集中的数据初始化流程，由 `background.ts` 主导，简化了侧边栏的逻辑，并确保了数据来源的一致性。
+- [技术架构文档](docs/architecture.md) - 详细的技术架构和设计细节
+- [翻译流程说明](docs/translation-flow.md) - 字幕翻译的完整流程
+- [决策日志](docs/decision-log.md) - 技术决策记录
+- [故障排除指南](docs/troubleshooting.md) - 常见问题解决方案
 
-## 数据存储策略
+## 🤝 项目贡献
 
-为了确保扩展的性能、数据的持久性和安全性，本项目采用以下数据存储策略：
+### 贡献方式
 
-| 信息类型                     | 主要存储位置                                 | 管理方式/类                                     | 主要原因                                                                |
-| :--------------------------- | :------------------------------------------- | :---------------------------------------------- | :---------------------------------------------------------------------- |
-| **用户全局设置**             | `chrome.storage.local`                       | `StorageManager`                                | 持久性、全局性。用于存储默认源/目标语言、字幕模式、选择的翻译API等。          |
-| **用户API密钥**              | `chrome.storage.local`                       | `StorageManager`                                | 持久性。用户提供的API密钥需长期保存。需注意`chrome.storage.local`本身未加密。 |
-| **视频的特定设置**           | `chrome.storage.local` (通过缓存类管理)      | `VideoSettingsCache`                            | 持久性、特定性、缓存优化。例如，用户为特定视频选择的源/目标语言。             |
-| **翻译后的字幕**             | `chrome.storage.local` (通过缓存类管理)      | `SubtitleCacheManager` (或类似字幕缓存管理类) | 性能优化、API成本节约、持久化用户体验。避免对相同字幕重复翻译。             |
-| **原始字幕 (YouTube源字幕)** | 内存缓存 (Service Worker中) / 按需从页面获取 | 主要在内存中临时持有，或按需直接从内容脚本获取    | 快速访问 (短期), 保证数据新鲜度, 避免占用过多本地存储空间。                 |
+我们欢迎各种形式的贡献：
 
-**详细说明:**
+#### 🐛 问题反馈
+- 使用GitHub Issues报告Bug或建议新功能
+- 提供详细的问题描述和复现步骤
+- 包含浏览器版本、扩展版本等环境信息
 
-*   **`chrome.storage.local`**: 这是扩展主要的持久化存储方案，通过 `StorageManager` 类进行统一的异步读写操作。用于存储需要长期保留的用户配置和缓存数据。
-*   **`chrome.storage.sync`**: 目前项目主要使用 `chrome.storage.local`。如果未来需要跨设备同步某些核心设置，可以考虑使用 `chrome.storage.sync`，但需注意其更严格的配额限制。
-*   **API密钥安全性**: 虽然API密钥存储在 `chrome.storage.local` 中，但需要告知用户此存储未加密，并建议用户保护好自己的设备。扩展本身会遵循最小权限原则，仅在必要时由后台脚本访问密钥。
-*   **缓存管理**:
-    *   `VideoSettingsCache`: 负责管理每个视频的个性化设置，其数据最终也通过 `StorageManager` 持久化到 `chrome.storage.local`。
-    *   `SubtitleCacheManager`: 负责缓存翻译后的字幕文本，以视频ID、目标语言、API服务商等作为组合键，数据也持久化到 `chrome.storage.local`。需要考虑缓存的清理策略（如LRU）以管理存储空间。
-*   **原始字幕**: 考虑到数据的新鲜度和潜在的存储空间占用，原始字幕文本通常不建议大规模持久化存储。优先在内存中进行短期缓存，或在需要时由内容脚本从页面实时获取并传递给后台处理。
+#### 💻 代码贡献
+- Fork项目仓库并创建功能分支
+- 遵循项目的代码规范和架构设计
+- 编写清晰的提交信息和PR描述
+- 确保代码通过所有测试
 
-这种分层和分类的存储方式，旨在平衡持久性、性能、数据安全性和存储空间占用的需求。
+#### 📖 文档改进
+- 修正文档中的错误或不准确信息
+- 添加使用示例和最佳实践
+- 翻译文档到其他语言
 
-## 待办任务与重构计划 (YYYY-MM-DD)
+#### 🌐 本地化支持
+- 添加新的界面语言支持
+- 优化翻译质量和准确性
+- 支持新的翻译API服务
 
-### I. 代码一致性与冗余
+### 开发流程
 
-1.  **统一 EventBus 实现与事件类型定义：**
-    *   **状态**: 进行中
-    *   **分析**:
-        *   `content/content-script.ts` 已确认使用 `src/events/event-bus.ts` (主 EventBus 类)。
-        *   `content/event-bus.ts` (340行版本) 与 `src/events/event-bus.ts` 功能相似但有差异，目前未发现被项目主逻辑直接导入，疑似冗余。
-        *   `EventTypes` (事件名常量) 在 `content/content-script.ts` (旧的内部定义), `content/event-bus.ts` (导出的定义), 和 `content/main-world.ts` (内部定义) 中存在多个版本。
-    *   **已完成**:
-        *   已创建统一的事件定义文件 `src/events/event-types.ts`。
-        *   `content/content-script.ts` 已修改为导入并使用 `src/events/event-types.ts`。
-    *   **待办行动**:
-        *   仔细检查并确保 `content/content-script.ts` 中所有事件监听和触发点都已正确更新为使用 `src/events/event-types.ts` 中定义的新事件名/值 (尤其是 `UI_CONTROLS_INJECTED`, `UI_OVERLAY_CREATED`)。
-        *   审查并更新 `content/main-world.ts`，使其内部 `EventTypesConst` 与 `src/events/event-types.ts` 对齐，或在通过 `postMessage` 转发事件时使用标准化的事件名。
-        *   审查其他可能使用事件名的模块 (如 `background.ts`, `sidepanel/sidepanel.ts`)，确保它们也使用统一的 `EventTypes`。
-        *   在确认 `content/event-bus.ts` 文件无任何其他间接引用或特殊用途后，可计划从项目中移除或归档。
-    *   **备注**: `content/main-world.ts` 中的内联 EventBus 类本身因其特殊通信机制，暂不更改其类实现，但其使用的事件名需与标准统一。
+1. **准备阶段**：
+   - Fork并克隆仓库
+   - 创建开发分支
+   - 配置开发环境
 
-2.  **统一 `findMatchingTargetLanguage` 函数：**
-    *   **状态**: 未开始
-    *   **任务**: 对比 `sidepanel/ts/sidepanel.ts` 中的 `findMatchingTargetLanguage` 函数与 `sidepanel/sidepanel.ts` (72KB 版本) 中的同名函数。
-    *   **目标**: 确认两者逻辑是否一致。
-    *   **行动**: 若逻辑一致，确定一个标准版本，移除另一个副本，并更新调用点。
+2. **开发阶段**：
+   - 遵循架构设计原则
+   - 编写必要的测试
+   - 保持代码质量
 
-### II. 主要功能模块的重叠与统一
+3. **提交阶段**：
+   - 运行完整测试
+   - 提交Pull Request
+   - 参与代码审查
 
-3.  **梳理并统一侧边栏 (Side Panel) 实现：**
-    *   **状态**: 未开始
-    *   **任务**: 明确 `src/pages/sidepanel/SidePanel.tsx` (React 版本) 与 `sidepanel/sidepanel.html` + `sidepanel/sidepanel.ts` (传统 DOM 操作版本) 的未来。
-    *   **目标**: 选择一个作为主要的、长期维护的实现方案。
-    *   **行动建议**: 当前 `sidepanel/sidepanel.html` + `sidepanel/sidepanel.ts` (72KB) 功能更完整。若以此为基础，可考虑移除/归档 React 版本，或明确其不同用途。若选择 React 版本，则需大量迁移功能。
+### 联系方式
 
-4.  **整合 OpenAI 翻译逻辑：**
-    *   **状态**: 未开始
-    *   **任务**: 审阅 `background/openai-translator.ts` (`OpenAITranslator` 类) 与 `background/background.ts` 中直接实现的 OpenAI 调用函数。
-    *   **目标**: 统一 OpenAI API 的调用方式。
-    *   **行动建议**: 推荐以 `OpenAITranslator` 类作为标准。修改 `background/background.ts` 中的 `translateWithAPI` 函数，确保在选择 OpenAI 作为翻译API时，调用 `OpenAITranslator` 实例的方法。逐步移除 `background.ts` 中冗余的 OpenAI 直接实现函数。
+如有问题或建议，可通过以下方式联系：
+- **GitHub Issues**: 报告Bug和功能建议
+- **GitHub Discussions**: 技术讨论和经验分享
+- **Email**: 发送邮件到项目维护者
 
-### III. 代码规范和构建优化
+### 致谢
 
-5.  **路径别名统一：**
-    *   **状态**: 未开始
-    *   **任务**: 检查项目中 `import` 语句的路径。
-    *   **目标**: 尽可能统一使用 `tsconfig.json` 中定义的路径别名 (如 `@/*`) 替代相对路径 (`../`)。
+感谢所有为项目做出贡献的开发者和用户！每一个Issues、PR和反馈都让这个项目变得更好。
 
-6.  **Vite 构建配置确认 (侧边栏脚本)**：
-    *   **状态**: 未开始
-    *   **任务**: 明确 `sidepanel/sidepanel.html` 引用的 `sidepanel.js` 是如何由哪个 TypeScript 文件（特别是 `sidepanel/sidepanel.ts` 的 72KB 版本）编译而来的。
-    *   **目标**: 确保 Vite 配置能够清晰、正确地处理当前功能更完整的侧边栏脚本的构建。
+特别感谢：
+- 提供Bug报告和功能建议的用户
+- 贡献代码和文档的开发者
+- 协助测试和优化的社区成员
 
-7.  **清理未使用或废弃的文件：**
-    *   **状态**: 未开始
-    *   **任务**: 识别并评估项目中可能不再使用的文件 (如 `content/content-script-external.js`, `content/content-script-new-event.ts`, 各种 `.bak` 和 `.original` 文件)。
-    *   **目标**: 保持代码库整洁。
+---
 
-### IV. 当前主要问题追踪
+**📋 文档更新**: 2025-05-28  
+**🔄 版本**: 持续更新中  
+**📍 状态**: 积极维护
 
-8.  **插件加载失败 - "Cannot use import statement outside a module" 错误：**
-    *   **状态**: 进行中
-    *   **任务**: 持续监控并解决此错误。
-    *   **行动**: 在尝试调整输出路径后，若问题依旧，需更细致地审查 Chrome 加载扩展时的实际请求、文件内容以及是否有意外的脚本注入或加载流程。
+## 🔧 最新优化更新
 
-### V. UI 优化与冗余消除（2024-05-25更新）
+### Sidepanel状态同步优化 (v5.24)
 
-9.  **优化UI组件的初始化和管理：**
-    *   **状态**: 已完成
-    *   **任务**: 解决UI组件初始化时的冗余问题。
-    *   **改进内容**:
-        *   将Tooltip元素的创建从"鼠标悬停事件触发"移至"UI Manager初始化阶段"，避免首次使用时的DOM操作延迟
-        *   修改了`showTooltip`方法，移除了重复的元素创建检查，确保代码流程更清晰
+**问题**：用户手动关闭sidepanel时，翻译设置按钮的激活状态没有同步更新
 
-10. **合并并优化字幕容器管理：**
-    *   **状态**: 已完成
-    *   **任务**: 解决两个独立字幕容器系统的冗余问题。
-    *   **改进内容**:
-        *   统一字幕容器ID为`yt-translate-subtitle-overlay`
-        *   采用UIManager创建的DOM结构（结构更合理）
-        *   使用内容脚本负责填充内容和处理显示逻辑
-        *   通过事件系统`request:subtitle_overlay`实现两者之间的通信
-        *   默认将字幕容器设为隐藏状态，只在有内容时显示，解决了播放器上黑块问题
-        *   在字幕容器创建时增加条件判断，只有在翻译功能开启时才会创建
+**解决方案**：实现了多层次的关闭检测机制 + 直接消息通信
 
-11. **UI元素加载优化：**
-    *   **状态**: 已完成
-    *   **任务**: 提高UI元素加载的性能和用户体验。
-    *   **改进内容**:
-        *   预先创建UI组件，避免按需延迟创建带来的界面闪烁
-        *   优化了DOM操作，减少重排重绘
-        *   明确区分了UI结构创建和功能逻辑处理的职责
+#### 🎯 优化特性
+
+1. **多重关闭检测**：
+   - `visibilitychange` - 主要检测机制
+   - `pagehide` - 备用检测机制
+   - `beforeunload` - 额外保障
+
+2. **直接消息通信**：
+   - 路径：`sidepanel → content script`
+   - 跳过background，提高响应速度
+
+3. **智能消息过滤**：
+   - 避免重复发送`closeSidePanel`消息
+   - 根据触发来源优化处理逻辑
+
+#### 📋 测试方法
+
+1. **基本功能测试**：
+   ```
+   1. 打开YouTube视频页面
+   2. 点击翻译设置按钮（按钮应变为激活状态）
+   3. 手动关闭sidepanel（点击X或按ESC）
+   4. 验证：翻译设置按钮应自动变为未激活状态
+   ```
+
+2. **多种关闭方式测试**：
+   ```
+   - 点击sidepanel的X按钮
+   - 按ESC键关闭
+   - 点击sidepanel外部区域（如果支持）
+   - 切换到其他标签页再切回
+   ```
+
+3. **性能验证**：
+   ```
+   - 检查控制台日志，确认只发送必要的消息
+   - 验证没有重复的closeSidePanel消息
+   ```
+
+#### 🔍 日志说明
+
+- `[sidepanel] 设置关闭检测机制` - 关闭检测已启用
+- `[sidepanel] 检测到页面隐藏，可能是sidepanel被关闭` - 检测到关闭
+- `[ui-manager] 收到sidepanel关闭通知` - 成功接收通知
+- `[ui-manager] 由sidepanel-close-detection触发的关闭，跳过发送closeSidePanel消息` - 避免重复消息
+
+### 开发环境设置

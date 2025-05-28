@@ -1,7 +1,7 @@
 {
-  "name": "4.17",
+  "name": "youtube-subtitle-translator",
   "version": "1.0.0",
-  "description": "## 简介",
+  "description": "YouTube字幕翻译助手 - 为YouTube视频提供实时字幕翻译功能的Chrome扩展",
   "main": "index.js",
   "scripts": {
     "dev": "concurrently \"npm run dev:main\" \"npm run dev:content\"",
@@ -11,7 +11,13 @@
     "build:main": "vite build",
     "build:content": "vite build --mode content-script"
   },
-  "keywords": [],
+  "keywords": [
+    "chrome-extension",
+    "youtube",
+    "subtitle",
+    "translation",
+    "字幕翻译"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

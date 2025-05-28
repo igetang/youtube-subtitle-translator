@@ -138,7 +138,7 @@ export class SettingsManager {
   private static instance: SettingsManager;
   private storageManager: StorageManager;
   private changeHandlers: Map<SettingChangeEvent, Set<SettingChangeHandler>>;
-  private settingsCache: Partial<UserSettings> = {};
+  private settingsMemoryCache: Partial<UserSettings> = {};
   private initialized: boolean = false;
 
   /**
@@ -176,10 +176,10 @@ export class SettingsManager {
           const settingKey = key.replace(StorageKeys.SETTINGS_PREFIX, '') as keyof UserSettings;
           const change = changes[key];
           
-          // 更新缓存
-          if (this.settingsCache) {
+          // 更新memory cache
+          if (this.settingsMemoryCache) {
             // 使用类型断言
-            (this.settingsCache as any)[settingKey] = change.newValue;
+            (this.settingsMemoryCache as any)[settingKey] = change.newValue;
           }
           
           // 根据设置键触发对应事件
@@ -238,7 +238,7 @@ export class SettingsManager {
           try {
             handler(newValue, oldValue, event as SettingChangeEvent);
           } catch (error) {
-            console.error(`设置变更处理函数执行错误 (事件: ${event}):`, error);
+            console.error(`[settings-manager] 设置变更处理函数执行错误 (事件: ${event}):`, error);
           }
         });
       }
@@ -278,7 +278,7 @@ export class SettingsManager {
   }
 
   /**
-   * 初始化设置管理器，加载并缓存所有设置
+   * 初始化设置管理器，加载并cache所有设置到memory cache
    */
   public async initialize(): Promise<void> {
     if (this.initialized) return;
@@ -287,13 +287,13 @@ export class SettingsManager {
       // 获取所有设置
       const settings = await this.storageManager.getByPrefix(StorageKeys.SETTINGS_PREFIX, 'sync');
       
-      // 转换为内部格式并存入缓存
-      this.settingsCache = {};
+      // 转换为内部格式并存入memory cache
+      this.settingsMemoryCache = {};
       Object.keys(settings).forEach((key) => {
         if (key.startsWith(StorageKeys.SETTINGS_PREFIX)) {
           const settingKey = key.replace(StorageKeys.SETTINGS_PREFIX, '') as keyof UserSettings;
           // 使用类型断言
-          (this.settingsCache as any)[settingKey] = settings[key];
+          (this.settingsMemoryCache as any)[settingKey] = settings[key];
         }
       });
       
@@ -301,11 +301,11 @@ export class SettingsManager {
       await this.ensureDefaultSettings();
       
       this.initialized = true;
-      console.log('设置管理器初始化完成');
+      console.log('[settings-manager] 设置管理器初始化完成');
     } catch (error) {
-      console.error('设置管理器初始化失败:', error);
+      console.error('[settings-manager] 设置管理器初始化失败:', error);
       // 初始化失败时，使用默认设置
-      this.settingsCache = { ...DEFAULT_SETTINGS };
+      this.settingsMemoryCache = { ...DEFAULT_SETTINGS };
     }
   }
 
@@ -318,9 +318,9 @@ export class SettingsManager {
     
     // 检查所有默认设置键
     for (const key of Object.keys(DEFAULT_SETTINGS) as Array<keyof UserSettings>) {
-      // 如果缓存中没有该设置，或值为 undefined，使用默认值
-      if (this.settingsCache[key] === undefined) {
-        (this.settingsCache as any)[key] = DEFAULT_SETTINGS[key];
+      // 如果memory cache中没有该设置，或值为 undefined，使用默认值
+      if (this.settingsMemoryCache[key] === undefined) {
+        (this.settingsMemoryCache as any)[key] = DEFAULT_SETTINGS[key];
         settings[`${StorageKeys.SETTINGS_PREFIX}${key}`] = DEFAULT_SETTINGS[key];
         needSave = true;
       }
@@ -329,7 +329,7 @@ export class SettingsManager {
     // 如果有需要保存的默认设置，批量保存
     if (needSave) {
       await this.storageManager.setBatch(settings, 'sync');
-      console.log('已应用默认设置:', settings);
+      console.log('[settings-manager] 已应用默认设置:', settings);
     }
   }
 
@@ -343,8 +343,8 @@ export class SettingsManager {
       await this.initialize();
     }
     
-    // 合并缓存与默认值，确保返回完整的设置对象
-    return { ...DEFAULT_SETTINGS, ...this.settingsCache } as UserSettings;
+    // 合并memory cache与默认值，确保返回完整的设置对象
+    return { ...DEFAULT_SETTINGS, ...this.settingsMemoryCache } as UserSettings;
   }
 
   /**
@@ -358,17 +358,17 @@ export class SettingsManager {
       await this.initialize();
     }
     
-    // 如果缓存中有该设置，直接返回
-    if (this.settingsCache[key] !== undefined) {
-      return this.settingsCache[key] as UserSettings[K];
+    // 如果memory cache中有该设置，直接返回
+    if (this.settingsMemoryCache[key] !== undefined) {
+      return this.settingsMemoryCache[key] as UserSettings[K];
     }
     
     // 否则从存储中获取
     const storageKey = `${StorageKeys.SETTINGS_PREFIX}${key}`;
     const value = await this.storageManager.get(storageKey, DEFAULT_SETTINGS[key], 'sync');
     
-    // 更新缓存
-    this.settingsCache[key] = value;
+    // 更新memory cache
+    this.settingsMemoryCache[key] = value;
     
     return value as UserSettings[K];
   }
@@ -385,12 +385,12 @@ export class SettingsManager {
     }
     
     // 如果值相同，不做任何操作
-    if (this.settingsCache[key] === value) {
+    if (this.settingsMemoryCache[key] === value) {
       return;
     }
     
-    // 更新缓存
-    this.settingsCache[key] = value;
+    // 更新memory cache
+    this.settingsMemoryCache[key] = value;
     
     // 保存到存储
     const storageKey = `${StorageKeys.SETTINGS_PREFIX}${key}`;
@@ -416,12 +416,12 @@ export class SettingsManager {
       const value = settings[key];
       
       // 跳过未定义的值和相同的值
-      if (value === undefined || this.settingsCache[key] === value) {
+      if (value === undefined || this.settingsMemoryCache[key] === value) {
         continue;
       }
       
-      // 更新缓存
-      (this.settingsCache as any)[key] = value;
+      // 更新memory cache
+      (this.settingsMemoryCache as any)[key] = value;
       
       // 添加到存储对象
       const storageKey = `${StorageKeys.SETTINGS_PREFIX}${key}`;
@@ -448,8 +448,8 @@ export class SettingsManager {
       await this.storageManager.remove(keysToRemove, 'sync');
     }
     
-    // 重置缓存
-    this.settingsCache = { ...DEFAULT_SETTINGS };
+    // 重置memory cache
+    this.settingsMemoryCache = { ...DEFAULT_SETTINGS };
     
     // 保存默认设置
     const defaultStorageSettings: Record<string, any> = {};
@@ -459,7 +459,7 @@ export class SettingsManager {
     }
     
     await this.storageManager.setBatch(defaultStorageSettings, 'sync');
-    console.log('所有设置已重置为默认值');
+    console.log('[settings-manager] 所有设置已重置为默认值');
   }
 
   /**
@@ -493,10 +493,10 @@ export class SettingsManager {
       
       // 应用设置
       await this.setMultipleSettings(validSettings);
-      console.log('设置导入成功');
+      console.log('[settings-manager] 设置导入成功');
       return true;
     } catch (error) {
-      console.error('设置导入失败:', error);
+      console.error('[settings-manager] 设置导入失败:', error);
       return false;
     }
   }

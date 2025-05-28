@@ -1,20 +1,20 @@
 import { RateLimitManager } from './rate-limit-manager';
 import { BatchProcessor } from './batch-processor';
-import { CacheManager } from './cache-manager';
+import { TranslationLocalStorage } from './translation-local-storage';
 
 /**
  * @class OpenAITranslator - 主翻译类
- * 整合CacheManager、BatchProcessor和RateLimitManager提供端到端翻译
+ * 整合TranslationLocalStorage、BatchProcessor和RateLimitManager提供端到端翻译
  */
 export class OpenAITranslator {
-  private cacheManager: CacheManager;
+  private translationLocalStorage: TranslationLocalStorage;
   private rateLimitManager: RateLimitManager;
   private apiKey: string;
   private model: string;
   private temperature: number;
   
   constructor(apiKey: string, openaiConfig: { model: string, customModel: string, temperature: number }) {
-    this.cacheManager = CacheManager.getInstance();
+    this.translationLocalStorage = TranslationLocalStorage.getInstance();
     this.rateLimitManager = RateLimitManager.getInstance();
     this.apiKey = apiKey;
     
@@ -43,29 +43,29 @@ export class OpenAITranslator {
     
     const results: { [id: string]: string } = {};
     
-    // 1. 从缓存获取已翻译内容
-    const cache = await this.cacheManager.getCache(sourceLang, targetLang, this.model);
-    const fromCache: { id: string, text: string }[] = [];
+        // 1. 从本地存储获取已翻译内容
+    const localStorageData = await this.translationLocalStorage.getLocalStorage(sourceLang, targetLang, this.model);
+    const fromLocalStorage: { id: string, text: string }[] = [];
     const pendingTranslation: { id: string, text: string }[] = [];
-    
-    // 检查哪些内容可以从缓存获取
+
+    // 检查哪些内容可以从本地存储获取
     for (const subtitle of subtitles) {
-      const cacheKey = this.cacheManager.generateCacheKey(subtitle.text, sourceLang, targetLang, this.model);
-      if (cache[cacheKey]) {
-        results[subtitle.id] = cache[cacheKey];
-        fromCache.push(subtitle);
+      const localStorageKey = this.translationLocalStorage.generateLocalStorageKey(subtitle.text, sourceLang, targetLang, this.model);
+              if (localStorageData[localStorageKey]) {
+          results[subtitle.id] = localStorageData[localStorageKey];
+        fromLocalStorage.push(subtitle);
       } else {
         pendingTranslation.push(subtitle);
       }
     }
     
-    if (fromCache.length > 0) {
-      console.log(`[OpenAITranslator] ✓ 从缓存中获取了 ${fromCache.length} 条翻译`);
+        if (fromLocalStorage.length > 0) {
+      console.log(`[OpenAITranslator] ✓ 从本地存储中获取了 ${fromLocalStorage.length} 条翻译`);
     }
-    
-    // 如果全部从缓存获取，直接返回结果
+
+    // 如果全部从本地存储获取，直接返回结果
     if (pendingTranslation.length === 0) {
-      console.log(`[OpenAITranslator] ✅ 所有翻译都从缓存获取，无需调用API`);
+              console.log(`[OpenAITranslator] 所有翻译都从本地存储获取，无需调用API`);
       return results;
     }
     
@@ -169,14 +169,14 @@ export class OpenAITranslator {
               if (index < translatedSegments.length) {
                 results[subtitle.id] = translatedSegments[index];
                 
-                // 更新缓存
-                const cacheKey = this.cacheManager.generateCacheKey(
+                // 更新本地存储
+                const localStorageKey = this.translationLocalStorage.generateLocalStorageKey(
                   subtitle.text, 
                   sourceLang, 
                   targetLang, 
                   this.model
                 );
-                cache[cacheKey] = translatedSegments[index];
+                localStorageData[localStorageKey] = translatedSegments[index];
               }
             });
           } else {
@@ -187,14 +187,14 @@ export class OpenAITranslator {
               if (index < translatedSegments.length) {
                 results[subtitle.id] = translatedSegments[index];
                 
-                // 更新缓存
-                const cacheKey = this.cacheManager.generateCacheKey(
+                // 更新本地存储
+                const localStorageKey = this.translationLocalStorage.generateLocalStorageKey(
                   subtitle.text, 
                   sourceLang, 
                   targetLang, 
                   this.model
                 );
-                cache[cacheKey] = translatedSegments[index];
+                localStorageData[localStorageKey] = translatedSegments[index];
               } else {
                 // 对于没有匹配的字幕，使用错误信息
                 results[subtitle.id] = `[翻译错误: 批量翻译结果数量不匹配]`;
@@ -221,12 +221,12 @@ export class OpenAITranslator {
       }
     }
     
-    // 6. 保存更新后的缓存
-    await this.cacheManager.saveCache(cache, sourceLang, targetLang, this.model);
-    
+        // 6. 保存更新后的本地存储
+    await this.translationLocalStorage.saveLocalStorage(localStorageData, sourceLang, targetLang, this.model);
+
     // 7. 添加成功提示
-    const successCount = Object.keys(results).length - fromCache.length;
-    console.log(`[OpenAITranslator] ✅ 翻译成功完成！从API翻译 ${successCount}/${subtitles.length} 条字幕，从缓存获取 ${fromCache.length} 条`);
+    const successCount = Object.keys(results).length - fromLocalStorage.length;
+          console.log(`[OpenAITranslator] 翻译成功完成！从API翻译 ${successCount}/${subtitles.length} 条字幕，从本地存储获取 ${fromLocalStorage.length} 条`);
     
     return results;
   }

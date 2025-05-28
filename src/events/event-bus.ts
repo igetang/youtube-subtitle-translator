@@ -269,7 +269,7 @@ export class EventBus {
           }, 0);
         }
       } catch (error) {
-        console.error(`事件处理函数执行错误 (事件: ${eventType}):`, error);
+        console.error(`[event-bus] 事件处理函数执行错误 (事件: ${eventType}):`, error);
       }
       
       // 如果是一次性处理函数，执行后移除
