@@ -13,13 +13,47 @@ import { OpenAITranslator } from './openai-translator';
 import { RateLimitManager } from './rate-limit-manager';
 import { BatchProcessor } from './batch-processor';
 import { TranslationLocalStorage } from './translation-local-storage';
-// --- 新增导入 ---
+// --- 存储管理导入 ---
 import { StorageManager, StorageKeys } from '../src/storage/storage-manager';
+// 旧的设置管理（保留兼容性）
 import { VideoSettingsLocalStorage, VideoSettings } from '../src/storage/video-settings-local-storage';
-// --- 新增导入语言处理工具 ---
-import { findMatchingTargetLanguage, isLanguageRelevantToUI } from '../src/utils/language-processing';
+// 新的统一设置管理
+import { GlobalSettingsManager } from '../src/storage/global-settings-manager';
+import { MigrationHelper } from '../src/storage/migration-helper';
+import { GlobalSettings, VideoSpecificData } from '../src/storage/global-settings';
+// --- 语言处理工具 ---
+import { isLanguageRelevantToUI } from '../src/utils/language-processing';
 import { targetLanguages } from '../src/utils/languages'; // 可能需要访问语言列表以获取默认值
 // ----------------
+
+// 🔄 新增：全局设置管理器初始化和数据迁移
+const globalSettingsManager = GlobalSettingsManager.getInstance();
+const migrationHelper = MigrationHelper.getInstance();
+
+// 初始化设置管理器和执行数据迁移
+(async () => {
+  try {
+    console.log('[background] 开始初始化全局设置管理器...');
+    
+    // 检查是否需要迁移
+    const needsMigration = await migrationHelper.needsMigration();
+    if (needsMigration) {
+      console.log('[background] 检测到需要数据迁移，开始迁移...');
+      const migrationStatus = await migrationHelper.migrate();
+      if (migrationStatus.completed) {
+        console.log('[background] ✅ 数据迁移完成');
+      } else {
+        console.warn('[background] ⚠️ 数据迁移部分完成或失败:', migrationStatus);
+      }
+    }
+    
+    // 初始化全局设置管理器
+    await globalSettingsManager.initialize();
+    console.log('[background] ✅ 全局设置管理器初始化完成');
+  } catch (error) {
+    console.error('[background] ❌ 全局设置管理器初始化失败:', error);
+  }
+})();
 
 /**
  * 统一本地存储服务类
@@ -46,40 +80,26 @@ class LocalStorageService {
     console.log(`[background] 获取翻译配置: videoId=${videoId}`);
     
     try {
-          // 检查视频特定设置local storage (VideoSettingsLocalStorage -> chrome.storage.local)
-    const videoSettings = await VideoSettingsLocalStorage.getInstance().getVideoSettings(videoId);
+      // 获取全局设置作为默认配置 (chrome.storage.local)
+      const globalSettings = await StorageManager.getInstance().get(
+        StorageKeys.GLOBAL_SETTINGS_PREFIX,
+        {
+          [StorageKeys.SETTINGS.SOURCE_LANG]: 'en',
+          [StorageKeys.SETTINGS.TARGET_LANG]: 'zh-CN',
+        },
+        'local'
+      );
       
-      if (videoSettings) {
-        console.log(`[background] 找到视频设置local storage:`, videoSettings);
-        
-        // 如果有local storage设置，返回配置
-        return {
-          success: true,
-          hasCache: true,
-          config: {
-            sourceLang: videoSettings.sourceLang,
-            targetLang: videoSettings.targetLang,
-            hasSubtitles: videoSettings.hasSubtitles,
-            sourceTrackKind: videoSettings.sourceTrackKind
-          }
-        };
-      } else {
-        console.log(`[background] 未找到视频设置local storage，使用默认配置`);
-        
-        // 获取全局设置作为默认配置 (chrome.storage.local)
-        const globalSettings = await loadAndApplyGlobalSettings();
-        
-        return {
-          success: true,
-          hasCache: false,
-          config: {
-            sourceLang: globalSettings[StorageKeys.SETTINGS.SOURCE_LANG] || 'en',
-            targetLang: globalSettings[StorageKeys.SETTINGS.TARGET_LANG] || 'zh-CN',
-            hasSubtitles: null, // 需要获取轨道信息后确定
-            sourceTrackKind: null
-          }
-        };
-      }
+      return {
+        success: true,
+        hasCache: false,
+        config: {
+          sourceLang: globalSettings[StorageKeys.SETTINGS.SOURCE_LANG],
+          targetLang: globalSettings[StorageKeys.SETTINGS.TARGET_LANG],
+          hasSubtitles: null, // 需要获取轨道信息后确定
+          sourceTrackKind: null
+        }
+      };
     } catch (error) {
       console.error(`[background] 获取翻译配置失败:`, error);
       return {
@@ -609,7 +629,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         await StorageManager.getInstance().setBatch(globalSettingsToSave, 'local');
         console.log("[background] 全局设置已保存:", globalSettingsToSave);
         if (videoId) {
-          const currentVideoSettings = await VideoSettingsLocalStorage.getInstance().getVideoSettings(videoId);
+          const currentVideoSettings = await globalSettingsManager.getVideoSpecificData(videoId);
           const hasSubtitles = currentVideoSettings?.hasSubtitles ?? true;
           
           // 🔧 优化：检查是否需要保存视频设置（避免重复写入）
@@ -637,7 +657,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               hasSubtitles: hasSubtitles,
               sourceTrackKind: sourceTrackKind
             };
-            await VideoSettingsLocalStorage.getInstance().saveVideoSettings(videoSpecificSettings);
+            await globalSettingsManager.saveVideoSpecificData(videoSpecificSettings);
             console.log(`[background] 视频 ${videoId} 的特定设置已保存。`);
           } else {
             console.log(`[background] 视频 ${videoId} 的设置无变化，跳过保存操作`);
@@ -651,7 +671,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (msgTabId) {
           try {
             // 获取当前翻译开关状态
-            const translateActiveResult = await StorageManager.getInstance().get('settings.translateActive', 'sync');
+            const translateActiveResult = await StorageManager.getInstance().get('settings.translateActive', 'local');
             const isTranslateActive = !!translateActiveResult;
             
             console.log(`[background] 设置更新后检查翻译开关状态: ${isTranslateActive}`);
@@ -730,7 +750,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     // 从存储中获取API设置
-    chrome.storage.sync.get(['translationApi', 'apiKey', 'serviceType', 'membershipCredentials', 'customApiConfig', 'openaiConfig'], async (settings) => {
+    chrome.storage.local.get(['translationApi', 'apiKey', 'serviceType', 'membershipCredentials', 'customApiConfig', 'openaiConfig'], async (settings) => {
       try {
         const apiType = settings.translationApi || 'dummy';
         console.log(`[background] 使用翻译API: ${apiType}`);
@@ -2387,29 +2407,6 @@ async function translateWithAPI(
   }
 }
 
-// 默认全局设置 (基于 sidepanel.ts 中的 defaultSettings)
-const globalDefaultSettings = {
-    sourceLang: '',
-    targetLang: '',
-    subtitleMode: 'bilingual', // 新增或确认默认值
-    translationApi: 'google-free', // 新增或确认默认值
-    apiKey: '',
-    serviceType: 'api-key', // 确认这个是否需要成为一个更明确的全局设置项或依赖于 translationApi
-    membershipCredentials: { loggedIn: false, provider: undefined, userId: '' },
-    customApiConfig: {
-        url: '',
-        method: 'POST',
-        headers: '{\\"Content-Type\\": \\"application/json\\"}', // JSON stringified
-        body: '{\\"text\\": \\"{text}\\", \\"source\\": \\"{source}\\", \\"target\\": \\"{target}\\"}', // JSON stringified
-        responsePath: 'data.translations[0].text'
-    },
-    openaiConfig: {
-        model: 'gpt-4o',
-        customModel: '',
-        temperature: 0.7
-    }
-};
-
 /**
  * 初始化侧边面板数据
  * @param tabId 标签页ID
@@ -2419,13 +2416,12 @@ async function initializeSidePanel(tabId: number, videoIdFromSidePanel?: string 
   console.log(`[background] 调用 initializeSidePanel，标签页ID: ${tabId}, 来自侧边栏的视频ID: ${videoIdFromSidePanel}`);
 
   // 步骤 1: 加载全局设置
-  const globalSettings = await loadAndApplyGlobalSettings();
+  const globalSettings = await globalSettingsManager.getAllSettings();
   console.log('[background] initializeSidePanel: 加载的全局设置:', globalSettings);
 
-  // 步骤 1.5: 获取浏览器UI语言
-  const uiLang = chrome.i18n.getUILanguage();
-  console.log(`[background] initializeSidePanel: 获取到的浏览器UI语言: ${uiLang}`);
-
+  // 🔧 优化：移除重复的UI语言获取，直接从globalSettings中获取智能选择的结果
+  // GlobalSettingsManager已经处理了UI语言逻辑，不需要重复调用chrome.i18n.getUILanguage()
+  
   // 步骤 2: 确定要使用的 Video ID
   const currentVideoId = videoIdFromSidePanel || await getVideoIdForTab(tabId);
 
@@ -2441,7 +2437,7 @@ async function initializeSidePanel(tabId: number, videoIdFromSidePanel?: string 
       data: { 
         state: 'error', 
         message: '无法获取 Video ID', 
-        settings: { globalSettings: globalSettings, uiLangCode: uiLang }, // 发送一些基础信息
+        settings: { globalSettings: globalSettings }, // 🔧 优化：移除重复的UI语言调用，sidepanel从globalSettings获取
         availableTracks: [],
         videoId: null
       }
@@ -2450,37 +2446,35 @@ async function initializeSidePanel(tabId: number, videoIdFromSidePanel?: string 
   }
   console.log(`[background] initializeSidePanel: 使用的视频ID: ${currentVideoId}`);
 
-      // 步骤 3: 加载特定视频的设置（检查local storage）
-    const videoSettings = await VideoSettingsLocalStorage.getInstance().getVideoSettings(currentVideoId);
-    
-    let hasSubtitles = false;
-    let availableTracks: { languageCode: string, languageName: string, kind: string }[] = [];
-    let determinedSourceLang = '';
-    let determinedTargetLang = '';
-    
-    if (videoSettings) {
-      console.log(`[background] initializeSidePanel: 加载的视频 ${currentVideoId} 的特定设置:`, videoSettings);
-      hasSubtitles = videoSettings.hasSubtitles;
-      if (hasSubtitles) {
-        console.log(`[background] initializeSidePanel: local storage显示视频有字幕，使用local storage数据`);
-        const cachedTracks = await StorageManager.getInstance().get(
-          `${StorageKeys.LOCAL.VIDEO_TRACKS_PREFIX}${currentVideoId}`,
-          [] as { languageCode: string, languageName: string, kind: string }[],
-          'local'
-        );
-        availableTracks = cachedTracks;
-        determinedSourceLang = videoSettings.sourceLang;
-        determinedTargetLang = videoSettings.targetLang;
-        console.log(`[background] initializeSidePanel: 使用local storage的源语言: ${determinedSourceLang}, 目标语言: ${determinedTargetLang}`);
-      } else {
-        console.log(`[background] initializeSidePanel: local storage显示视频无字幕`);
+  // 步骤 3: 加载特定视频的设置（检查全局设置中的视频缓存）
+  const videoData = await globalSettingsManager.getVideoSpecificData(currentVideoId);
+  
+  let hasSubtitles = false;
+  let availableTracks: { languageCode: string, languageName: string, kind: string }[] = [];
+  let determinedSourceLang = '';
+  let determinedTargetLang = '';
+  
+  if (videoData) {
+    console.log(`[background] initializeSidePanel: 加载的视频 ${currentVideoId} 的特定数据:`, videoData);
+    hasSubtitles = videoData.hasSubtitles;
+    if (hasSubtitles) {
+      console.log(`[background] initializeSidePanel: 视频缓存显示视频有字幕，使用缓存数据`);
+      const cachedTracks = await StorageManager.getInstance().get(
+        `${StorageKeys.LOCAL.VIDEO_TRACKS_PREFIX}${currentVideoId}`,
+        [] as { languageCode: string, languageName: string, kind: string }[],
+        'local'
+      );
+      availableTracks = cachedTracks;
+      determinedSourceLang = videoData.sourceLang;
+      determinedTargetLang = videoData.targetLang;
+      console.log(`[background] initializeSidePanel: 使用缓存的源语言: ${determinedSourceLang}, 目标语言: ${determinedTargetLang}`);
+    } else {
+      console.log(`[background] initializeSidePanel: 视频缓存显示视频无字幕`);
       hasSubtitles = false;
       availableTracks = [];
     }
   } else {
-    console.log(`[background] initializeSidePanel: 未找到 videoId: ${currentVideoId} 的特定视频设置，请求内容脚本获取轨道信息`);
-    
-    // REMOVED: 不再向侧边栏发送 loadingTracks 状态
+    console.log(`[background] initializeSidePanel: 未找到 videoId: ${currentVideoId} 的特定视频数据，请求内容脚本获取轨道信息`);
     
     try {
       console.log(`[background] 向内容脚本请求轨道: 标签页ID=${tabId}, 视频ID=${currentVideoId}`);
@@ -2517,43 +2511,38 @@ async function initializeSidePanel(tabId: number, videoIdFromSidePanel?: string 
   }
   
   if (!determinedSourceLang) {
-    determinedSourceLang = globalSettings[StorageKeys.SETTINGS.SOURCE_LANG] || 'en';
+    determinedSourceLang = globalSettings.sourceLang || 'en';
     console.log(`[background] 使用全局设置或默认源语言: ${determinedSourceLang}`);
   }
   
   if (!determinedTargetLang) {
-    determinedTargetLang = globalSettings[StorageKeys.SETTINGS.TARGET_LANG];
-    if (!determinedTargetLang || !targetLanguages.some(l => l.code === determinedTargetLang)) {
-      const matchedLang = findMatchingTargetLanguage(uiLang);
-      determinedTargetLang = matchedLang ? matchedLang.code : 'en';
-      console.log(`[background] 使用基于UI语言(${uiLang})的目标语言: ${determinedTargetLang}`);
-    } else {
-      console.log(`[background] 使用全局设置的目标语言: ${determinedTargetLang}`);
-    }
+    // 🔧 优化：直接使用GlobalSettingsManager中已经处理过的智能目标语言
+    determinedTargetLang = globalSettings.targetLang;
+    console.log(`[background] 使用全局设置的智能目标语言: ${determinedTargetLang}`);
   }
   
   const settingsForSidePanel = {
     globalSettings: globalSettings,
-    videoSettings: videoSettings, 
+    videoSettings: videoData, 
     determinedSourceLang: determinedSourceLang,
     determinedTargetLang: determinedTargetLang,
-    hasSubtitles: hasSubtitles,
-    uiLangCode: uiLang
+    hasSubtitles: hasSubtitles
+    // 🔧 优化：完全移除uiLangCode字段，sidepanel应从globalSettings中获取UI语言相关信息
   };
   
-  if (!videoSettings || videoSettings.hasSubtitles !== hasSubtitles || videoSettings.sourceLang !== determinedSourceLang || videoSettings.targetLang !== determinedTargetLang) {
-    console.log(`[background] 更新VideoSettingsLocalStorage: 视频ID=${currentVideoId}, 源语言=${determinedSourceLang}, 目标语言=${determinedTargetLang}, 是否有字幕=${hasSubtitles}`);
+  if (!videoData || videoData.hasSubtitles !== hasSubtitles || videoData.sourceLang !== determinedSourceLang || videoData.targetLang !== determinedTargetLang) {
+    console.log(`[background] 更新GlobalSettingsManager: 视频ID=${currentVideoId}, 源语言=${determinedSourceLang}, 目标语言=${determinedTargetLang}, 是否有字幕=${hasSubtitles}`);
     
     // 🔧 优化：只在真正需要更新时才更新lastUsed时间戳
     const now = Date.now();
-    const shouldUpdateTimestamp = !videoSettings || 
-      (now - (videoSettings.lastUsed || 0)) > 3600000; // 1小时内不重复更新时间戳
+    const shouldUpdateTimestamp = !videoData || 
+      (now - (videoData.lastUsed || 0)) > 3600000; // 1小时内不重复更新时间戳
     
-    const lastUsedTime = shouldUpdateTimestamp ? now : (videoSettings?.lastUsed || now);
+    const lastUsedTime = shouldUpdateTimestamp ? now : (videoData?.lastUsed || now);
     
-    console.log(`[background] 时间戳更新策略: 是否更新=${shouldUpdateTimestamp}, 当前时间=${now}, 上次使用=${videoSettings?.lastUsed || 0}, 新时间戳=${lastUsedTime}`);
+    console.log(`[background] 时间戳更新策略: 是否更新=${shouldUpdateTimestamp}, 当前时间=${now}, 上次使用=${videoData?.lastUsed || 0}, 新时间戳=${lastUsedTime}`);
     
-    await VideoSettingsLocalStorage.getInstance().saveVideoSettings({
+    await globalSettingsManager.saveVideoSpecificData({
       videoId: currentVideoId,
       sourceLang: determinedSourceLang,
       targetLang: determinedTargetLang,
@@ -2568,7 +2557,7 @@ async function initializeSidePanel(tabId: number, videoIdFromSidePanel?: string 
     action: 'initializeSidePanelUI',
     tabId: tabId,
     data: {
-      state: hasSubtitles ? 'ready' : (availableTracks.length === 0 && !videoSettings?.hasSubtitles ? 'noTracks' : 'error'),
+      state: hasSubtitles ? 'ready' : (availableTracks.length === 0 && !videoData?.hasSubtitles ? 'noTracks' : 'error'),
       videoId: currentVideoId,
       availableTracks: availableTracks,
       settings: settingsForSidePanel,
@@ -2613,6 +2602,26 @@ async function getVideoIdForTab(tabId: number): Promise<string | null> {
 
 async function loadAndApplyGlobalSettings() {
   try {
+    // 定义默认全局设置
+    const globalDefaultSettings = {
+      translationApi: 'google-free',
+      apiKey: '',
+      targetLang: 'zh-CN',
+      sourceLang: 'auto',
+      subtitleMode: 'bilingual',
+      fontSize: 16,
+      fontColor: '#ffffff',
+      backgroundColor: '#000000',
+      textStrokeColor: '#000000',
+      textStrokeWidth: 2,
+      lineWrappingMode: 'auto',
+      maxLinesPerCaption: 2,
+      autoDetectSourceLanguage: true,
+      openaiConfigModel: 'gpt-4o',
+      openaiConfigCustomModel: '',
+      openaiConfigTemperature: 0.7
+    };
+    
     const settings = await StorageManager.getInstance().getBatch([
       StorageKeys.SETTINGS.TRANSLATION_API,
       StorageKeys.SETTINGS.API_KEY,

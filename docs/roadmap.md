@@ -42,7 +42,7 @@
 
 - [ ] 实现存储区域完全分离：
   - [ ] 为设置、缓存和会话数据定义明确的键名前缀规范
-  - [ ] 迁移现有存储使用至对应区域（sync、local、session）
+  - [ ] 🔧 架构更新：项目统一使用 chrome.storage.local 存储所有数据
   - [ ] 创建存储访问层(Storage Access Layer)模块
 - [ ] 优化onChanged事件监听：
   - [ ] 重构已有监听器，使用细粒度键筛选

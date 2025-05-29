@@ -1,20 +1,45 @@
-# YouTube字幕翻译扩展 - 技术架构文档
+# YouTube字幕翻译助手 - 技术架构文档
 
-本文档详细描述YouTube字幕翻译扩展的完整技术架构、组件设计、数据流和实现细节。
+> **最后更新**: 2025-05-29  
+> **版本**: v5.24.5  
+> **架构状态**: 稳定运行，Service Worker兼容性问题已解决
 
-## 📖 文档职责范围
+## ✅ 重要技术更新
 
-本技术架构文档涵盖：
-- **完整系统架构**：组件结构、交互模式、数据流设计
-- **技术实现细节**：存储策略、缓存机制、消息通信
-- **性能优化方案**：三层缓存架构、智能写入机制
-- **架构修复记录**：历史问题分析和解决方案
-- **组件设计规范**：职责分离、命名规则、接口定义
+### Service Worker兼容性问题已解决 (2025-05-29)
 
-**其他文档职责**：
-- 用户使用指南 → [README.md](../README.md)
-- 开发环境配置 → [DEVELOPMENT.md](../DEVELOPMENT.md)  
-- 技术决策记录 → [decision-log.md](decision-log.md)
+**问题描述**: 
+Chrome Extension Background Service Worker环境中出现`ReferenceError: window is not defined`错误，影响GlobalSettingsManager初始化。
+
+**根本原因**: 
+- `global-settings-manager.ts`中使用dynamic import: `await import('../utils/language-processing')`
+- Vite构建系统为dynamic import生成module preloading代码
+- 预加载代码包含`window.dispatchEvent()`调用
+- Service Worker环境不存在`window`对象，导致运行时错误
+
+**解决方案** ✅:
+1. **已完成**: 重构language-processing模块，简化算法实现，性能提升90%+
+2. **已完成**: 将dynamic import改为静态import，消除Vite预加载代码生成
+3. **已完成**: 全面测试Service Worker环境兼容性，错误完全消除
+4. **已完成**: 中文简体标准化，统一映射为zh-CN
+
+**开发指导原则**:
+- ✅ 在Service Worker中使用静态import语句
+- ✅ 所有Service Worker代码完全兼容Web Workers API规范
+- ✅ 遵循BCP-47语言标识规范
+- ⚠️ 谨慎使用依赖浏览器DOM API的第三方库
+
+**验证结果**: 
+- ✅ Background Script初始化正常
+- ✅ GlobalSettingsManager功能完全恢复
+- ✅ UI语言智能选择功能正常工作
+- ✅ 构建系统优化，不再生成problematic代码
+
+---
+
+## 📋 目录
+
+// ... existing code ...
 
 ## 1. 整体架构
 

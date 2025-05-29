@@ -124,18 +124,21 @@ URL: https://api.cognitive.microsofttranslator.com/translate
 
 #### chrome.storage
 用于存储和检索用户设置和缓存数据。
+**📋 项目架构**：统一使用 `chrome.storage.local` 存储所有数据
 ```typescript
 // 保存设置
-chrome.storage.sync.set({ key: value });
+chrome.storage.local.set({ key: value });
 
 // 获取设置
-chrome.storage.sync.get(['key'], (result) => {
+chrome.storage.local.get(['key'], (result) => {
   console.log(result.key);
 });
 
-// 监听设置变化
+// 监听设置变化（只监听local区域）
 chrome.storage.onChanged.addListener((changes, area) => {
-  // 处理变化
+  if (area === 'local') {
+    // 处理变化
+  }
 });
 ```
 

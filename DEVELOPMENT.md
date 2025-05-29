@@ -152,10 +152,13 @@ youtube-subtitle-translator/
 │   │   ├── event-bus.ts     # 事件总线
 │   │   └── event-types.ts   # 事件类型定义
 │   ├── storage/             # 存储管理
-│   │   ├── settings-manager.ts      # 设置管理器
 │   │   ├── storage-manager.ts       # 存储管理器
-│   │   ├── storage-test.ts          # 存储测试
-│   │   └── video-settings-local-storage.ts # 视频设置本地存储
+│   │   ├── global-settings.ts       # 新增：统一的全局设置类型定义，合并原UserSettings和VideoSettings
+│   │   ├── global-settings-manager.ts # 新增：统一的全局设置管理器，替代分散式设置管理
+│   │   ├── migration-helper.ts       # 新增：数据迁移助手，自动从旧架构迁移到新架构
+│   │   ├── settings-manager.ts      # 用户设置的专门管理器（保留兼容性）
+│   │   ├── video-settings-local-storage.ts # 视频级别设置的本地存储（保留兼容性）
+│   │   └── storage-test.ts          # 存储测试
 │   ├── translation/         # 翻译相关
 │   │   └── translation-dispatcher.ts # 翻译调度器
 │   └── utils/               # 工具函数
@@ -226,10 +229,13 @@ youtube-subtitle-translator/
   - `events/`: 事件系统，实现组件间高效通信机制
     - `event-bus.ts`: 发布/订阅模式的事件总线实现
     - `event-types.ts`: 所有事件类型的TypeScript定义
-  - `storage/`: 数据存储和缓存管理，包含三层缓存架构实现
-    - `storage-manager.ts`: 统一的存储访问层，支持多种存储区域
-    - `settings-manager.ts`: 用户设置的专门管理器
-    - `video-settings-local-storage.ts`: 视频级别设置的本地存储
+  - `storage/`: **🔄 新架构**：统一的数据存储和缓存管理，全新重构的设置系统
+    - `storage-manager.ts`: 统一的存储访问层，支持多种存储区域和变更监听
+    - `global-settings.ts`: **新增**：统一的全局设置类型定义，合并原UserSettings和VideoSettings
+    - `global-settings-manager.ts`: **新增**：统一的全局设置管理器，替代分散式设置管理
+    - `migration-helper.ts`: **新增**：数据迁移助手，自动从旧架构迁移到新架构
+    - `settings-manager.ts`: 用户设置的专门管理器（保留兼容性）
+    - `video-settings-local-storage.ts`: 视频级别设置的本地存储（保留兼容性）
     - `storage-test.ts`: 存储功能的测试代码
   - `translation/`: 翻译相关逻辑和多API封装
     - `translation-dispatcher.ts`: 翻译任务的调度和优先级管理
@@ -279,6 +285,13 @@ youtube-subtitle-translator/
 - **职责分离**: 后台脚本处理数据和API，内容脚本处理UI和交互，侧边栏提供设置界面
 - **事件驱动**: 使用事件总线实现组件间松耦合通信
 - **三层缓存**: Memory Cache (Background内存) → Local Storage → API调用的完整缓存策略
+- **🔄 统一设置管理**: 新的GlobalSettingsManager统一管理用户设置和视频特定设置，支持自动数据迁移
+
+#### 设置架构重构 (v5.24)
+- **统一数据模型**: 将原来分散的UserSettings和VideoSettings合并为GlobalSettings
+- **智能缓存管理**: 自动管理视频设置缓存，支持最近使用列表和容量限制
+- **无缝数据迁移**: MigrationHelper自动检测并迁移旧版本数据，保证用户设置不丢失
+- **变更通知机制**: 统一的设置变更监听和通知系统，提高响应性能
 
 #### 性能优化
 - **懒加载**: 仅在用户首次交互时完整初始化核心功能
@@ -602,160 +615,3 @@ npm run package
    rm -rf node_modules package-lock.json
    npm install
    ```
-
-2. **TypeScript类型错误**：
-   ```bash
-   # 检查类型定义
-   npm run type-check
-   ```
-
-3. **Vite构建失败**：
-   - 检查vite.config.ts配置
-   - 验证入口文件路径
-   - 确认依赖项已正确安装
-
-### 扩展运行时错误
-
-1. **Service Worker错误**：
-   - 检查background.ts中的异步操作
-   - 确认消息监听器正确设置
-   - 验证chrome API调用
-
-2. **内容脚本注入失败**：
-   - 检查manifest.json配置
-   - 验证内容脚本权限
-   - 确认YouTube页面匹配规则
-
-3. **存储访问错误**：
-   - 验证存储权限声明
-   - 检查存储键名规范
-   - 确认异步操作正确处理
-
-## 相关文档
-
-- [技术架构文档](docs/architecture.md) - 详细的技术架构和设计细节
-- [翻译流程说明](docs/translation-flow.md) - 字幕翻译的完整流程
-- [决策日志](docs/decision-log.md) - 技术决策记录
-- [故障排除指南](docs/troubleshooting.md) - 常见问题解决方案
-
-## 🤝 项目贡献
-
-### 贡献方式
-
-我们欢迎各种形式的贡献：
-
-#### 🐛 问题反馈
-- 使用GitHub Issues报告Bug或建议新功能
-- 提供详细的问题描述和复现步骤
-- 包含浏览器版本、扩展版本等环境信息
-
-#### 💻 代码贡献
-- Fork项目仓库并创建功能分支
-- 遵循项目的代码规范和架构设计
-- 编写清晰的提交信息和PR描述
-- 确保代码通过所有测试
-
-#### 📖 文档改进
-- 修正文档中的错误或不准确信息
-- 添加使用示例和最佳实践
-- 翻译文档到其他语言
-
-#### 🌐 本地化支持
-- 添加新的界面语言支持
-- 优化翻译质量和准确性
-- 支持新的翻译API服务
-
-### 开发流程
-
-1. **准备阶段**：
-   - Fork并克隆仓库
-   - 创建开发分支
-   - 配置开发环境
-
-2. **开发阶段**：
-   - 遵循架构设计原则
-   - 编写必要的测试
-   - 保持代码质量
-
-3. **提交阶段**：
-   - 运行完整测试
-   - 提交Pull Request
-   - 参与代码审查
-
-### 联系方式
-
-如有问题或建议，可通过以下方式联系：
-- **GitHub Issues**: 报告Bug和功能建议
-- **GitHub Discussions**: 技术讨论和经验分享
-- **Email**: 发送邮件到项目维护者
-
-### 致谢
-
-感谢所有为项目做出贡献的开发者和用户！每一个Issues、PR和反馈都让这个项目变得更好。
-
-特别感谢：
-- 提供Bug报告和功能建议的用户
-- 贡献代码和文档的开发者
-- 协助测试和优化的社区成员
-
----
-
-**📋 文档更新**: 2025-05-28  
-**🔄 版本**: 持续更新中  
-**📍 状态**: 积极维护
-
-## 🔧 最新优化更新
-
-### Sidepanel状态同步优化 (v5.24)
-
-**问题**：用户手动关闭sidepanel时，翻译设置按钮的激活状态没有同步更新
-
-**解决方案**：实现了多层次的关闭检测机制 + 直接消息通信
-
-#### 🎯 优化特性
-
-1. **多重关闭检测**：
-   - `visibilitychange` - 主要检测机制
-   - `pagehide` - 备用检测机制
-   - `beforeunload` - 额外保障
-
-2. **直接消息通信**：
-   - 路径：`sidepanel → content script`
-   - 跳过background，提高响应速度
-
-3. **智能消息过滤**：
-   - 避免重复发送`closeSidePanel`消息
-   - 根据触发来源优化处理逻辑
-
-#### 📋 测试方法
-
-1. **基本功能测试**：
-   ```
-   1. 打开YouTube视频页面
-   2. 点击翻译设置按钮（按钮应变为激活状态）
-   3. 手动关闭sidepanel（点击X或按ESC）
-   4. 验证：翻译设置按钮应自动变为未激活状态
-   ```
-
-2. **多种关闭方式测试**：
-   ```
-   - 点击sidepanel的X按钮
-   - 按ESC键关闭
-   - 点击sidepanel外部区域（如果支持）
-   - 切换到其他标签页再切回
-   ```
-
-3. **性能验证**：
-   ```
-   - 检查控制台日志，确认只发送必要的消息
-   - 验证没有重复的closeSidePanel消息
-   ```
-
-#### 🔍 日志说明
-
-- `[sidepanel] 设置关闭检测机制` - 关闭检测已启用
-- `[sidepanel] 检测到页面隐藏，可能是sidepanel被关闭` - 检测到关闭
-- `[ui-manager] 收到sidepanel关闭通知` - 成功接收通知
-- `[ui-manager] 由sidepanel-close-detection触发的关闭，跳过发送closeSidePanel消息` - 避免重复消息
-
-### 开发环境设置

@@ -139,7 +139,7 @@ class LocalStorageProxy {
    */
   async getTranslateActive(): Promise<boolean> {
     return new Promise((resolve) => {
-      chrome.storage.sync.get('translateActive', (result) => {
+      chrome.storage.local.get('translateActive', (result) => {
         resolve(!!result.translateActive);
       });
     });
@@ -150,7 +150,7 @@ class LocalStorageProxy {
    */
   async getTranslationSettings(): Promise<any> {
     return new Promise((resolve) => {
-      chrome.storage.sync.get(['sourceLang', 'targetLang', 'translationApi'], (result) => {
+      chrome.storage.local.get(['sourceLang', 'targetLang', 'translationApi'], (result) => {
         resolve({
           sourceLang: result.sourceLang || 'en',
           targetLang: result.targetLang || 'zh-CN',
@@ -310,7 +310,7 @@ function setupMessageHandlers() {
       const processedTracks = captionTracks.map((track: any) => ({
         languageCode: track.languageCode,
         languageName: track.name?.simpleText || track.languageCode,
-        kind: track.kind || 'standard'
+        kind: track.kind
       }));
       
       console.log(`[content-script] 轨道信息处理完成，准备保存到Memory Cache`);

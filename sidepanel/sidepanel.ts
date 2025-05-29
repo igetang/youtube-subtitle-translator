@@ -318,8 +318,8 @@ function findMatchingTargetLanguage(codeToMatch: string): Language | undefined {
         
         // 强化中文匹配: 所有中国大陆区域代码使用简体中文
         // Prefer Hans for CN/SG UI, Hant for TW/HK UI
-        if (regionOrScript === 'cn' || regionOrScript === 'sg' || regionOrScript === 'hans') {
-            console.log('[sidepanel] 匹配简体中文 (zh-Hans)');
+        if (regionOrScript === 'Hans' || regionOrScript === 'sg' || regionOrScript === 'hans') {
+            console.log('[sidepanel] 匹配简体中文 (zh-CN)');
             matchedLang = targetLanguages.find(lang => lang.code === 'zh-Hans');
         } else if (regionOrScript === 'tw' || regionOrScript === 'hk' || regionOrScript === 'hant') {
             console.log('[sidepanel] 匹配繁体中文 (zh-Hant)');
@@ -767,7 +767,7 @@ function getFallbackTargetLang(sourceLangCode: string): string {
     // 不同语言族的代表语言优先级列表
     // 按照使用频率和翻译质量排序
     const fallbackPriorities = [
-        'zh-Hans',  // 中文简体 - 全球第二大语言
+        'zh-CN',    // 中文简体 - 全球第二大语言
         'fr',       // 法语 - 国际通用语言
         'ja',       // 日语 - 东亚重要语言
         'de',       // 德语 - 欧洲重要语言
@@ -1488,8 +1488,9 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log("[sidepanel] ===== 侧边栏DOMContentLoaded开始 ======");
     
     // 1. 获取UI语言仅用于本地化显示（不参与逻辑处理）
-    uiLangCode = chrome.i18n.getUILanguage();
-    console.log(`[sidepanel] 获取UI语言用于本地化显示: ${uiLangCode}`);
+    // 🔧 优化：移除重复的UI语言调用，等待从GlobalSettingsManager获取
+    // uiLangCode = chrome.i18n.getUILanguage(); // ❌ 已移除：统一由GlobalSettingsManager处理
+    console.log(`[sidepanel] 等待从Background获取UI语言信息...`);
     
     // --- 打印所有受支持的语言 (可以保留，因为它不依赖 uiLangCode 的直接匹配结果) ---
     console.log(`[sidepanel] 支持的目标语言列表 (来自languages.ts):`, targetLanguages.map(l => `${l.code}:${l.name}`).join(', '));
@@ -1580,9 +1581,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             return false;
         }
 
+        // 🔧 优化：从Background的globalSettings中获取UI语言信息
+        const globalSettings = settings?.globalSettings || {};
+        if (!uiLangCode) {
+            // 如果还没有UI语言信息，从Browser API获取（这是唯一保留的调用点）
+            uiLangCode = chrome.i18n.getUILanguage();
+            console.log(`[sidepanel] 从Browser API获取UI语言: ${uiLangCode}`);
+        }
+
         if (availableTracks && settings) {
             // 使用统一的UI更新函数，一次性更新所有UI
-            const globalSettings = settings.globalSettings || {};
             const finalSourceLang = settings.determinedSourceLang;
             const finalTargetLang = settings.determinedTargetLang;
             
@@ -1619,7 +1627,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             console.log(`[sidepanel] Navigation matches. Notifying background to re-initialize... Tab ID: ${currentTabId}`);
             
             // 清理旧的UI状态，准备接收新数据
-            uiLangCode = chrome.i18n.getUILanguage(); // 重新获取UI语言以防万一
+            // 🔧 优化：移除重复的UI语言调用，等待新的Background数据
+            // uiLangCode = chrome.i18n.getUILanguage(); // ❌ 已移除：统一由GlobalSettingsManager处理
             if (sourceLangTrigger) {
                 if (sourceLangSelectedValue) {
                     sourceLangSelectedValue.textContent = '加载中...';

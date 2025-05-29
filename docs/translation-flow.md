@@ -54,7 +54,7 @@ translateButton.addEventListener('click', () => {
 
 - `UIManager.setTranslateActive()`方法处理状态更新
 - 更新按钮图标和提示文本
-- 将状态保存到`chrome.storage.sync`
+- 将状态保存到`chrome.storage.local`
 - 更新侧边栏显示参数
 - 当状态为激活时，触发`translation:start_requested`事件
 
@@ -63,7 +63,7 @@ translateButton.addEventListener('click', () => {
 public setTranslateActive(active: boolean): void {
   this.state.translateActive = active;
   this.updateTranslateButtonState(active);
-  chrome.storage.sync.set({ translateActive: active });
+  chrome.storage.local.set({ translateActive: active });
   
   if (active) {
     this.eventBus.emit('translation:start_requested', {});

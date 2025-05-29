@@ -354,13 +354,13 @@ async function progressiveTranslation(sourceEvents, sourceTrackInfo, targetLang)
 class StorageManager {
   // 读取用户设置（跨设备同步）
   static async getSettings(key, defaultValue) {
-    const result = await chrome.storage.sync.get(key);
+    const result = await chrome.storage.local.get(key);
     return result[key] ?? defaultValue;
   }
   
   // 保存用户设置
   static async saveSettings(key, value) {
-    await chrome.storage.sync.set({ [key]: value });
+    await chrome.storage.local.set({ [key]: value });
   }
   
   // 读取缓存数据（本地存储）
@@ -394,26 +394,15 @@ class StorageManager {
 ```typescript
 // 监控存储使用情况
 async function monitorStorageUsage() {
-  try {
-    const local = await chrome.storage.local.getBytesInUse();
-    const sync = await chrome.storage.sync.getBytesInUse();
-    
-    console.log(`存储使用 - 本地: ${(local/1024).toFixed(2)}KB, 同步: ${(sync/1024).toFixed(2)}KB`);
-    
-    // 检查是否接近限制
-    const localLimit = chrome.storage.local.QUOTA_BYTES;
-    const syncLimit = chrome.storage.sync.QUOTA_BYTES;
-    
-    if (local > localLimit * 0.8) {
-      console.warn(`本地存储使用较高: ${Math.round(local/localLimit*100)}%，考虑清理缓存`);
-      await cleanupCache();
-    }
-    
-    if (sync > syncLimit * 0.8) {
-      console.warn(`同步存储使用较高: ${Math.round(sync/syncLimit*100)}%`);
-    }
-  } catch (error) {
-    console.error('监控存储使用出错:', error);
+  const local = await chrome.storage.local.getBytesInUse();
+  // 项目架构：统一使用 local 存储，不再主要使用 sync
+  console.log(`存储使用 - 本地: ${(local/1024).toFixed(2)}KB`);
+  
+  // 检查存储限制（主要关注local存储）
+  const localLimit = chrome.storage.local.QUOTA_BYTES;
+  
+  if (local > localLimit * 0.8) {
+    console.warn(`本地存储使用较高: ${Math.round(local/localLimit*100)}%`);
   }
 }
 ```

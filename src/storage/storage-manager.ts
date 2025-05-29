@@ -4,13 +4,16 @@
  */
 
 /**
- * 存储键前缀常量
+ * 存储键命名空间
+ * 🔧 架构更新：项目统一使用 chrome.storage.local 存储所有数据
  */
 export const StorageKeys = {
-  // 用户设置前缀 (chrome.storage.sync)
+  // 🔧 修正：用户设置前缀 (chrome.storage.local) - 已迁移到全局设置
   SETTINGS_PREFIX: 'settings.',
-  // 本地存储数据前缀 (chrome.storage.local)
-  LOCAL_PREFIX: 'local.',
+  // 🔧 修正：新的统一全局设置前缀 (chrome.storage.local)
+  GLOBAL_SETTINGS_PREFIX: 'global_settings.',
+  // 缓存数据前缀 (chrome.storage.local)
+  CACHE_PREFIX: 'cache.',
   // 临时数据前缀 (存储在local中)
   TEMP_PREFIX: 'temp.',
 
@@ -18,9 +21,9 @@ export const StorageKeys = {
   SETTINGS: {
     SOURCE_LANG: 'settings.sourceLang',
     TARGET_LANG: 'settings.targetLang',
+    TRANSLATE_ACTIVE: 'settings.translateActive',
     SUBTITLE_MODE: 'settings.subtitleMode',
     TRANSLATION_API: 'settings.translationApi',
-    TRANSLATE_ACTIVE: 'settings.translateActive',
     API_KEY: 'settings.apiKey',
     SERVICE_TYPE: 'settings.serviceType',
     MEMBERSHIP_CREDENTIALS: 'settings.membershipCredentials',
@@ -39,12 +42,14 @@ export const StorageKeys = {
     OPENAI_CONFIG_TEMPERATURE: 'settings.openaiConfig.temperature'
   },
 
-  // 常用本地存储键
+  // Local storage 相关键（明确区分作用域）
   LOCAL: {
+    VIDEO_SETTINGS_PREFIX: 'video_settings.',
+    LAST_USED_VIDEOS: 'last_used_videos',
+    CACHE_TRANSLATION_PREFIX: 'translation_cache.',
+    CACHE_SUBTITLES_PREFIX: 'subtitle_cache.',
     TRANSLATIONS_PREFIX: 'local.translations.',
     API_TEST_RESULTS: 'local.apiTestResults',
-    LAST_USED_VIDEOS: 'local.lastUsedVideos',
-    VIDEO_SETTINGS_PREFIX: 'local.videoSettings.',
     VIDEO_TRACKS_PREFIX: 'local.videoTracks.'
   },
 
@@ -114,8 +119,8 @@ export class StorageManager {
    * 设置存储变更监听器
    */
   private setupStorageListeners(): void {
-    // 创建所有存储区域的变更监听器
-    const areas: StorageArea[] = ['sync', 'local'];
+    // 🔧 优化：项目主要使用local存储，但保留sync监听器用于向后兼容
+    const areas: StorageArea[] = ['local', 'sync']; // local优先
     
     areas.forEach(area => {
       const listener = (changes: { [key: string]: chrome.storage.StorageChange }, areaName: string) => {
@@ -177,8 +182,6 @@ export class StorageManager {
 
   /**
    * 添加存储变更监听器
-   * @param key 要监听的键名或前缀，使用 '*' 表示监听所有变更
-   * @param handler 变更处理函数
    */
   public addChangeListener(key: string, handler: StorageChangeHandler): void {
     if (!this.changeHandlers.has(key)) {
@@ -189,20 +192,16 @@ export class StorageManager {
 
   /**
    * 移除存储变更监听器
-   * @param key 要移除监听的键名或前缀
-   * @param handler 要移除的处理函数，不提供则移除该键的所有处理函数
    */
   public removeChangeListener(key: string, handler?: StorageChangeHandler): void {
     if (!this.changeHandlers.has(key)) return;
     
     if (handler) {
       this.changeHandlers.get(key)!.delete(handler);
-      // 如果没有处理函数，则删除整个集合
       if (this.changeHandlers.get(key)!.size === 0) {
         this.changeHandlers.delete(key);
       }
     } else {
-      // 移除该键的所有处理函数
       this.changeHandlers.delete(key);
     }
   }
@@ -285,9 +284,11 @@ export class StorageManager {
    * @param area 存储区域
    */
   public async set<T>(key: string, value: T, area: StorageArea = 'local'): Promise<void> {
-    // 根据键前缀确定最合适的存储区域，简化调用方的决策
-    if (key.startsWith('settings.') && area !== 'sync') {
-      console.log(`[storage-manager] 键 ${key} 以 'settings.' 开头，建议使用 sync 存储，但尊重调用方设置: ${area}`);
+    // 🔧 修正：项目架构统一使用chrome.storage.local，移除sync相关建议
+    // 保留area参数向后兼容，但统一使用local区域
+    if (area === 'sync') {
+      console.warn(`[storage-manager] 键 ${key} 请求sync存储，但项目架构统一使用local存储，自动转换为local`);
+      area = 'local';
     }
 
     const storage = this.getStorageArea(area);
@@ -402,57 +403,20 @@ export class StorageManager {
    * @returns 所有存储区域的使用情况
    */
   public async monitorAllStorageUsage(): Promise<Record<StorageArea, StorageQuotaInfo>> {
-    // 监控sync和local区域
-    const areas: StorageArea[] = ['sync', 'local'];
+    // 🔧 优化：主要监控local区域，sync作为辅助监控
+    const areas: StorageArea[] = ['local', 'sync']; // local优先
     const result: Partial<Record<StorageArea, StorageQuotaInfo>> = {};
     
     for (const area of areas) {
       result[area] = await this.getQuotaInfo(area);
       
-      // 如果接近限制，打印警告
+      // 如果接近限制，打印警告（重点关注local区域）
       if (result[area]!.isNearLimit) {
-        console.warn(`[storage-manager] 存储区域 ${area} 使用量接近限制: ${(result[area]!.usedBytes / 1024).toFixed(2)}KB / ${(result[area]!.totalBytes / 1024).toFixed(2)}KB (${result[area]!.percentUsed.toFixed(1)}%)`);
+        const priority = area === 'local' ? 'CRITICAL' : 'INFO';
+        console.warn(`[storage-manager] [${priority}] 存储区域 ${area} 使用量接近限制: ${(result[area]!.usedBytes / 1024).toFixed(2)}KB / ${(result[area]!.totalBytes / 1024).toFixed(2)}KB (${result[area]!.percentUsed.toFixed(1)}%)`);
       }
     }
     
     return result as Record<StorageArea, StorageQuotaInfo>;
   }
-}
-
-/**
- * 创建一个带有防抖功能的存储变更处理函数
- * @param handler 原始处理函数
- * @param wait 等待时间（毫秒）
- * @returns 防抖处理函数
- */
-export function debounceStorageHandler(
-  handler: StorageChangeHandler,
-  wait: number = 200
-): StorageChangeHandler {
-  let timeout: number | null = null;
-  let lastChanges: { [key: string]: chrome.storage.StorageChange } | null = null;
-  let lastAreaName: StorageArea | null = null;
-
-  const debouncedFunction: StorageChangeHandler = function(
-    changes: { [key: string]: chrome.storage.StorageChange },
-    areaName: StorageArea
-  ) {
-    lastChanges = changes;
-    lastAreaName = areaName;
-    
-    if (timeout !== null) {
-      window.clearTimeout(timeout);
-    }
-    
-    timeout = window.setTimeout(() => {
-      if (lastChanges !== null && lastAreaName !== null) {
-        handler(lastChanges, lastAreaName);
-      }
-      timeout = null;
-      lastChanges = null;
-      lastAreaName = null;
-    }, wait);
-  };
-
-  return debouncedFunction;
 } 

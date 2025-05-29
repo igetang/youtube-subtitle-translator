@@ -3,7 +3,7 @@
  * @description 用户设置管理模块，专门处理用户设置的存取和变更通知
  */
 
-import { StorageManager, StorageKeys, debounceStorageHandler } from './storage-manager';
+import { StorageManager, StorageKeys, StorageArea } from './storage-manager';
 
 /**
  * 字幕显示模式
@@ -166,9 +166,9 @@ export class SettingsManager {
    * 设置存储变更监听器
    */
   private setupStorageListener(): void {
-    // 使用防抖动监听器，减少高频率变更的处理
-    const handleStorageChange = debounceStorageHandler((changes, area) => {
-      if (area !== 'sync') return; // 用户设置只存储在 sync 区域
+    // 直接使用监听器，立即响应存储变更
+    const handleStorageChange = (changes: { [key: string]: chrome.storage.StorageChange }, area: StorageArea) => {
+      if (area !== 'local') return; // 🔧 修正：用户设置统一存储在 local 区域
       
       // 处理所有与设置相关的变更
       Object.keys(changes).forEach((key) => {
@@ -182,11 +182,11 @@ export class SettingsManager {
             (this.settingsMemoryCache as any)[settingKey] = change.newValue;
           }
           
-          // 根据设置键触发对应事件
+          // 根据设置键触发相应的变更事件
           this.triggerChangeEvent(settingKey, change.newValue, change.oldValue);
         }
       });
-    }, 100);
+    };
     
     // 添加监听器
     this.storageManager.addChangeListener(StorageKeys.SETTINGS_PREFIX, handleStorageChange);
@@ -285,7 +285,7 @@ export class SettingsManager {
     
     try {
       // 获取所有设置
-      const settings = await this.storageManager.getByPrefix(StorageKeys.SETTINGS_PREFIX, 'sync');
+      const settings = await this.storageManager.getByPrefix(StorageKeys.SETTINGS_PREFIX, 'local');
       
       // 转换为内部格式并存入memory cache
       this.settingsMemoryCache = {};
@@ -328,7 +328,7 @@ export class SettingsManager {
     
     // 如果有需要保存的默认设置，批量保存
     if (needSave) {
-      await this.storageManager.setBatch(settings, 'sync');
+      await this.storageManager.setBatch(settings, 'local');
       console.log('[settings-manager] 已应用默认设置:', settings);
     }
   }
@@ -365,7 +365,7 @@ export class SettingsManager {
     
     // 否则从存储中获取
     const storageKey = `${StorageKeys.SETTINGS_PREFIX}${key}`;
-    const value = await this.storageManager.get(storageKey, DEFAULT_SETTINGS[key], 'sync');
+    const value = await this.storageManager.get(storageKey, DEFAULT_SETTINGS[key], 'local');
     
     // 更新memory cache
     this.settingsMemoryCache[key] = value;
@@ -394,7 +394,7 @@ export class SettingsManager {
     
     // 保存到存储
     const storageKey = `${StorageKeys.SETTINGS_PREFIX}${key}`;
-    await this.storageManager.set(storageKey, value, 'sync');
+    await this.storageManager.set(storageKey, value, 'local');
   }
 
   /**
@@ -431,7 +431,7 @@ export class SettingsManager {
     
     // 如果有变更，批量保存
     if (hasChanges) {
-      await this.storageManager.setBatch(storageSettings, 'sync');
+      await this.storageManager.setBatch(storageSettings, 'local');
     }
   }
 
@@ -440,12 +440,12 @@ export class SettingsManager {
    */
   public async resetAllSettings(): Promise<void> {
     // 获取当前所有设置键
-    const currentSettings = await this.storageManager.getByPrefix(StorageKeys.SETTINGS_PREFIX, 'sync');
+    const currentSettings = await this.storageManager.getByPrefix(StorageKeys.SETTINGS_PREFIX, 'local');
     const keysToRemove = Object.keys(currentSettings);
     
     // 如果有设置，先清除
     if (keysToRemove.length > 0) {
-      await this.storageManager.remove(keysToRemove, 'sync');
+      await this.storageManager.remove(keysToRemove, 'local');
     }
     
     // 重置memory cache
@@ -458,7 +458,7 @@ export class SettingsManager {
       defaultStorageSettings[storageKey] = DEFAULT_SETTINGS[key];
     }
     
-    await this.storageManager.setBatch(defaultStorageSettings, 'sync');
+    await this.storageManager.setBatch(defaultStorageSettings, 'local');
     console.log('[settings-manager] 所有设置已重置为默认值');
   }
 

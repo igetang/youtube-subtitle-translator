@@ -18,7 +18,7 @@ const SidePanel: React.FC = () => {
   // Load saved model from storage on component mount
   useEffect(() => {
     setIsLoading(true);
-    chrome.storage.sync.get(['openaiModel'], (result) => {
+    chrome.storage.local.get(['openaiModel'], (result) => {
       if (result.openaiModel && Object.values(OpenAIModel).includes(result.openaiModel)) {
         setSelectedModel(result.openaiModel as OpenAIModel);
       }
@@ -29,14 +29,14 @@ const SidePanel: React.FC = () => {
 
   /**
    * 处理 OpenAI 模型更改事件的回调函数。
-   * Saves the selected model to chrome.storage.sync.
+   * Saves the selected model to chrome.storage.local.
    *
    * @param {React.ChangeEvent<HTMLSelectElement>} event - The change event object from the select element.
    */
   const handleOpenAIModelChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const newModel = event.target.value as OpenAIModel;
     setSelectedModel(newModel);
-    chrome.storage.sync.set({ openaiModel: newModel }, () => {
+    chrome.storage.local.set({ openaiModel: newModel }, () => {
       if (chrome.runtime.lastError) {
         console.error('[SidePanel] Error saving OpenAI Model:', chrome.runtime.lastError);
       } else {

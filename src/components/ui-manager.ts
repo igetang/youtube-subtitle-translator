@@ -155,7 +155,7 @@ export class UIManager {
     // 确保初始状态为false，即使在异步加载之前访问也是关闭状态
     this.state.translateActive = false;
     
-    chrome.storage.sync.get('translateActive', (result) => {
+    chrome.storage.local.get('translateActive', (result) => {
       const isActive = !!result.translateActive;
       this.state.translateActive = isActive;
       console.log('[ui-manager] 已加载翻译状态:', isActive);
@@ -170,7 +170,7 @@ export class UIManager {
    */
   private loadSettingPanelOpenState(): void {
     this.state.settingPanelOpen = false;
-    chrome.storage.sync.get('settingPanelOpen', (result) => {
+    chrome.storage.local.get('settingPanelOpen', (result) => {
       const open = !!result.settingPanelOpen;
       this.state.settingPanelOpen = open;
       console.log('[ui-manager] 已加载设置面板状态:', open);
@@ -826,8 +826,8 @@ export class UIManager {
     // C5: 调用 updateTranslateButtonState
     this.updateTranslateButtonState(active);
     
-    // C6: 保存到 chrome.storage.sync
-    chrome.storage.sync.set({ translateActive: active }, () => {
+    // C6: 保存到 chrome.storage.local
+    chrome.storage.local.set({ translateActive: active }, () => {
       console.log(`[ui-manager] 已保存翻译状态: ${active}`);
     });
     
@@ -899,7 +899,7 @@ export class UIManager {
     // 更新按钮图标和提示
     this.updateSettingsButtonState(open);
     // 保存状态到存储
-    chrome.storage.sync.set({ settingPanelOpen: open }, () => {
+    chrome.storage.local.set({ settingPanelOpen: open }, () => {
       console.log(`[ui-manager] 已保存设置面板状态: ${open}`);
     });
     
