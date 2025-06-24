@@ -13,6 +13,7 @@ const baseConfig = {
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './'),
+      '@shared': path.resolve(__dirname, './src/shared'),
     },
   },
   build: {
@@ -22,28 +23,74 @@ const baseConfig = {
 
 // 为多个配置创建一个条件配置函数
 export default defineConfig(({ command, mode }) => {
-  // 内容脚本配置 - 使用IIFE格式
+  
+  // Content Script 模式配置
   if (mode === 'content-script') {
     return mergeConfig(baseConfig, {
       build: {
         outDir: 'dist',
         rollupOptions: {
           input: {
-            'content-script': path.resolve(__dirname, 'content/content-script.ts'),
+            'content-script': path.resolve(__dirname, 'src/content-scripts/content-script-new.ts'),
           },
           output: {
             entryFileNames: '[name].js',
+            chunkFileNames: 'assets/[name].js',
+            assetFileNames: 'assets/[name].[ext]',
             format: 'iife',
-            dir: 'dist',
+            name: 'ContentScript',
           },
         },
-        // 不清空输出目录，因为我们需要保留其他构建的文件
+        // 在content-script模式下不要清空目录
         emptyOutDir: false,
       },
     });
   }
-  
-  // 默认配置 - 其他所有脚本使用ES模块
+
+  // Main World Script 模式配置  
+  if (mode === 'main-world') {
+    return mergeConfig(baseConfig, {
+      build: {
+        outDir: 'dist',
+        rollupOptions: {
+          input: {
+            'main-world': path.resolve(__dirname, 'src/content-scripts/main-world.ts'),
+          },
+          output: {
+            entryFileNames: '[name].js',
+            chunkFileNames: 'assets/[name].js',
+            assetFileNames: 'assets/[name].[ext]',
+            format: 'iife',
+            name: 'MainWorld',
+          },
+        },
+        emptyOutDir: false,
+      },
+    });
+  }
+
+  // Service Worker 单独模式配置
+  if (mode === 'service-worker') {
+    return mergeConfig(baseConfig, {
+      build: {
+        outDir: 'dist',
+        rollupOptions: {
+          input: {
+            'background': path.resolve(__dirname, 'src/background/service-worker.ts'),
+          },
+          output: {
+            entryFileNames: '[name].js',
+            chunkFileNames: 'assets/[name].js',
+            assetFileNames: 'assets/[name].[ext]',
+            format: 'es', // Service Worker 保持 ES 模块格式
+          },
+        },
+        emptyOutDir: false,
+      },
+    });
+  }
+
+  // 默认配置 - 构建popup和sidepanel
   return mergeConfig(baseConfig, {
     plugins: [
       viteStaticCopy({
@@ -53,15 +100,15 @@ export default defineConfig(({ command, mode }) => {
             dest: '.',
           },
           {
-            src: 'icons',
+            src: 'public/icons',
             dest: '.',
           },
           {
-            src: 'assets',
+            src: 'public/assets',
             dest: '.',
           },
           {
-            src: '_locales',
+            src: 'public/_locales',
             dest: '.',
           },
         ],
@@ -71,12 +118,11 @@ export default defineConfig(({ command, mode }) => {
       outDir: 'dist',
       rollupOptions: {
         input: {
-          background: path.resolve(__dirname, 'background/index.ts'),
-          sidepanel: path.resolve(__dirname, 'sidepanel/sidepanel.html'),
-          'main-world': path.resolve(__dirname, 'content/main-world.ts'),
+          'sidepanel/sidepanel': path.resolve(__dirname, 'src/sidepanel/sidepanel.html'),
+          'popup/popup': path.resolve(__dirname, 'src/popup/popup.html'),
         },
         output: {
-          entryFileNames: '[name].js',
+          entryFileNames: 'assets/[name].js',
           chunkFileNames: 'assets/[name].js',
           assetFileNames: 'assets/[name].[ext]',
           format: 'es',

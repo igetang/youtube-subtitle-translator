@@ -1,0 +1,715 @@
+body {
+    background-color: #1a1a1a; /* 深色背景 */
+    color: #ffffff; /* 白色文字 */
+    font-family: 'YouTube Noto', Roboto, Arial, Helvetica, sans-serif;
+    padding: 15px;
+    margin: 0;
+    height: 100vh; /* 尝试占满侧边栏高度 */
+    box-sizing: border-box;
+    overflow-y: auto; /* 添加滚动条，确保所有内容可见 */
+}
+
+h1 {
+    text-align: center;
+    font-size: 1.2em;
+    margin-top: 0;
+    margin-bottom: 20px;
+    color: #f1f1f1;
+}
+
+.setting-item {
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center; /* 垂直居中标签和控件 */
+}
+
+.setting-item label:first-child { /* 第一个标签，例如"源语言:" */
+    flex-basis: 80px; /* 固定标签宽度 */
+    margin-right: 10px;
+    font-size: 0.9em;
+    color: #aaa;
+}
+
+select {
+    flex-grow: 1; /* 让下拉菜单填充剩余空间 */
+    padding: 8px;
+    background-color: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+/* --- Custom Select Styles --- 
+ * 使用自定义下拉菜单替代原生select元素
+ * 原因：在Mac系统上，原生select元素会显示为系统风格的弹出窗口
+ * 而不是直接在页面上展开的下拉列表，这会影响用户体验的一致性
+ * 自定义下拉菜单可以在所有平台上保持一致的展示效果
+ */
+.custom-select-container {
+    position: relative; /* Crucial for panel positioning */
+    flex-grow: 1;
+}
+
+.custom-select-trigger {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px;
+    background-color: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: 0.9em;
+    cursor: pointer;
+    user-select: none; /* Prevent text selection */
+}
+
+/* 添加禁用状态的样式 */
+.custom-select-trigger.disabled {
+    opacity: 0.6;
+    background-color: #2a2a2a;
+    cursor: not-allowed;
+    border: 1px solid #444;
+}
+
+.custom-select-trigger .selected-value {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis; /* Add ellipsis if text is too long */
+    margin-right: 5px;
+}
+
+.custom-select-trigger .arrow {
+    font-size: 0.8em;
+    transition: transform 0.2s ease-in-out;
+}
+
+.custom-select-container.open .custom-select-trigger .arrow {
+    transform: rotate(180deg);
+}
+
+.custom-select-panel {
+    display: none; /* Hidden by default */
+    position: absolute;
+    top: 100%; /* Position below the trigger */
+    left: 0;
+    right: 0;
+    background-color: #2a2a2a; /* Slightly different background */
+    border: 1px solid #444; /* Updated border to match theme */
+    border-top: none; /* Avoid double border */
+    border-radius: 0 0 4px 4px;
+    max-height: 400px; /* Removed !important for consistency */
+    overflow-y: auto;
+    z-index: 10; /* Ensure it appears above other elements */
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.custom-select-panel input[type="search"] {
+    width: calc(100% - 16px); /* Full width minus padding */
+    padding: 8px;
+    margin: 8px;
+    box-sizing: border-box;
+    background-color: #444;
+    color: #fff;
+    border: 1px solid #666;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+
+/* Container for options */
+.custom-select-option {
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 0.9em;
+    color: #eee;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.custom-select-option:hover {
+    background-color: rgba(255, 255, 255, 0.2); /* Further enhanced hover background */
+    color: #fff; /* White text for contrast */
+}
+
+.custom-select-option.selected {
+    background-color: #065fd4; /* YouTube blue for selected */
+    color: #fff;
+    font-weight: bold;
+}
+
+.custom-select-option.disabled {
+    color: #777;
+    cursor: not-allowed;
+    background-color: transparent !important; /* Override hover */
+}
+/* --- End Custom Select Styles --- */
+
+/* 模拟开关样式 */
+.switch-container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between; /* 让文字和开关分布两端 */
+    flex-grow: 1;
+    margin-left: 5px; /* 与标签的间距 */
+}
+
+.switch-container span {
+    font-size: 0.9em;
+    color: #aaa;
+}
+
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 44px; /* 调整宽度 */
+    height: 24px; /* 调整高度 */
+    margin: 0 10px;
+}
+
+.switch input { 
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .4s;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 18px; /* 滑块高度 */
+    width: 18px;  /* 滑块宽度 */
+    left: 3px;    /* 初始位置 */
+    bottom: 3px;
+    background-color: white;
+    transition: .4s;
+}
+
+input:checked + .slider {
+    background-color: #2196F3; /* 选中时的背景色 */
+}
+
+input:checked + .slider:before {
+    transform: translateX(20px); /* 滑块移动距离 */
+}
+
+/* Rounded sliders */
+.slider.round {
+    border-radius: 24px; /* 使背景变圆 */
+}
+
+.slider.round:before {
+    border-radius: 50%; /* 使滑块变圆 */
+}
+
+/* 新增：API相关样式 */
+#api-key-panel, #custom-api-panel {
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+    margin-top: 5px;
+}
+
+#custom-api-panel {
+    display: none; /* 默认隐藏 */
+}
+
+#api-key-panel.visible, #custom-api-panel.visible {
+    display: block; /* 在添加visible类时显示 */
+}
+
+#api-key-panel label, #custom-api-panel label {
+    margin-bottom: 5px;
+    display: block;
+    color: #aaa;
+    font-size: 0.9em;
+    flex-basis: auto;
+    margin-right: 0;
+}
+
+input[type="text"], textarea {
+    width: 100%;
+    padding: 8px;
+    background-color: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: 0.9em;
+    margin-bottom: 10px;
+    box-sizing: border-box;
+}
+
+textarea {
+    height: 80px;
+    font-family: monospace;
+    resize: vertical;
+}
+
+/* 新增：测试按钮和结果显示样式 */
+.test-api-container {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    margin-top: 5px;
+    margin-bottom: 20px;
+}
+
+.test-button-container {
+    width: 100%;
+    margin-bottom: 5px;
+}
+
+.test-result-container {
+    width: 100%;
+    min-height: 20px;
+}
+
+.test-button {
+    background-color: #2196F3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 15px;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: background-color 0.2s;
+    width: 100%; /* 让按钮占满容器宽度 */
+}
+
+.test-button:hover {
+    background-color: #0d6efd;
+}
+
+.test-button:active {
+    background-color: #0a58ca;
+}
+
+.test-button.loading {
+    background-color: #666;
+    cursor: wait;
+}
+
+.test-result {
+    margin-left: 10px;
+    font-size: 0.9em;
+}
+
+.test-result.success {
+    color: #4caf50;
+}
+
+.test-result.error {
+    color: #f44336;
+}
+
+.api-info {
+    margin-top: 5px;
+    font-size: 0.8em;
+}
+
+.api-info a {
+    color: #3ea6ff;
+    text-decoration: none;
+}
+
+.api-info a:hover {
+    text-decoration: underline;
+}
+
+/* 新增：服务类型选择样式 */
+.radio-group {
+    display: flex;
+    gap: 15px;
+    margin-top: 5px;
+}
+
+.radio-option {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+}
+
+.radio-option input[type="radio"] {
+    margin-right: 5px;
+    accent-color: #2196F3; /* 自定义单选按钮颜色 */
+}
+
+.radio-option span {
+    font-size: 0.9em;
+}
+
+/* 新增：会员登录面板样式 */
+#membership-panel {
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+#membership-panel label {
+    margin-bottom: 5px;
+    display: block;
+    color: #aaa;
+    font-size: 0.9em;
+    flex-basis: auto;
+    margin-right: 0;
+}
+
+input[type="password"] {
+    width: 100%;
+    padding: 8px;
+    background-color: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: 0.9em;
+    margin-bottom: 10px;
+    box-sizing: border-box;
+}
+
+.button-container {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.action-button {
+    background-color: #2196F3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 15px;
+    font-size: 0.9em;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.action-button:hover {
+    background-color: #0d6efd;
+}
+
+.action-button:active {
+    background-color: #0a58ca;
+}
+
+.action-button.loading {
+    background-color: #666;
+    cursor: wait;
+}
+
+.result-text {
+    margin-left: 10px;
+    font-size: 0.9em;
+}
+
+.result-text.success {
+    color: #4caf50;
+}
+
+.result-text.error {
+    color: #f44336;
+}
+
+/* 动画效果扩展 */
+#service-type-panel, #membership-panel, #api-key-panel, #custom-api-panel {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out, opacity 0.3s ease-out, margin 0.3s ease-out;
+    opacity: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+#service-type-panel.visible, #membership-panel.visible, #api-key-panel.visible, #custom-api-panel.visible {
+    max-height: 500px; /* 足够大的高度以适应内容 */
+    opacity: 1;
+    margin-top: 10px;
+    margin-bottom: 20px;
+}
+
+/* 新增：会员登录面板样式 */
+#membership-panel {
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.login-title {
+    font-size: 0.9em;
+    color: #aaa;
+    margin-top: 0;
+    margin-bottom: 10px;
+}
+
+.social-login-container {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    width: 100%;
+    margin-bottom: 15px;
+}
+
+.social-login-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 5px;
+    border-radius: 4px;
+    border: 1px solid #555;
+    background-color: #333;
+    color: white;
+    font-size: 0.9em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.social-login-btn:hover {
+    background-color: #444;
+    border-color: #777;
+}
+
+.social-login-btn svg {
+    margin-right: 5px;
+}
+
+.social-login-btn span {
+    white-space: nowrap;
+}
+
+/* 特定社交平台按钮样式 */
+.google-btn:hover {
+    background-color: rgba(234, 67, 53, 0.1);
+}
+
+.apple-btn:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.twitter-btn:hover {
+    background-color: rgba(29, 161, 242, 0.1);
+}
+
+.facebook-btn:hover {
+    background-color: rgba(24, 119, 242, 0.1);
+}
+
+.wechat-btn:hover {
+    background-color: rgba(7, 193, 96, 0.1);
+}
+
+.login-status {
+    width: 100%;
+    text-align: center;
+    margin-top: 5px;
+}
+
+/* 添加高级设置相关样式 */
+.advanced-toggle {
+    cursor: pointer;
+    margin-bottom: 5px;
+}
+
+.advanced-toggle-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 0;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.toggle-btn {
+    background: none;
+    border: none;
+    color: #666;
+    cursor: pointer;
+    font-size: 14px;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s ease;
+}
+
+.toggle-btn.expanded .toggle-icon {
+    transform: rotate(90deg);
+}
+
+.advanced-panel {
+    margin-top: 0;
+    padding-top: 5px;
+    transition: max-height 0.3s ease, opacity 0.2s ease;
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+}
+
+.advanced-panel.expanded {
+    max-height: 1000px;
+    opacity: 1;
+}
+
+.advanced-setting-item {
+    margin-bottom: 15px;
+    padding-left: 10px;
+    border-left: 2px solid #e0e0e0;
+}
+
+.setting-description {
+    font-size: 12px;
+    color: #666;
+    margin-top: 2px;
+}
+
+.slider-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.slider-container input[type="range"] {
+    flex: 1;
+}
+
+#openai-custom-model {
+    margin-top: 5px;
+    width: 100%;
+}
+
+/* API面板动画 */
+#openai-basic-panel, #openai-advanced-toggle, #openai-advanced-panel {
+    transition: opacity 0.3s ease, height 0.3s ease;
+}
+
+/* 添加限流信息面板样式 */
+.ratelimit-panel {
+    margin-top: 15px;
+    padding: 10px;
+    background-color: #f8f9fa;
+    border-radius: 6px;
+    border: 1px solid #e0e0e0;
+}
+
+.ratelimit-panel h3 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    font-size: 14px;
+    color: #333;
+}
+
+.ratelimit-info {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.ratelimit-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    padding: 3px 0;
+}
+
+.ratelimit-label {
+    color: #555;
+    font-weight: 500;
+}
+
+.ratelimit-value {
+    font-weight: 600;
+    color: #1a73e8;
+    font-family: 'Roboto Mono', monospace;
+}
+
+/* 添加特别样式 */
+.ratelimit-value.warning {
+    color: #f57c00; /* 橙色警告 */
+}
+
+.ratelimit-value.danger {
+    color: #d32f2f; /* 红色危险 */
+}
+
+.ratelimit-value.good {
+    color: #388e3c; /* 绿色良好 */
+}
+
+/* 密码输入框和显示/隐藏按钮样式 */
+.password-container {
+    position: relative;
+    width: 100%;
+    display: flex;
+}
+
+.password-container input[type="password"],
+.password-container input[type="text"] {
+    flex: 1;
+    padding-right: 35px; /* 留出按钮空间 */
+}
+
+.toggle-password {
+    position: absolute;
+    right: 5px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #aaa;
+    padding: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.toggle-password:hover {
+    color: #fff;
+}
+
+/* 简单设置项样式 */
+.simple-setting-item {
+    margin-top: 15px;
+    padding: 10px;
+    background-color: #2a2a2a;
+    border-radius: 6px;
+    border: 1px solid #444;
+}
+
+.simple-setting-item label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: #ddd;
+}
+
+/* 新增：深色滚动条样式 */
+body::-webkit-scrollbar,
+.custom-select-panel::-webkit-scrollbar {
+    width: 10px;
+}
+body::-webkit-scrollbar-track,
+.custom-select-panel::-webkit-scrollbar-track {
+    background: #2a2a2a;
+}
+body::-webkit-scrollbar-thumb,
+.custom-select-panel::-webkit-scrollbar-thumb {
+    background-color: #777; /* Brighter thumb for visibility */
+    border-radius: 5px;
+    border: 2px solid #2a2a2a;
+}
+/* 滑块 hover 样式 */
+body::-webkit-scrollbar-thumb:hover,
+.custom-select-panel::-webkit-scrollbar-thumb:hover {
+    background-color: #aaa;
+} 

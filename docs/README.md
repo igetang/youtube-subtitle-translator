@@ -1,87 +1,41 @@
-# YouTube字幕翻译扩展 - 文档中心
+# 文档中心
 
 > 📚 项目完整文档导航和说明
 
-## 🏛️ 核心技术文档
+## 概览与架构
 
-### [技术架构文档](architecture.md) 
-**📋 权威技术参考** - 完整的系统架构、组件交互、数据流设计和缓存策略
+- [技术架构](architecture.md)
+- [文件结构](structure.md)
+- [存储模型](storage.md)
+- [消息协议](messaging.md)
+- 核心流程（docs/flow）：
+  - [字幕获取流程](flow/caption-flow.md)
+  - [翻译请求流程](flow/translation-flow.md)
+  - [UI 交互流程](flow/interaction-flow.md)
 
-### [决策日志](decision-log.md)
-**🎯 技术决策记录** - 重要技术选择的背景、原因和影响分析
+## 开发者指南（docs/development）
 
-### [翻译流程文档](translation-flow.md)
-**⚡ 核心功能流程** - 字幕翻译的详细流程和组件协作机制
+- [环境搭建](development/environment.md)
+- [代码规范](development/coding-guidelines.md)
+- [测试指南](development/testing.md)
+- [构建与发布](development/deployment.md)
 
-## 📖 开发与维护文档
+## 辅助文档
 
-### [故障排除指南](troubleshooting.md)
-**🔧 问题解决方案** - 常见问题、调试方法和具体修复案例
+- [国际化方案](i18n.md)
+- [安全与权限](security.md)
+- [贡献指南](contributing.md)
+- [常见问题](faq.md)
 
-### [API参考文档](api.md)
-**📡 接口说明** - 翻译API集成和内部接口定义
+## 其他参考（可选）
 
-### [性能优化文档](performance.md)
-**🚀 性能提升** - 缓存策略、性能监控和优化方案
-
-### [路线图](roadmap.md)
-**🗺️ 发展规划** - 功能路线图和版本规划
-
-### [优化验证指南](optimization-verification.md)
-**✅ 验证方法** - 性能优化和功能验证的具体步骤
-
-## 📁 专门目录
-
-### [归档文档](archive/)
-**📦 历史文档** - 已解决问题的详细记录、重构计划和历史优化方案
-
-## 📋 根目录核心文档
-
-### [用户指南](../README.md)
-**👥 用户向文档** - 功能介绍、安装使用和常见问题
-
-### [开发指南](../DEVELOPMENT.md)  
-**🔧 开发环境** - 环境搭建、工作流程和代码规范
-
-### [更新日志](../CHANGELOG.md)
-**📝 版本历史** - 详细的版本更新记录和功能变更
-
-### [待办事项](../TODO.md)
-**📋 任务管理** - 开发任务列表和优先级管理
-
-## 🎯 文档使用指南
-
-### 👥 **用户**
-- 开始阅读：[用户指南](../README.md)
-- 问题解决：[故障排除指南](troubleshooting.md)
-- 功能了解：[翻译流程文档](translation-flow.md)
-
-### 🔧 **新开发者**
-- 环境搭建：[开发指南](../DEVELOPMENT.md)
-- 架构理解：[技术架构文档](architecture.md)
-- 开发任务：[待办事项](../TODO.md)
-
-### 🏛️ **架构师/维护者**
-- 技术参考：[技术架构文档](architecture.md)
-- 决策记录：[决策日志](decision-log.md)
-- 性能优化：[性能优化文档](performance.md)
-
-### 🚀 **产品经理**
-- 功能规划：[路线图](roadmap.md)
-- 版本管理：[更新日志](../CHANGELOG.md)
-- 任务跟踪：[待办事项](../TODO.md)
-
-## 📊 文档维护说明
-
-- **权威技术文档**：[architecture.md](architecture.md) 是所有技术设计的唯一权威来源
-- **开发流程文档**：[DEVELOPMENT.md](../DEVELOPMENT.md) 专注开发环境和工作流程
-- **用户体验文档**：[README.md](../README.md) 面向终端用户，无技术细节
-- **决策追踪文档**：重要技术决策记录在 [decision-log.md](decision-log.md)
-
-所有文档遵循明确的职责边界，避免内容重复，确保信息准确性和一致性。
+- [决策日志](decision-log.md)
+- [性能优化](performance.md)
+- [路线图](roadmap.md)
+- [故障排除](troubleshooting.md)
 
 ---
 
-**📋 文档维护**: 2025-05-28  
-**🔄 版本**: v1.1.0-dev  
-**📍 状态**: 文档体系已优化，结构清晰 
+**最后更新**: 2025-05-30
+**版本**: v1.0.0-docs
+**状态**: 文档骨架搭建完成 

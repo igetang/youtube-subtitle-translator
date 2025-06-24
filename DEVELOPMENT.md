@@ -1,6 +1,24 @@
 # YouTube字幕翻译助手 - 开发指南
 
-本文档提供扩展项目的开发环境设置、工作流程和贡献指南，帮助开发者参与项目开发。
+> **最后更新**: 2025-06-12  
+> **当前版本**: v5.24.7+ (**统一架构版本**)  
+> **架构状态**: ✅ **简化架构已完成** - 移除复杂全局同步，采用页面级状态管理
+
+本文档提供扩展项目的开发环境设置、工作流程和贡献指南，帮助开发者参与v5.24.7+简化架构的项目开发。
+
+## 🎯 **v5.24.7+ 架构开发指导**
+
+### 核心架构原则
+- **简化优先**: 采用最小可行方案，避免过度设计（从340行简化到60行的成功案例）
+- **页面级状态管理**: 每个标签页独立管理状态，避免复杂的全局同步
+- **设计思维**: 理解问题本质，评估副作用，认知技术边界
+- **Chrome官方最佳实践**: 严格遵循 Manifest V3 规范
+
+### 重要设计决策
+- ✅ **SidePanel简化架构**: 移除复杂Port断开检测，采用用户主导关闭模式
+- ✅ **状态同步策略**: 取消跨标签页强制同步，接受Chrome SidePanel独立实例特性
+- ✅ **错误处理**: 简化错误处理逻辑，专注核心功能稳定性
+- ✅ **历史版本**: v5.24.6及更早版本已归档至 `legacy/` 目录
 
 ## 开发环境设置
 
@@ -62,137 +80,108 @@ npm --version
 npm ls
 ```
 
-## 项目结构
+## 项目结构 (v5.24.7+ 简化架构)
 
 ```
-youtube-subtitle-translator/
-├── .cursor/                 # Cursor编辑器配置
-│   └── rules/               # 编辑器规则
-│       └── chrome-rules.mdc # Chrome扩展开发规则
-├── .git/                    # Git版本控制（自动生成）
-├── _locales/                # 国际化文件
-│   └── zh_CN/               # 中文本地化
-│       └── messages.json    # 中文消息定义
-├── assets/                  # 静态资源和构建产物
-│   ├── sidepanel.css        # 侧边栏样式文件
-│   ├── storage-manager.js   # 存储管理器编译产物
-│   └── storage-manager.js.map # 存储管理器源码映射
-├── background/              # 后台脚本
-│   ├── background.ts        # 主要服务工作者脚本
-│   ├── background.ts.backup # 备份文件
-│   ├── batch-processor.ts   # 批处理器
-│   ├── index.ts             # 后台脚本入口
-│   ├── openai-translator.ts # OpenAI翻译API实现
-│   ├── rate-limit-manager.ts # API限流管理器
-│   ├── subtitle-local-storage.ts # 字幕本地存储
-│   └── translation-local-storage.ts # 翻译本地存储
-├── content/                 # 内容脚本
-│   ├── content-script.ts    # 主要内容脚本
-│   ├── content-script.ts.backup # 备份文件
-│   ├── content-script.ts.bak # 备份文件
-│   ├── content-script.ts.original # 原始版本
-│   ├── content-script-external.js # 外部内容脚本
-│   ├── content-script-new-event.ts.deprecated # 已弃用的事件版本
-│   ├── content.ts           # 内容处理脚本
-│   ├── event-bus.ts_DEPRECATED # 已弃用的事件总线
-│   ├── main-world.ts        # 主世界注入脚本
-│   └── main-world.ts.backup # 主世界脚本备份
-├── docs/                    # 项目文档
-│   ├── archive/             # 归档文档
-│   │   ├── ARCHITECTURE_CHANGE_LOG.md     # 架构变更日志
-│   │   ├── CACHE_FUNCTION_NAMING_REVIEW.md # 缓存函数命名审查
-│   │   ├── LOG_FORMAT_IMPROVEMENTS.md     # 日志格式改进
-│   │   ├── NAMING_CONVENTION_OPTIMIZATION.md # 命名规范优化
-│   │   ├── OPTIMIZATION_COMPLETED.md      # 优化完成记录
-│   │   ├── REFACTOR_MESSAGE_COMMUNICATION.md # 消息通信重构
-│   │   ├── REFACTOR_PLAN.md               # 重构计划
-│   │   ├── SESSION_STORAGE_FIX.md         # Session存储修复
-│   │   ├── TEST_RESULTS.md                # 测试结果
-│   │   ├── TRANSLATION_CACHE_FLOW.md      # 翻译缓存流程
-│   │   ├── VERIFICATION_CACHE_IMPLEMENTATION.md # 缓存实现验证
-│   │   └── bugs.md                        # Bug记录
-│   ├── README.md            # 文档中心导航
-│   ├── api.md               # API参考文档
-│   ├── architecture.md      # 技术架构文档（权威）
-│   ├── decision-log.md      # 技术决策记录
-│   ├── optimization-verification.md # 优化验证指南
-│   ├── performance.md       # 性能优化文档
-│   ├── roadmap.md           # 开发路线图
-│   ├── translation-flow.md  # 翻译流程说明
-│   └── troubleshooting.md   # 故障排除指南
-├── icons/                   # 扩展图标
-│   ├── .DS_Store            # macOS系统文件
-│   ├── icon16.png           # 16x16 图标
-│   ├── icon48.png           # 48x48 图标
-│   ├── icon128.png          # 128x128 图标
-│   ├── l-setting.svg        # 设置按钮图标
-│   ├── l-setting-active.svg # 激活状态设置图标
-│   ├── normal-border.svg    # 普通边框图标
-│   ├── off.svg              # 关闭状态图标
-│   └── on.svg               # 开启状态图标
-├── options/                 # 选项页面（备用）
-│   ├── options.html         # 选项页面HTML
-│   └── options.ts           # 选项页面脚本
-├── popup/                   # 弹出页面（备用）
-│   ├── popup.html           # 弹出页面HTML
-│   └── popup.ts             # 弹出页面脚本
-├── rules/                   # 规则配置文件（空目录）
-├── scripts/                 # 构建和部署脚本
-│   └── verify-build.sh      # 构建验证脚本
-├── sidepanel/               # 侧边栏
-│   ├── sidepanel.css        # 侧边栏样式
-│   ├── sidepanel.html       # 侧边栏HTML
-│   ├── sidepanel.ts         # 侧边栏脚本
-│   └── template.ts          # 侧边栏模板
-├── src/                     # 通用组件和工具
-│   ├── components/          # 可复用组件
-│   │   ├── control-panel.ts # 控制面板组件
-│   │   └── ui-manager.ts    # UI组件管理器
-│   ├── events/              # 事件系统
-│   │   ├── event-bus.ts     # 事件总线
-│   │   └── event-types.ts   # 事件类型定义
-│   ├── storage/             # 存储管理
-│   │   ├── storage-manager.ts       # 存储管理器
-│   │   ├── global-settings.ts       # 新增：统一的全局设置类型定义，合并原UserSettings和VideoSettings
-│   │   ├── global-settings-manager.ts # 新增：统一的全局设置管理器，替代分散式设置管理
-│   │   ├── migration-helper.ts       # 新增：数据迁移助手，自动从旧架构迁移到新架构
-│   │   ├── settings-manager.ts      # 用户设置的专门管理器（保留兼容性）
-│   │   ├── video-settings-local-storage.ts # 视频级别设置的本地存储（保留兼容性）
-│   │   └── storage-test.ts          # 存储测试
-│   ├── translation/         # 翻译相关
-│   │   └── translation-dispatcher.ts # 翻译调度器
-│   └── utils/               # 工具函数
-│       ├── language-processing.ts   # 语言处理工具
-│       └── languages.ts             # 语言定义
-├── tmp/                     # 临时文件
-│   └── event-system.ts      # 事件系统临时文件
-├── dist/                    # 构建输出目录（构建时生成）
-│   ├── _locales/            # 本地化文件输出
-│   ├── assets/              # 资源文件输出
-│   ├── icons/               # 图标文件输出
-│   ├── sidepanel/           # 侧边栏输出
-│   ├── background.js        # 编译后的后台脚本
-│   ├── background.js.map    # 后台脚本源码映射
-│   ├── content-script.js    # 编译后的内容脚本
-│   ├── content-script.js.map # 内容脚本源码映射
-│   ├── main-world.js        # 编译后的主世界脚本
-│   ├── main-world.js.map    # 主世界脚本源码映射
-│   ├── sidepanel.js         # 编译后的侧边栏脚本
-│   ├── sidepanel.js.map     # 侧边栏脚本源码映射
-│   └── manifest.json        # 复制的清单文件
-├── node_modules/            # 依赖包（自动生成）
-├── .DS_Store                # macOS系统文件
-├── .gitignore               # Git忽略文件
-├── CHANGELOG.md             # 更新日志
-├── DEVELOPMENT.md           # 开发指南（本文档）
-├── README.md                # 用户使用指南
-├── TODO.md                  # 待办事项
-├── manifest.json            # 扩展清单文件
-├── package-lock.json        # 依赖版本锁定
-├── package.json             # 项目依赖和脚本
-├── tsconfig.json            # TypeScript配置
-└── vite.config.ts           # Vite构建配置
+5.24/
+├── src/                        # 新架构核心代码 (v5.24.7+)
+│   ├── background/             # Background Service Worker
+│   │   ├── service-worker.ts   # 主要服务工作者脚本
+│   │   ├── utils/              # 后台工具函数
+│   │   └── components/         # 后台组件
+│   ├── content-scripts/        # Content Scripts
+│   │   ├── content-script.ts   # 主要内容脚本
+│   │   └── main-world.ts       # 主世界注入脚本
+│   ├── popup/                  # 弹出窗口（降级机制）
+│   │   ├── popup.html          # 弹出页面HTML
+│   │   └── popup.ts            # 弹出页面脚本
+│   ├── sidepanel/             # 侧边栏面板 (v5.24.7+ 简化架构)
+│   │   ├── sidepanel.html      # 侧边栏HTML
+│   │   ├── sidepanel.ts        # 侧边栏脚本 (60行简化版)
+│   │   ├── components/         # SidePanel组件
+│   │   ├── styles/             # 样式文件
+│   │   └── templates/          # 模板文件
+│   └── shared/                # 共享组件和工具
+│       ├── components/        # UI组件
+│       │   ├── ui-manager.ts  # UI管理器 (页面级状态管理)
+│       │   └── control-panel.ts # 控制面板组件
+│       ├── storage/           # 存储管理 (v5.24.7+ 统一架构)
+│       │   ├── user-preferences-manager.ts  # 用户偏好管理器
+│       │   ├── runtime-state-manager.ts     # 运行时状态管理器
+│       │   ├── video-source-language-cache.ts # 视频源语言缓存
+│       │   ├── memory-cache.ts              # 内存缓存管理
+│       │   └── index.ts                     # 统一存储入口
+│       ├── types/             # TypeScript类型定义
+│       │   ├── storage.ts     # 存储相关类型
+│       │   └── messages.ts    # 消息类型定义
+│       ├── messages/          # 消息系统
+│       │   ├── message-bus.ts     # 消息总线
+│       │   ├── message-handlers.ts # 消息处理器
+│       │   └── messages.ts        # 消息类型定义
+│       ├── constants/         # 常量定义
+│       ├── translation/       # 翻译相关
+│       │   └── translation-dispatcher.ts # 翻译调度器
+│       └── utils/             # 工具函数
+│           ├── language-processing.ts # 语言处理工具
+│           └── languages.ts           # 语言定义
+├── legacy/                     # v5.24.6及更早版本归档
+│   ├── README_v5.24.6.md      # 历史版本参考文档
+│   ├── background/            # 旧版后台脚本
+│   ├── content/               # 旧版内容脚本
+│   ├── sidepanel/             # 旧版侧边栏 (340行复杂架构)
+│   └── shared/                # 旧版共享组件
+├── docs/                      # 项目文档
+│   ├── architecture.md        # 技术架构文档（v5.24.7+统一版本）
+│   ├── decision-log.md        # 技术决策记录
+│   ├── DEVELOPMENT.md         # 开发指南（本文档）
+│   ├── CHANGELOG.md           # 更新日志
+│   └── README.md              # 文档中心导航
+├── public/                    # 公共资源文件
+│   ├── _locales/              # 国际化文件
+│   │   └── zh_CN/             # 中文本地化
+│   ├── icons/                 # 扩展图标
+│   │   ├── icon16.png         # 16x16 图标
+│   │   ├── icon48.png         # 48x48 图标
+│   │   ├── icon128.png        # 128x128 图标
+│   │   ├── l-setting.svg      # 设置按钮图标
+│   │   └── on.svg             # 开启状态图标
+│   └── assets/                # 静态资源
+├── scripts/                   # 构建和部署脚本
+│   └── verify-build.sh        # 构建验证脚本
+├── dist/                      # 构建输出目录（构建时生成）
+│   ├── background.js          # 编译后的后台脚本
+│   ├── content-script.js      # 编译后的内容脚本
+│   ├── sidepanel.js           # 编译后的侧边栏脚本 (简化版)
+│   └── manifest.json          # Chrome扩展清单文件
+├── manifest.json              # 扩展清单文件 (Manifest V3)
+├── package.json               # 项目依赖和脚本
+├── tsconfig.json              # TypeScript配置
+├── vite.config.ts             # Vite构建配置
+├── README.md                  # 用户使用指南
+├── CHANGELOG.md               # 更新日志
+└── DEVELOPMENT.md             # 开发指南（本文档）
 ```
+
+### v5.24.7+ 架构特色说明
+
+#### 🎯 SidePanel 简化架构 (60行核心逻辑)
+- **新架构**: `src/sidepanel/sidepanel.ts` (60行简化版)
+- **旧架构**: `legacy/sidepanel/` (340行复杂架构，已归档)
+- **设计理念**: 页面级状态管理，移除全局状态同步
+
+#### 📦 存储管理统一架构
+- **UserPreferencesManager**: 用户偏好设置管理
+- **RuntimeStateManager**: 运行时状态管理
+- **VideoSourceLanguageCache**: 视频源语言缓存
+- **MemoryCache**: 内存缓存管理
+- **统一入口**: `src/shared/storage/index.ts`
+
+#### 🔄 设计思维指导原则
+遵循 architecture.md 中的设计思维指导原则：
+1. **简单优于复杂**: 优先考虑最小可行方案
+2. **理解问题本质**: 深入理解问题的技术本质和业务逻辑
+3. **副作用评估**: 修改前评估可能影响的其他功能
+4. **技术边界认知**: 在技术限制下寻找可接受的折中方案
 
 ### 目录功能说明
 
@@ -226,17 +215,20 @@ youtube-subtitle-translator/
   - `components/`: UI组件管理，包含翻译按钮、设置按钮等界面元素管理
     - `control-panel.ts`: 控制面板的核心逻辑，统一管理翻译流程
     - `ui-manager.ts`: UI元素的创建、更新和状态管理
-  - `events/`: 事件系统，实现组件间高效通信机制
-    - `event-bus.ts`: 发布/订阅模式的事件总线实现
-    - `event-types.ts`: 所有事件类型的TypeScript定义
+  - `messages/`: 消息系统，实现组件间高效通信机制
+    - `message-bus.ts`: Chrome扩展原生消息通信实现
+    - `message-handlers.ts`: 消息处理器和回调函数管理
+    - `messages.ts`: 所有消息类型的TypeScript定义
   - `storage/`: **🔄 新架构**：统一的数据存储和缓存管理，全新重构的设置系统
     - `storage-manager.ts`: 统一的存储访问层，支持多种存储区域和变更监听
-    - `global-settings.ts`: **新增**：统一的全局设置类型定义，合并原UserSettings和VideoSettings
-    - `global-settings-manager.ts`: **新增**：统一的全局设置管理器，替代分散式设置管理
-    - `migration-helper.ts`: **新增**：数据迁移助手，自动从旧架构迁移到新架构
-    - `settings-manager.ts`: 用户设置的专门管理器（保留兼容性）
-    - `video-settings-local-storage.ts`: 视频级别设置的本地存储（保留兼容性）
-    - `storage-test.ts`: 存储功能的测试代码
+    - `global-settings.ts`: **新增**：统一的全局设置类型定义
+    - `user-preferences-manager.ts`: **新增**：统一的用户偏好设置管理器，专注用户偏好管理
+    - `runtime-state-manager.ts`: **新增**：运行时状态管理器（translateActive等）
+    - `migration.ts`: **新增**：数据迁移机制，自动从旧架构迁移到新架构
+    - `index.ts`: **新增**：统一存储模块入口，导出所有管理器
+    - `settings-manager.ts`: **保留**：向后兼容的设置管理器
+    - `video-settings-local-storage.ts`: **保留**：向后兼容的视频设置存储
+    - `storage-test.ts`: **保留**：存储测试
   - `translation/`: 翻译相关逻辑和多API封装
     - `translation-dispatcher.ts`: 翻译任务的调度和优先级管理
   - `utils/`: 通用工具函数和帮助类
@@ -321,6 +313,131 @@ youtube-subtitle-translator/
 - **`vite.config.ts`**: 构建配置，处理TypeScript编译和模块打包
 - **`tsconfig.json`**: TypeScript编译选项
 - **`package.json`**: 项目元信息、依赖管理和脚本定义
+
+## 📊 数据架构设计（v5.24.6重构版本）
+
+### 存储分层架构
+
+项目采用三层分离的数据存储架构，将不同类型的数据按职责和生命周期进行分层管理：
+
+#### 1. **GlobalSettings** - 持久化用户偏好设置
+```typescript
+interface GlobalSettings {
+  // === 核心翻译设置 ===
+  targetLang: string;                           // 目标语言（全局默认）
+  subtitleMode: SubtitleMode;                   // 字幕显示模式
+  
+  // === 翻译服务配置 ===
+  translationService: TranslationServiceType;  // 翻译服务类型
+  serviceConfig: ServiceConfig;                 // 服务配置（API密钥、模型等）
+  
+  // === 数据完整性 ===
+  hash: string;                                 // 设置hash值
+}
+```
+- **存储位置**: `chrome.storage.local`
+- **前缀**: `global_settings.`
+- **特点**: 用户偏好永久保存，不清理
+- **管理器**: `GlobalSettingsManager`
+
+#### 2. **RuntimeState** - 运行时状态
+```typescript
+interface RuntimeState {
+  translateActive: boolean;                     // 翻译开关状态
+  settingPanelOpen: boolean;                    // 设置面板状态
+}
+```
+- **存储位置**: `chrome.storage.local`
+- **前缀**: `runtime_state.`
+- **特点**: 运行时状态，可重置
+- **管理器**: `RuntimeStateManager`
+
+#### 3. **VideoSpecificData** - 视频特定数据
+```typescript
+interface VideoSpecificData {
+  videoId: string;                              // 视频ID
+  sourceLang: string;                           // 源语言（用于匹配）
+  targetLang: string;                           // 目标语言（用于匹配）
+  translationService: TranslationServiceType;   // 翻译服务类型
+  serviceConfig: ServiceConfig;                 // 服务配置
+  lastUsed: number;                             // 最后使用时间戳
+  hasSubtitles: boolean;                        // 是否有字幕
+  translatedSubtitles: string;                 // 翻译后的字幕数据
+  
+  // === 数据完整性验证 ===
+  dataHash: string;                             // 数据完整性hash
+}
+```
+- **存储位置**: 与翻译字幕一起存储
+- **特点**: 循环覆盖，存满后覆盖最早的
+- **管理器**: 由`GlobalSettingsManager`和翻译模块共同管理
+
+### Hash验证机制
+
+#### **GlobalSettings Hash**
+- **计算范围**: `targetLang + subtitleMode + translationService`
+- **用途**: 检测用户设置变更，避免不必要的重新计算
+- **更新时机**: 这3个参数设置变更时自动重新计算
+- **排除字段**: 不包含频繁变化的状态数据（如translateActive）
+
+#### **VideoSpecificData 数据完整性验证**
+- **dataHash**: 验证翻译数据完整性，包含字幕内容和关键元数据
+- **自动恢复**: 验证失败时自动重新翻译，保证功能可用性
+
+### 管理器架构
+
+#### 1. **GlobalSettingsManager**
+- **职责**: 管理用户偏好设置
+- **功能**: 
+  * 智能默认值计算（基于浏览器UI语言）
+  * Hash完整性验证
+  * 设置变更通知
+  * 缓存管理
+
+#### 2. **RuntimeStateManager**
+- **职责**: 管理运行时状态
+- **功能**:
+  * 状态变更通知
+  * 支持状态重置
+  * 批量状态操作
+
+#### 3. **统一存储入口** (`src/storage/index.ts`)
+- **职责**: 提供统一的存储访问接口
+- **导出**: 所有管理器和类型定义
+- **简化**: 外部模块只需导入此文件即可访问所有存储功能
+
+### 并行处理事件系统
+
+#### **设计理念**
+当Background获得要存储数据时，同时引发相应的事件，通过并行处理提升性能和用户体验。
+
+#### **优势特性**
+- ⚡ **响应速度提升**: 存储和通知同时进行，不阻塞用户操作
+- ⚡ **降低延迟**: 避免存储完成后再发送事件的串行等待
+- 🎯 **职责清晰**: Background专注数据管理，事件系统专注通信
+- 🛡️ **容错性好**: 存储失败不影响事件通知，反之亦然
+
+#### **事件类型**
+```typescript
+enum StorageEventType {
+  SETTINGS_UPDATED = 'SETTINGS_UPDATED',
+  TRANSLATION_CACHED = 'TRANSLATION_CACHED',
+  RUNTIME_STATE_CHANGED = 'RUNTIME_STATE_CHANGED',
+  VIDEO_DATA_UPDATED = 'VIDEO_DATA_UPDATED'
+}
+```
+
+### 性能优化策略
+
+#### **缓存机制**
+- **内存缓存**: GlobalSettingsManager内置缓存，避免重复读取
+- **Hash验证**: 快速检测数据变更，避免不必要的计算
+- **批量操作**: 支持批量设置更新，减少存储操作次数
+
+#### **存储优化**
+- **分层存储**: 按数据特点分层存储，避免频繁读写大数据
+- **精确缓存**: 基于hash的精确缓存匹配，避免缓存冲突
+- **LRU清理**: 视频特定数据支持LRU策略自动清理
 
 ## 构建系统
 
@@ -615,3 +732,517 @@ npm run package
    rm -rf node_modules package-lock.json
    npm install
    ```
+
+---
+
+## SidePanel开发指南 (2025-05-30新增)
+
+### 概述
+
+SidePanel是YouTube字幕翻译助手的核心用户界面组件，采用事件驱动+状态机组合架构。本节提供SidePanel开发、调试和维护的完整指导。
+
+### 架构原则
+
+#### 数据流向
+```typescript
+// ✅ 正确：数据单向流动
+Background → SidePanel  // 通过SidePanelContext传输业务数据
+SidePanel → Background  // 通过事件消息传输用户操作
+
+// ❌ 错误：避免双向数据绑定
+SidePanel ↔ Background  // 复杂且难以维护
+```
+
+#### 职责分离
+- **Background**: 业务逻辑、数据管理、API调用
+- **SidePanel**: UI展示、用户交互、状态反馈
+
+### 核心数据结构
+
+#### SidePanelContext (主数据通道)
+```typescript
+interface SidePanelContext {
+  videoId: string;                      // 当前视频ID
+  tabId: number;                        // 当前标签页ID
+  globalSettings: GlobalSettings;       // 全局设置
+  detectedSourceLang: string;          // 检测到的源语言
+  conflictState: ConflictState;        // 语言冲突状态
+}
+```
+
+#### StatusMessage (状态消息通道)
+```typescript
+interface StatusMessage {
+  type: 'success' | 'error' | 'loading' | 'info' | 'warning';
+  message: string;
+}
+```
+
+### 开发工作流
+
+#### 1. 新功能开发
+
+**Background端修改**：
+```typescript
+// 1. 更新SidePanelContext结构（如需要）
+interface SidePanelContext {
+  // ... existing fields ...
+  newFeatureData: NewFeatureData;      // 新增数据字段
+}
+
+// 2. 在Background中构建新数据
+class SidePanelContextBuilder {
+  async buildContext(): Promise<SidePanelContext> {
+    // ... existing logic ...
+    const newFeatureData = await this.loadNewFeatureData();
+    
+    return {
+      // ... existing fields ...
+      newFeatureData
+    };
+  }
+}
+
+// 3. 添加新事件处理
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.action === 'NEW_FEATURE_UPDATE') {
+    this.handleNewFeatureUpdate(message.data);
+  }
+});
+```
+
+**SidePanel端修改**：
+```typescript
+// 1. 监听数据更新
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.action === 'SIDEPANEL_CONTEXT_UPDATE') {
+    this.updateNewFeatureUI(message.data.newFeatureData);
+  }
+});
+
+// 2. 发送用户操作
+function handleUserAction(actionData: any): void {
+  chrome.runtime.sendMessage({
+    action: 'NEW_FEATURE_UPDATE',
+    data: actionData
+  });
+}
+```
+
+#### 2. 状态机开发
+
+**语言冲突处理示例**：
+```typescript
+enum ConflictResolutionState {
+  IDLE = 'idle',
+  DETECTING = 'detecting',
+  CONFLICT_FOUND = 'conflict_found',
+  RESOLVING = 'resolving',
+  RESOLVED = 'resolved',
+  ERROR = 'error'
+}
+
+class ConflictResolutionStateMachine {
+  private state: ConflictResolutionState = ConflictResolutionState.IDLE;
+  
+  async detectConflict(source: string, target: string): Promise<ConflictState> {
+    this.setState(ConflictResolutionState.DETECTING);
+    // 实现检测逻辑...
+  }
+  
+  private setState(newState: ConflictResolutionState): void {
+    console.log(`[ConflictStateMachine] ${this.state} → ${newState}`);
+    this.state = newState;
+  }
+}
+```
+
+#### 3. 配置流程开发
+
+**OpenAI配置示例**：
+```typescript
+class ServiceConfigHandler {
+  async handleServiceSelection(service: 'openai'): Promise<void> {
+    // 1. 显示配置弹窗
+    this.showServiceConfigModal(service);
+    
+    // 2. 等待用户填写
+    const config = await this.waitForUserConfiguration();
+    
+    // 3. 验证配置
+    const validation = this.validateServiceConfig(service, config);
+    if (!validation.isValid) {
+      this.showValidationErrors(validation.errors);
+      return;
+    }
+    
+    // 4. 发送到Background测试
+    await chrome.runtime.sendMessage({
+      action: 'SERVICE_CONFIG_UPDATE',
+      data: { translationService: service, config }
+    });
+  }
+}
+```
+
+### 调试指南
+
+#### 1. Background Script调试
+```bash
+# 1. 打开扩展管理页面
+chrome://extensions/
+
+# 2. 点击扩展的"service worker"链接
+# 3. 在DevTools Console中查看日志
+console.log('[Background] SidePanelContext构建完成:', context);
+```
+
+#### 2. SidePanel调试
+```bash
+# 1. 打开SidePanel
+# 2. 右键点击SidePanel内容区域
+# 3. 选择"检查"打开DevTools
+# 4. 查看Console和Network面板
+```
+
+#### 3. 通信调试
+```typescript
+// Background端日志
+console.log('[Background→SidePanel]', message.action, message.data);
+
+// SidePanel端日志  
+console.log('[SidePanel→Background]', message.action, message.data);
+console.log('[SidePanel←Background]', message.action, message.data);
+```
+
+#### 4. 状态机调试
+```typescript
+class ConflictResolutionStateMachine {
+  private setState(newState: ConflictResolutionState): void {
+    const transition = `${this.state} → ${newState}`;
+    console.log(`[ConflictStateMachine] ${transition}`);
+    
+    // 发送到DevTools Timeline
+    performance.mark(`conflict-state-${newState}`);
+    
+    this.state = newState;
+  }
+}
+```
+
+### 测试指南
+
+#### 1. 演示系统测试
+```bash
+# 打开完整架构演示
+open tests/demos/demo-sidepanel-architecture.html
+
+# 运行关键测试场景：
+# - 插件初始化流程
+# - 多标签页切换
+# - OpenAI配置流程  
+# - 语言冲突处理
+```
+
+#### 2. 单元测试
+```typescript
+// SidePanelContext构建测试
+describe('SidePanelContextBuilder', () => {
+  it('should build complete context for new user', async () => {
+    const builder = new SidePanelContextBuilder();
+    const context = await builder.buildContext();
+    
+    expect(context.videoId).toBeDefined();
+    expect(context.globalSettings).toBeDefined();
+    expect(context.conflictState).toBeDefined();
+  });
+});
+
+// 状态机测试
+describe('ConflictResolutionStateMachine', () => {
+  it('should detect language conflict correctly', async () => {
+    const machine = new ConflictResolutionStateMachine();
+    const result = await machine.detectConflict('zh-cn', 'zh-tw');
+    
+    expect(result.hasConflict).toBe(true);
+    expect(result.conflictType).toBe('same_family');
+  });
+});
+```
+
+#### 3. 集成测试
+```typescript
+// 端到端通信测试
+describe('Background-SidePanel Communication', () => {
+  it('should handle tab switch correctly', async () => {
+    // 模拟标签页切换
+    await mockTabSwitch(newTabId);
+    
+    // 验证SidePanel接收到更新
+    const contextUpdate = await waitForMessage('SIDEPANEL_CONTEXT_UPDATE');
+    expect(contextUpdate.data.tabId).toBe(newTabId);
+  });
+});
+```
+
+### 性能优化
+
+#### 1. 数据传输优化
+```typescript
+// ✅ 只传输必需数据
+interface SidePanelContext {
+  videoId: string;              // 必需
+  globalSettings: GlobalSettings; // 必需
+  // 避免传输缓存数据、临时数据等
+}
+
+// ❌ 避免传输过多数据
+interface BadSidePanelContext {
+  fullApplicationState: any;    // 避免
+  allCachedData: any;          // 避免
+  temporaryUIState: any;       // 避免
+}
+```
+
+#### 2. 状态机优化
+```typescript
+// ✅ 使用缓存避免重复计算
+class ConflictResolutionStateMachine {
+  private conflictCache = new Map<string, ConflictState>();
+  
+  async detectConflict(source: string, target: string): Promise<ConflictState> {
+    const cacheKey = `${source}-${target}`;
+    if (this.conflictCache.has(cacheKey)) {
+      return this.conflictCache.get(cacheKey)!;
+    }
+    
+    const result = await this.performDetection(source, target);
+    this.conflictCache.set(cacheKey, result);
+    return result;
+  }
+}
+```
+
+#### 3. 通信优化
+```typescript
+// ✅ 防抖合并消息
+class MessageBatcher {
+  private pendingUpdates = new Map<string, any>();
+  private batchTimer: NodeJS.Timeout | null = null;
+  
+  scheduleUpdate(key: string, data: any): void {
+    this.pendingUpdates.set(key, data);
+    
+    if (this.batchTimer) {
+      clearTimeout(this.batchTimer);
+    }
+    
+    this.batchTimer = setTimeout(() => {
+      this.sendBatchUpdate();
+    }, 100); // 100ms防抖
+  }
+}
+```
+
+### 错误处理
+
+#### 1. 数据验证
+```typescript
+// Background端验证
+function validateSidePanelContext(context: SidePanelContext): boolean {
+  if (!context.videoId || !context.globalSettings) {
+    console.error('[Background] Invalid SidePanelContext:', context);
+    return false;
+  }
+  return true;
+}
+
+// SidePanel端验证
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.action === 'SIDEPANEL_CONTEXT_UPDATE') {
+    if (!message.data || !message.data.videoId) {
+      console.error('[SidePanel] Invalid context data:', message.data);
+      this.showErrorMessage('数据加载失败，请刷新页面重试');
+      return;
+    }
+    this.updateUI(message.data);
+  }
+});
+```
+
+#### 2. 通信异常处理
+```typescript
+// 超时处理
+async function sendMessageWithTimeout(message: any, timeout = 5000): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('Message timeout'));
+    }, timeout);
+    
+    chrome.runtime.sendMessage(message, (response) => {
+      clearTimeout(timer);
+      if (chrome.runtime.lastError) {
+        reject(chrome.runtime.lastError);
+      } else {
+        resolve(response);
+      }
+    });
+  });
+}
+```
+
+#### 3. 降级策略
+```typescript
+// 数据加载失败时的降级
+class SidePanelDataLoader {
+  async loadWithFallback(): Promise<SidePanelContext> {
+    try {
+      return await this.loadFromBackground();
+    } catch (error) {
+      console.warn('[SidePanel] Background加载失败，使用默认数据:', error);
+      return this.getDefaultContext();
+    }
+  }
+  
+  private getDefaultContext(): SidePanelContext {
+    return {
+      videoId: 'unknown',
+      tabId: -1,
+      globalSettings: getDefaultGlobalSettings(),
+      detectedSourceLang: 'auto',
+      conflictState: { hasConflict: false, status: 'none' }
+    };
+  }
+}
+```
+
+### 代码规范
+
+#### 1. 命名约定
+```typescript
+// 接口命名：PascalCase + 描述性后缀
+interface SidePanelContext { }
+interface ConflictState { }
+interface StatusMessage { }
+
+// 事件命名：UPPER_SNAKE_CASE + _UPDATE/_REQUEST后缀
+const SIDEPANEL_CONTEXT_UPDATE = 'SIDEPANEL_CONTEXT_UPDATE';
+const SERVICE_CONFIG_REQUEST = 'SERVICE_CONFIG_REQUEST';
+
+// 状态机状态：小写 + 下划线
+enum ConflictResolutionState {
+  IDLE = 'idle',
+  DETECTING = 'detecting',
+  CONFLICT_FOUND = 'conflict_found'
+}
+```
+
+#### 2. 日志格式
+```typescript
+// 统一日志前缀：[组件名] 描述
+console.log('[SidePanel] Context更新完成:', context);
+console.log('[Background] 构建SidePanelContext:', { videoId, tabId });
+console.log('[ConflictStateMachine] 状态转换:', `${oldState} → ${newState}`);
+
+// 错误日志包含足够的上下文信息
+console.error('[SidePanel] OpenAI配置验证失败:', {
+  service: 'openai',
+  errors: validationErrors,
+  config: sanitizedConfig  // 注意不要记录敏感信息
+});
+```
+
+#### 3. TypeScript规范
+```typescript
+// ✅ 使用明确的类型定义
+interface ServiceConfig {
+  openai_api_key: string;
+  openai_model?: 'gpt-3.5-turbo' | 'gpt-4' | 'gpt-4-turbo';
+  openai_temperature?: number;
+}
+
+// ✅ 使用JSDoc注释
+/**
+ * 构建SidePanel所需的完整上下文数据
+ * @param tabId - 目标标签页ID
+ * @returns 完整的SidePanelContext对象
+ */
+async function buildSidePanelContext(tabId: number): Promise<SidePanelContext> {
+  // ...
+}
+
+// ❌ 避免使用any类型
+function handleMessage(message: any): void { }  // 不推荐
+
+// ✅ 使用具体类型
+function handleMessage(message: SidePanelMessage): void { }  // 推荐
+```
+
+### 维护指南
+
+#### 1. 版本兼容性
+```typescript
+// 向前兼容的数据结构扩展
+interface SidePanelContext {
+  videoId: string;
+  tabId: number;
+  globalSettings: GlobalSettings;
+  detectedSourceLang: string;
+  conflictState: ConflictState;
+  
+  // v5.25新增字段，保持可选以兼容旧版本
+  newFeature?: NewFeatureData;
+}
+```
+
+#### 2. 文档同步
+- 重大架构变更时同步更新 `docs/architecture.md`
+- 新增技术决策时记录到 `docs/decision-log.md`
+- 演示系统与实际代码保持同步
+
+#### 3. 测试覆盖
+- 每个新功能都要有对应的演示场景
+- 状态机的每个状态转换都要有测试用例
+- 异常情况和边界条件必须有测试覆盖
+
+这套SidePanel开发指南确保了代码质量、维护性和团队协作效率，为YouTube字幕翻译助手的持续迭代提供了坚实的技术基础。
+
+---
+
+## 📚 **重要文档参考** (v5.24.7+)
+
+### 核心架构文档
+- **[技术架构文档](docs/architecture.md)** ⭐ **权威参考**
+  - v5.24.7+ 简化架构设计完整规范
+  - 设计思维指导原则
+  - SidePanel简化架构详解（340行→60行）
+  - 数据结构设计规范
+  - 存储与缓存架构
+  - 翻译服务架构
+  - 事件系统架构
+
+### 开发指导
+- **[更新日志](CHANGELOG.md)** - 版本更新历史与技术演进记录
+- **[用户指南](README.md)** - 用户使用说明和功能介绍
+- **[开发指南](DEVELOPMENT.md)** - 本文档，开发环境设置和工作流程
+
+### v5.24.7+ 架构重要变更
+1. **架构简化**: SidePanel从340行简化到60行，维护成本大幅降低
+2. **状态管理**: 移除全局状态同步，采用页面级状态管理
+3. **设计思维**: 沉淀设计思维指导原则，避免过度设计
+4. **历史归档**: v5.24.6及更早版本已归档至 `legacy/` 目录
+
+### 开发注意事项
+- ⚠️ **严格遵循v5.24.7+简化设计**，避免重新引入复杂机制
+- ⚠️ **参考设计思维指导原则**，优先考虑简单方案
+- ⚠️ **新功能开发前先阅读architecture.md**，确保与整体架构一致
+- ⚠️ **禁止从legacy目录复制代码**，旧架构已废弃
+
+### 文档维护
+- 任何架构变更都必须同步更新 `docs/architecture.md`
+- 新增功能必须更新相应的文档章节
+- 重大设计决策记录到决策日志中
+
+---
+
+**🎯 开发目标**: 在v5.24.7+简化架构基础上，持续保持代码的简洁性和可维护性，避免重新引入复杂机制。

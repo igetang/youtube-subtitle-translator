@@ -1,0 +1,98 @@
+export const EventTypes = {
+  // 导航相关事件
+  NAVIGATION_STARTED: 'navigation:started',
+  NAVIGATION_FINISHED: 'navigation:finished',
+
+  // 初始化相关事件
+  BASIC_INIT_DONE: 'init:basic_done',
+  FULL_INIT_DONE: 'init:full_done',
+  MAIN_WORLD_READY: 'main-world:ready',
+  MESSENGER_READY: 'messenger:ready',
+
+  // DOM & UI 相关事件 (Aligning with UIManager and main-world's UI_*)
+  UI_CONTROLS_INJECTED: 'ui.controlsInjected',
+  UI_OVERLAY_CREATED: 'ui.overlayCreated',
+  UI_INJECTION_FAILED: 'ui.injectionFailed',
+  UI_CONTROLS_RECOVERED: 'ui.controlsRecovered',
+  PLAYER_READY: 'dom:player_ready',
+
+  // 翻译相关事件
+  TRANSLATION_STARTED: 'translation:started',
+  TRANSLATION_FINISHED: 'translation:finished',
+  TRANSLATION_ERROR: 'translation:error',
+  TRANSLATION_START_REQUESTED: 'translation:start_requested',
+  TRANSLATION_STOP_REQUESTED: 'translation:stop_requested',
+
+  // 字幕相关事件
+  SUBTITLES_LOADED: 'subtitles:loaded',
+  SUBTITLES_UPDATED: 'subtitles:updated',
+  SUBTITLE_MODE_CHANGED: 'subtitles:mode_changed',
+  TRACKS_AVAILABLE: 'tracks:available',
+
+  // 设置相关事件
+  SETTINGS_CHANGED: 'settings:changed',
+  TARGET_LANG_CHANGED: 'settings:target_lang_changed',
+  SOURCE_LANG_CHANGED: 'settings:source_lang_changed',
+
+  // 状态相关事件
+  STATE_CHANGED: 'state:changed',
+  TRANSLATE_ACTIVE_CHANGED: 'state:translate_active_changed',
+  TRANSLATE_STATE_CHANGED_NOTIFICATION: 'translate_state_changed_notification',
+
+  // 消息/请求类事件
+  REQUEST_CAPTION_TRACKS: 'request:track_info',
+
+  // 翻译流程相关事件
+  TRANSLATION_START_REQUEST: 'translation:start_request',
+  TRANSLATION_STOP_REQUEST: 'translation:stop_request',
+  TRANSLATION_SUCCESS: 'translation:success',
+  TRANSLATION_COMPLETE: 'translation:complete',
+  
+  // 用户偏好设置
+  USER_PREFERENCES_UPDATED: 'user:preferences_updated',
+
+  // UI相关事件
+  UI_EVENT: 'ui:event',
+  INJECT_UI: 'ui:inject',
+  SHOW_NOTIFICATION: 'ui:show_notification',
+  UPDATE_UI_STATE: 'ui:update_state',
+  
+  // 历史记录和状态
+  HISTORY_STATE_UPDATED: 'history:state_updated'
+};
+
+/**
+ * UI事件的结构化类型定义
+ * 用于EventBus中传递的UI相关事件
+ */
+export interface UIActionEvent {
+  /**
+   * UI事件的具体类型
+   */
+  type: 'button_click' | 'tooltip_show' | 'state_change';
+  
+  /**
+   * 事件携带的数据
+   */
+  payload: {
+    /**
+     * 按钮类型，在 button_click 事件中使用
+     */
+    buttonType?: 'translate' | 'settings';
+    
+    /**
+     * tooltip文本，在 tooltip_show 事件中使用
+     */
+    tooltipText?: string;
+
+    /**
+     * 新的状态值
+     */
+    newState?: any;
+    
+    /**
+     * 触发事件的源头
+     */
+    source?: string;
+  };
+} 

@@ -1,0 +1,250 @@
+/**
+ * @file user-preferences-types.ts
+ * @description 新架构下的用户偏好设置类型定义
+ * 基于 architecture.md 7.1.1 UserPreferences 设计规范
+ */
+
+/**
+ * 字幕显示模式
+ */
+export enum SubtitleMode {
+  BILINGUAL = 'bilingual',    // 双语显示：原文+译文
+  TARGET_ONLY = 'targetOnly'  // 仅目标语言显示
+}
+
+/**
+ * 翻译服务类型枚举
+ */
+export enum TranslationServiceType {
+  GOOGLE_FREE = 'google-free',     // 免费Google翻译，不需要API key
+  MICROSOFT_FREE = 'microsoft-free', // 免费微软翻译，不需要API key  
+  OPENAI = 'openai',               // OpenAI，需要API key + model + temperature
+  GEMINI = 'gemini',               // Google Gemini，需要API key + model
+  DEEPSEEK = 'deepseek',           // DeepSeek，需要API key + model
+  QWEN = 'qwen',                   // 通义千问，需要API key + model
+  DUMMY = 'dummy'                  // 用于测试
+}
+
+/**
+ * 完整的翻译服务配置结构 - 符合 architecture.md 标准
+ */
+export interface TranslationServiceComplete {
+  // === 基础信息 ===
+  type: TranslationServiceType;                 // 服务类型
+  name: string;                                 // 显示名称
+  
+  // === 模型配置 ===
+  model: string | null;                         // 模型名称
+  availableModels?: string[];                   // 可用模型列表
+  
+  // === 认证信息 ===
+  apiKey?: string;                              // API密钥（敏感信息）
+  
+  // === 调节参数 ===
+  temperature?: number | null;                  // 温度参数
+  maxTokens?: number;                           // 最大令牌数
+  topP?: number;                                // Top-P参数
+  
+  // === 限流参数 ===
+  rpm?: number | null;                          // 每分钟请求限制
+  tpm?: number | null;                          // 每分钟令牌限制
+}
+
+/**
+ * 用户偏好设置接口
+ * 基于 architecture.md 7.1.1 UserPreferences 设计规范
+ * 注意：移除了sourceLang字段，符合新架构设计
+ */
+export interface UserPreferences {
+  // === 核心翻译设置 ===
+  targetLang: string;                           // 目标语言（全局默认）
+  subtitleMode: SubtitleMode;                   // 字幕显示模式
+  
+  // === 翻译服务配置（统一） ===
+  translationService: TranslationServiceComplete;  // 完整的翻译服务配置
+  
+  // === 数据完整性 ===
+  hash: string;                                 // 设置hash值
+}
+
+/**
+ * 预定义的翻译服务模板 - 符合 architecture.md 标准
+ */
+export const TRANSLATION_SERVICE_TEMPLATES: Record<TranslationServiceType, Omit<TranslationServiceComplete, 'apiKey'>> = {
+  [TranslationServiceType.GOOGLE_FREE]: {
+    type: TranslationServiceType.GOOGLE_FREE,
+    name: 'Google 翻译（免费）',
+    model: null,
+    temperature: null,
+    rpm: 100,
+    tpm: null
+  },
+  [TranslationServiceType.MICROSOFT_FREE]: {
+    type: TranslationServiceType.MICROSOFT_FREE,
+    name: 'Microsoft 翻译（免费）',
+    model: null,
+    temperature: null,
+    rpm: 100,
+    tpm: null
+  },
+  [TranslationServiceType.OPENAI]: {
+    type: TranslationServiceType.OPENAI,
+    name: 'OpenAI GPT',
+    model: 'gpt-4o',
+    availableModels: ['gpt-4', 'gpt-4o', 'gpt-3.5-turbo'],
+    temperature: 0.7,
+    maxTokens: 4000,
+    rpm: 60,
+    tpm: 40000
+  },
+  [TranslationServiceType.GEMINI]: {
+    type: TranslationServiceType.GEMINI,
+    name: 'Google Gemini',
+    model: 'gemini-pro',
+    availableModels: ['gemini-pro', 'gemini-1.5-pro'],
+    temperature: 0.7,
+    maxTokens: 8000,
+    rpm: 60,
+    tpm: 120000
+  },
+  [TranslationServiceType.DEEPSEEK]: {
+    type: TranslationServiceType.DEEPSEEK,
+    name: 'DeepSeek',
+    model: 'deepseek-chat',
+    availableModels: ['deepseek-chat', 'deepseek-coder'],
+    temperature: 0.7,
+    maxTokens: 4000,
+    rpm: 50,
+    tpm: 50000
+  },
+  [TranslationServiceType.QWEN]: {
+    type: TranslationServiceType.QWEN,
+    name: '通义千问',
+    model: 'qwen-turbo',
+    availableModels: ['qwen-turbo', 'qwen-plus', 'qwen-max'],
+    temperature: 0.7,
+    maxTokens: 6000,
+    rpm: 50,
+    tpm: 60000
+  },
+  [TranslationServiceType.DUMMY]: {
+    type: TranslationServiceType.DUMMY,
+    name: '测试翻译',
+    model: null,
+    temperature: null,
+    rpm: 1000,
+    tpm: null
+  }
+};
+
+/**
+ * 默认用户偏好设置
+ */
+export const DEFAULT_USER_PREFERENCES: UserPreferences = {
+  targetLang: 'zh-CN',                    // 默认目标语言
+  subtitleMode: SubtitleMode.BILINGUAL,   // 默认双语显示
+  translationService: {
+    ...TRANSLATION_SERVICE_TEMPLATES[TranslationServiceType.GOOGLE_FREE],
+    apiKey: undefined // 确保不包含API密钥
+  },
+  hash: ''                                // 初始hash为空，将在保存时计算
+};
+
+/**
+ * UserPreferences设置变更事件类型
+ */
+export enum UserPreferenceChangeEvent {
+  TARGET_LANG_CHANGED = 'targetLangChanged',
+  SUBTITLE_MODE_CHANGED = 'subtitleModeChanged', 
+  TRANSLATION_SERVICE_CHANGED = 'translationServiceChanged'
+}
+
+/**
+ * UserPreferences设置变更处理函数类型
+ */
+export type UserPreferenceChangeHandler = (
+  newValue: any,
+  oldValue: any,
+  event: UserPreferenceChangeEvent
+) => void;
+
+/**
+ * 计算用户偏好设置hash
+ * @param preferences 用户偏好设置（不包含hash字段）
+ * @returns hash字符串
+ */
+export function calculateUserPreferencesHash(preferences: Omit<UserPreferences, 'hash'>): string {
+  const str = JSON.stringify({
+    targetLang: preferences.targetLang,
+    subtitleMode: preferences.subtitleMode,
+    translationService: {
+      ...preferences.translationService,
+      apiKey: '[REDACTED]' // 不包含敏感信息在hash计算中
+    }
+  });
+  
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash).toString(16);
+}
+
+/**
+ * 📋 派生类型设计架构
+ * 基于TranslationServiceComplete，为不同使用场景提供专门化类型
+ */
+
+// 存储用：排除敏感信息  
+export type TranslationServiceForStorage = Omit<TranslationServiceComplete, 'apiKey'>;
+
+// 传输用：排除敏感信息，适合消息传递
+export type TranslationServiceForTransfer = Omit<TranslationServiceComplete, 'apiKey'>;
+
+// UI显示用：仅包含显示相关字段
+export type TranslationServiceForUI = Pick<TranslationServiceComplete, 
+  'type' | 'name' | 'model' | 'availableModels'>;
+
+// API调用用：包含执行翻译所需的所有信息
+export type TranslationServiceForAPI = TranslationServiceComplete;
+
+// 缓存键用：仅包含影响翻译结果的字段  
+export type TranslationServiceForCacheKey = Pick<TranslationServiceComplete, 
+  'type' | 'model' | 'temperature'>;
+
+/**
+ * 向后兼容：保持原有接口名称
+ */
+export type TranslationService = TranslationServiceComplete;
+
+/**
+ * 视频源语言缓存项 - 极简设计
+ * 基于 architecture.md 7.1.4 VideoSourceLanguageCache 设计规范
+ */
+export interface VideoSourceLanguageItem {
+  /** 视频ID */
+  videoId: string;
+  /** 选择的源语言代码 */
+  sourceLang: string;
+}
+
+/**
+ * 视频源语言缓存管理器
+ * 基于 architecture.md 7.1.4 VideoSourceLanguageCache 设计规范
+ */
+export interface VideoSourceLanguageCache {
+  /** 缓存项数组，按FIFO顺序排列 (最新的在数组末尾) */
+  items: VideoSourceLanguageItem[];
+  /** 最大缓存数量 */
+  maxSize: number; // 固定为10
+}
+
+/**
+ * 默认视频源语言缓存
+ */
+export const DEFAULT_VIDEO_SOURCE_LANGUAGE_CACHE: VideoSourceLanguageCache = {
+  items: [],
+  maxSize: 10
+};
