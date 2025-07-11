@@ -1,17 +1,17 @@
 /**
  * @file ui-renderer.ts
- * @description UI渲染器 - 根据组件重构计划.md第2步实现，集成ui-button-injection-analysis.md设计
- * 职责：纯UI渲染，不获取状态，只被动接收状态，但包含完整的按钮注入机制
+ * @description UI渲染器 - 纯被动渲染器，彻底消除重复注入源头
+ * 职责：只做UI创建和更新，不包含任何主动检测逻辑
  */
 
 /**
  * UI渲染器类
  * 核心原则：
- * - 只做UI创建和更新
+ * - 只做UI创建和更新（纯被动）
  * - 被动接收状态，不主动获取
  * - 不处理业务逻辑，只上报事件
- * - 职责单一：专注UI渲染
- * - 🚀 新增：包含完整的DOM观察、等待和监测机制
+ * - 不包含DOM观察、等待、监测等主动逻辑
+ * - 职责单一：专注UI渲染，由ContentScriptCoordinator负责时机决策
  */
 export class UIRenderer {
   private coordinator: any = null;
@@ -35,43 +35,29 @@ export class UIRenderer {
   private readonly OFF_ICON_URL = chrome.runtime.getURL('icons/off.svg');
   private readonly NORMAL_BORDER_URL = chrome.runtime.getURL('icons/normal-border.svg');
 
-  // 🚀 新增：控件监测与恢复机制
-  private controlsCheckInterval: number | null = null;
-  private readonly CONTROL_CHECK_INTERVAL = 3000; // 每3秒检查一次
-  private readonly MAX_INJECTION_ATTEMPTS = 5; // 最大尝试次数
-  private readonly INJECTION_RETRY_DELAY = 1000; // 注入重试延迟
-  
-  // 🚀 新增：状态标志
-  private controlsInjected = false;
-  private injectionAttempts = 0;
-  private observerSetup = false;
+  // 🚀 移除：控件监测与恢复机制已移动到ContentScriptCoordinator
+  // 🚀 移除：状态标志管理已移动到ContentScriptCoordinator
 
   constructor() {
     console.log('[UIRenderer] UI渲染器已创建');
   }
 
   /**
-   * 初始化UI渲染器 - 被动接收状态
+   * 初始化UI渲染器 - 纯被动接收状态
    * @param uiState UI状态
    * @param runtimeState 运行时状态
    */
   initialize(uiState: any, runtimeState: any): void {
-    console.log('[UIRenderer] 🎨 初始化UI渲染器（被动接收状态）');
+    console.log('[UIRenderer] 🎨 初始化UI渲染器（纯被动模式）');
     
     this.uiState = uiState || {};
     this.runtimeState = runtimeState || {};
 
-    // 🚀 新增：设置DOM观察器
-    this.setupObserver();
+    // 🚀 移除：所有主动检测逻辑已移除，等待ContentScriptCoordinator的指令
+    // 只初始化tooltip等无关DOM的UI元素
+    this.createTooltip();
 
-    // 开始渲染UI
-    this.render(this.uiState);
-    this.updateButtonStates(this.runtimeState);
-
-    // 🚀 新增：启动持续监测
-    this.startControlsCheck();
-
-    console.log('[UIRenderer] ✅ UI渲染器初始化完成');
+    console.log('[UIRenderer] ✅ UI渲染器初始化完成（等待外部指令）');
   }
 
   /**
@@ -82,32 +68,104 @@ export class UIRenderer {
   }
 
   /**
-   * 只做UI创建
+   * 🚀 新增：被动创建按钮的公共接口
+   * 由ContentScriptCoordinator调用，只负责UI创建
    */
-  private render(uiState: any): void {
-    console.log('[UIRenderer] 🎨 开始渲染UI组件...');
+  public async createButtons(): Promise<boolean> {
+    console.log('[UIRenderer] 🎨 接收到创建按钮指令');
+    
+    try {
+      // 检查YouTube控制栏是否就绪
+      const rightControls = document.querySelector('.ytp-right-controls');
+      if (!rightControls) {
+        console.log('[UIRenderer] YouTube控制栏未就绪，无法创建按钮');
+        return false;
+      }
 
-    // 等待DOM准备好后渲染
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => this.performRender());
-    } else {
-      this.performRender();
+      // 检查是否已存在按钮，如存在则清理
+      this.cleanupExistingButtons();
+
+      // 创建按钮
+      const success = await this.performButtonCreation();
+      
+      if (success) {
+        console.log('[UIRenderer] ✅ 按钮创建完成');
+      } else {
+        console.log('[UIRenderer] ❌ 按钮创建失败');
+      }
+      
+      return success;
+    } catch (error) {
+      console.error('[UIRenderer] ❌ 创建按钮时出错:', error);
+      return false;
     }
   }
 
   /**
-   * 执行实际渲染
+   * 🚀 新增：清理现有按钮
    */
-  private performRender(): void {
-    try {
-      // 🚀 改进：使用完整的注入机制而非简单创建
-      this.injectControls();
-      this.createTooltip();
-
-      console.log('[UIRenderer] ✅ UI组件渲染完成');
-    } catch (error) {
-      console.error('[UIRenderer] ❌ UI渲染失败:', error);
+  private cleanupExistingButtons(): void {
+    const existingTranslateButton = document.getElementById('vid-translate-toggle-button');
+    const existingSettingsButton = document.getElementById('vid-translate-settings-button');
+    
+    if (existingTranslateButton || existingSettingsButton) {
+      console.log('[UIRenderer] 清理现有按钮');
+      existingTranslateButton?.remove();
+      existingSettingsButton?.remove();
+      
+      // 清理引用
+      this.translateButton = null;
+      this.settingsButton = null;
+      this.translateToggleButtonIcon = null;
+      this.settingToggleButtonIcon = null;
     }
+  }
+
+  /**
+   * 🚀 新增：执行按钮创建的核心逻辑
+   */
+  private async performButtonCreation(): Promise<boolean> {
+    const rightControls = document.querySelector('.ytp-right-controls');
+    if (!rightControls) return false;
+
+    // 获取插入参照点
+    const firstNativeButton = rightControls.firstChild;
+    
+    // 1. 创建设置按钮
+    const { button: settingsButton, icon: settingsIcon } = this.createControlButton(
+      'vid-translate-settings-button',
+      this.runtimeState.settingPanelOpen ? '关闭翻译设置' : '翻译设置',
+      this.runtimeState.settingPanelOpen ? this.ACTIVE_SETTING_ICON_URL : this.SETTING_ICON_URL,
+      () => this.onButtonClick('settings')
+    );
+    
+    // 2. 创建翻译按钮
+    const isActive = this.runtimeState.translateActive === true || 
+                     this.runtimeState.translateActive === 'active';
+    const { button: translateButton, icon: toggleIcon } = this.createControlButton(
+      'vid-translate-toggle-button',
+      isActive ? '关闭翻译' : '开启翻译',
+      isActive ? this.ON_ICON_URL : this.OFF_ICON_URL,
+      () => this.onButtonClick('translate')
+    );
+    
+    // 3. 按正确顺序插入按钮
+    rightControls.insertBefore(settingsButton, firstNativeButton);
+    rightControls.insertBefore(translateButton, settingsButton);
+    
+    // 4. 保存引用
+    this.settingsButton = settingsButton;
+    this.settingToggleButtonIcon = settingsIcon;
+    this.translateButton = translateButton;
+    this.translateToggleButtonIcon = toggleIcon;
+    
+    // 5. 确保字幕叠加层存在
+    const playerContainer = document.querySelector('.html5-video-player');
+    if (playerContainer && !this.subtitleOverlayElement) {
+      this.createSubtitleOverlay(playerContainer as HTMLElement);
+    }
+    
+    return true;
   }
 
   // 🚀 注意：原有的 createTranslateButton 和 createSettingsButton 方法已被完整的 injectControls 方法取代
@@ -317,7 +375,8 @@ export class UIRenderer {
     if (newUiState) {
       this.uiState = newUiState;
     }
-    this.performRender();
+    // UIRenderer现在是纯被动的，不主动执行渲染
+    // 刷新由ContentScriptCoordinator通过createButtons()调用
   }
 
   /**
@@ -357,9 +416,6 @@ export class UIRenderer {
    * 清理UI元素
    */
   cleanup(): void {
-    // 停止监测
-    this.stopControlsCheck();
-    
     if (this.translateButton) {
       this.translateButton.remove();
       this.translateButton = null;
@@ -379,386 +435,17 @@ export class UIRenderer {
     console.log('[UIRenderer] UI元素已清理');
   }
 
-  // ======================== 🚀 新增：核心注入机制 ========================
+  // 🚀 移除：DOM观察器设置已移动到ContentScriptCoordinator
 
-  /**
-   * 🚀 设置DOM观察器，监听YouTube控制栏变化
-   * 按照ui-button-injection-analysis.md设计实现
-   */
-  setupObserver(): void {
-    console.log('[UIRenderer] 🔍 设置DOM变化观察器');
-    
-    // 防止重复设置观察器
-    if (this.observerSetup) {
-      console.log('[UIRenderer] DOM观察器已设置，跳过重复设置');
-      return;
-    }
-    
-    this.observerSetup = true;
-    
-    // 先扫描当前DOM，查看是否已有控件容器
-    const currentRightControls = document.querySelector('.ytp-right-controls');
-    const currentAutoplayButton = document.querySelector('.ytp-autonav-toggle-button');
-    
-    // 检查现有按钮
-    const existingTranslateButton = document.getElementById('vid-translate-toggle-button');
-    const existingSettingsButton = document.getElementById('vid-translate-settings-button');
-    
-    // 如果按钮已存在，记录状态并跳过注入
-    if (existingTranslateButton || existingSettingsButton) {
-      console.log('[UIRenderer] 观察器初始化时检测到控件已存在', {
-        translateButton: !!existingTranslateButton,
-        settingsButton: !!existingSettingsButton
-      });
-      this.controlsInjected = true;
-      return;
-    }
-    
-    // 执行初始检查，如果必要元素都存在，尝试执行初始注入
-    if (currentRightControls && currentAutoplayButton && !this.controlsInjected) {
-      console.log('[UIRenderer] 初始检测到必要元素已存在，安排注入');
-      setTimeout(() => this.tryInjectControls('初始检测'), 0);
-    }
-    
-    // 创建DOM变化观察器
-    const observer = new MutationObserver((mutations) => {
-      // 如果控件已注入，不触发新的注入
-      if (this.controlsInjected || 
-          document.getElementById('vid-translate-toggle-button') || 
-          document.getElementById('vid-translate-settings-button')) {
-        return;
-      }
-      
-      // 记录变化的节点，帮助调试
-      let hasRelevantChanges = false;
-      mutations.forEach(mutation => {
-        if (mutation.type === 'childList') {
-          mutation.addedNodes.forEach((node) => {
-            if (node instanceof HTMLElement) {
-              if (node.classList && (
-                  node.classList.contains('ytp-right-controls') || 
-                  node.classList.contains('ytp-autonav-toggle-button') ||
-                  node.classList.contains('html5-video-player')
-                )) {
-                hasRelevantChanges = true;
-                console.log('[UIRenderer] 检测到关键元素添加:', node.className);
-              }
-              
-              // 也检查子元素
-              const rightControls = node.querySelector('.ytp-right-controls');
-              const autoplayButton = node.querySelector('.ytp-autonav-toggle-button');
-              if (rightControls || autoplayButton) {
-                hasRelevantChanges = true;
-                console.log('[UIRenderer] 检测到节点内部包含关键元素:', rightControls ? '.ytp-right-controls' : '', autoplayButton ? '.ytp-autonav-toggle-button' : '');
-              }
-            }
-          });
-        }
-      });
-      
-      // 只有当有相关变化且控件尚未注入时，才尝试注入
-      if (hasRelevantChanges && !this.controlsInjected && 
-          !document.getElementById('vid-translate-toggle-button') && 
-          !document.getElementById('vid-translate-settings-button')) {
-        
-        const rightControls = document.querySelector('.ytp-right-controls');
-        const playerContainer = document.querySelector('.html5-video-player');
-        const autoplayButton = document.querySelector('.ytp-autonav-toggle-button');
-        
-        console.log('[UIRenderer] DOM变化后的元素状态:', {
-          rightControls: !!rightControls,
-          playerContainer: !!playerContainer,
-          autoplayButton: !!autoplayButton,
-          controlsInjected: this.controlsInjected,
-          translateButtonExists: !!document.getElementById('vid-translate-toggle-button')
-        });
-        
-        // 检查是否同时存在自动播放按钮和右侧控制栏
-        if (autoplayButton && rightControls) {
-          this.tryInjectControls('DOM变化检测');
-        } else if (rightControls && !autoplayButton) {
-          console.log('[UIRenderer] 已找到右侧控制栏，但自动播放按钮尚未加载，等待中...');
-        } else if (!rightControls) {
-          console.log('[UIRenderer] 右侧控制栏尚未加载，等待中...');
-        }
-        
-        // 如果找到播放器容器但叠加层不存在，创建叠加层
-        if (playerContainer && !this.subtitleOverlayElement) {
-          console.log('[UIRenderer] 检测到播放器容器，创建字幕叠加层');
-          this.createSubtitleOverlay(playerContainer as HTMLElement);
-        }
-      }
-    });
-    
-    // 开始观察body元素的变化
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['class', 'style']
-    });
-    
-    console.log('[UIRenderer] ✅ DOM变化观察器已设置');
-    
-    // 添加超时检查，确保在合理时间后尝试注入
-    setTimeout(() => {
-      if (!this.controlsInjected && 
-          !document.getElementById('vid-translate-toggle-button') && 
-          !document.getElementById('vid-translate-settings-button')) {
-        console.log('[UIRenderer] 超时检查 - 控件尚未注入，重新尝试');
-        
-        const rightControls = document.querySelector('.ytp-right-controls');
-        const autoplayButton = document.querySelector('.ytp-autonav-toggle-button');
-        
-        if (rightControls && autoplayButton) {
-          this.tryInjectControls('超时检查');
-        } else {
-          console.log('[UIRenderer] 超时检查 - 必要元素不存在:', {
-            rightControls: !!rightControls,
-            autoplayButton: !!autoplayButton
-          });
-        }
-      }
-    }, 5000); // 5秒后检查
-  }
+  // 🚀 移除：等待按钮逻辑已移动到ContentScriptCoordinator
 
-  /**
-   * 🚀 等待YouTube自动播放按钮加载完成
-   * 按照ui-button-injection-analysis.md设计实现
-   */
-  private waitForAutoplayButton(): Promise<HTMLElement | null> {
-    return new Promise((resolve) => {
-      // 首先尝试立即查找
-      const autoplayButton = document.querySelector('.ytp-autonav-toggle-button') as HTMLElement;
-      
-      if (autoplayButton) {
-        console.log('[UIRenderer] 已找到自动播放按钮');
-        resolve(autoplayButton);
-        return;
-      }
-      
-      console.log('[UIRenderer] 未立即找到自动播放按钮，开始监听DOM变化...');
-      
-      // 如果未找到，使用MutationObserver监视
-      const observer = new MutationObserver((mutations, obs) => {
-        const foundButton = document.querySelector('.ytp-autonav-toggle-button') as HTMLElement;
-        
-        if (foundButton) {
-          console.log('[UIRenderer] 自动播放按钮加载完成');
-          obs.disconnect();
-          resolve(foundButton);
-        }
-      });
-      
-      // 设置超时，最多等待3秒
-      setTimeout(() => {
-        observer.disconnect();
-        console.log('[UIRenderer] 等待自动播放按钮超时');
-        
-        const finalButton = document.querySelector('.ytp-autonav-toggle-button') as HTMLElement;
-        console.log('[UIRenderer] 等待超时时元素状态:', {
-          autoplayButton: !!finalButton,
-          rightControls: !!document.querySelector('.ytp-right-controls')
-        });
-        
-        resolve(finalButton);
-      }, 3000);
-      
-      // 开始观察
-      observer.observe(document.body, {
-        childList: true,
-        subtree: true
-      });
-      
-      console.log('[UIRenderer] 开始监听自动播放按钮');
-    });
-  }
+  // 🚀 移除：控件持续监测已移动到ContentScriptCoordinator
 
-  /**
-   * 🚀 启动控件持续监测
-   * 按照ui-button-injection-analysis.md设计实现
-   */
-  private startControlsCheck(): void {
-    // 如果已经在监测中，不重复启动
-    if (this.controlsCheckInterval !== null) {
-      return;
-    }
-    
-    console.log('[UIRenderer] 🔄 启动控件持续监测');
-    
-    this.controlsCheckInterval = window.setInterval(() => {
-      // 只有在控件已注入的情况下才检查
-      if (this.controlsInjected) {
-        const translateButton = document.getElementById('vid-translate-toggle-button');
-        const settingsButton = document.getElementById('vid-translate-settings-button');
-        const autoplayButton = document.querySelector('.ytp-autonav-toggle-button');
-        const rightControls = document.querySelector('.ytp-right-controls');
-        
-        // 如果按钮丢失并且自动播放按钮和右侧控制栏都存在，尝试重新注入
-        if ((!translateButton || !settingsButton) && autoplayButton && rightControls) {
-          console.log('[UIRenderer] 检测到控件丢失且界面就绪，尝试重新注入');
-          
-          // 重置注入状态
-          this.controlsInjected = false;
-          this.injectionAttempts = 0;
-          
-          // 尝试重新注入
-          this.injectControls().then(success => {
-            if (success) {
-              console.log('[UIRenderer] 控件已成功恢复');
-            }
-          });
-        } else if (!translateButton || !settingsButton) {
-          console.log('[UIRenderer] 检测到控件丢失，但界面尚未就绪，等待中...');
-        }
-      }
-    }, this.CONTROL_CHECK_INTERVAL);
-  }
+  // 🚀 移除：停止监测已移动到ContentScriptCoordinator
 
-  /**
-   * 🚀 停止控件持续监测
-   */
-  private stopControlsCheck(): void {
-    if (this.controlsCheckInterval !== null) {
-      window.clearInterval(this.controlsCheckInterval);
-      this.controlsCheckInterval = null;
-      console.log('[UIRenderer] 🛑 已停止控件持续监测');
-    }
-  }
+  // 🚀 移除：完整注入流程已移动到ContentScriptCoordinator
 
-  /**
-   * 🚀 注入控件的核心方法
-   * 按照ui-button-injection-analysis.md设计实现完整的注入流程
-   */
-  async injectControls(): Promise<boolean> {
-    console.log(`[UIRenderer] 注入控件，当前状态: controlsInjected=${this.controlsInjected}, 尝试次数=${this.injectionAttempts}`);
-    
-    // 检查和清理已存在的按钮
-    const existingTranslateButton = document.getElementById('vid-translate-toggle-button');
-    const existingSettingsButton = document.getElementById('vid-translate-settings-button');
-    
-    if (existingTranslateButton || existingSettingsButton) {
-      console.log('[UIRenderer] 检测到已存在的按钮，清理后重新注入', {
-        translateButton: !!existingTranslateButton,
-        settingsButton: !!existingSettingsButton
-      });
-      
-      if (existingTranslateButton) {
-        existingTranslateButton.remove();
-      }
-      if (existingSettingsButton) {
-        existingSettingsButton.remove();
-      }
-      
-      this.controlsInjected = false;
-    }
-    
-    // 检查注入尝试次数
-    if (this.injectionAttempts >= this.MAX_INJECTION_ATTEMPTS) {
-      console.warn('[UIRenderer] 达到最大注入尝试次数，放弃注入');
-      return false;
-    }
-    
-    // 增加尝试计数
-    this.injectionAttempts++;
-    
-    // 等待自动播放按钮加载完成，作为界面就绪的信号
-    const autoplayButton = await this.waitForAutoplayButton();
-    if (!autoplayButton) {
-      console.log('[UIRenderer] 未找到自动播放按钮，稍后重试');
-      setTimeout(() => {
-        this.injectControls();
-      }, this.INJECTION_RETRY_DELAY);
-      return false;
-    }
-    
-    // 查找右侧控制栏
-    const rightControls = document.querySelector('.ytp-right-controls');
-    if (!rightControls) {
-      console.log('[UIRenderer] 未找到.ytp-right-controls，稍后重试');
-      setTimeout(() => {
-        this.injectControls();
-      }, this.INJECTION_RETRY_DELAY);
-      return false;
-    }
-    
-    // 再次检查是否已经注入（避免竞态条件）
-    if (document.getElementById('vid-translate-toggle-button') || 
-        document.getElementById('vid-translate-settings-button')) {
-      console.log('[UIRenderer] 在注入过程中检测到控件已存在，避免重复注入');
-      this.controlsInjected = true;
-      this.startControlsCheck();
-      return true;
-    }
-    
-    // 确保字幕叠加层存在
-    const playerContainer = document.querySelector('.html5-video-player');
-    if (playerContainer && !this.subtitleOverlayElement) {
-      this.createSubtitleOverlay(playerContainer as HTMLElement);
-    }
-    
-    // 获取插入参照点
-    const firstNativeButton = rightControls.firstChild;
-    console.log('[UIRenderer] 插入参照点:', firstNativeButton ? '找到第一个原生按钮' : '未找到参照点');
-    
-    // 🚀 按照设计文档：先创建设置按钮，再创建翻译按钮
-    
-    // 1. 创建设置按钮
-    const { button: settingsButton, icon: settingsIcon } = this.createControlButton(
-      'vid-translate-settings-button',
-      this.runtimeState.settingPanelOpen ? '关闭翻译设置' : '翻译设置',
-      this.runtimeState.settingPanelOpen ? this.ACTIVE_SETTING_ICON_URL : this.SETTING_ICON_URL,
-      () => this.onButtonClick('settings')
-    );
-    
-    // 保存设置图标引用
-    this.settingToggleButtonIcon = settingsIcon;
-    this.settingsButton = settingsButton;
-    
-    // 2. 创建翻译按钮
-    const isActive = this.runtimeState.translateActive === true || 
-                     this.runtimeState.translateActive === 'active';
-    const { button: translateButton, icon: toggleIcon } = this.createControlButton(
-      'vid-translate-toggle-button',
-      isActive ? '关闭翻译' : '开启翻译',
-      isActive ? this.ON_ICON_URL : this.OFF_ICON_URL,
-      () => this.onButtonClick('translate')
-    );
-    
-    // 保存翻译图标引用
-    this.translateToggleButtonIcon = toggleIcon;
-    this.translateButton = translateButton;
-    
-    // 🚀 按照设计文档：正确的插入顺序
-    // 先插入设置按钮到第一个原生按钮前面
-    rightControls.insertBefore(settingsButton, firstNativeButton);
-    console.log('[UIRenderer] 已注入设置按钮');
-    
-    // 再插入翻译按钮到设置按钮前面
-    rightControls.insertBefore(translateButton, settingsButton);
-    console.log('[UIRenderer] 已注入翻译按钮');
-    
-    // 更新状态标志
-    this.controlsInjected = true;
-    this.injectionAttempts = 0; // 重置尝试次数
-    
-    // 启动控件持续监测
-    this.startControlsCheck();
-    
-    console.log('[UIRenderer] ✅ 控件注入完成');
-    
-    return true;
-  }
-
-  /**
-   * 🚀 尝试注入控件的统一入口
-   */
-  private tryInjectControls(source: string): void {
-    console.log(`[UIRenderer] ${source}触发尝试注入控件`);
-    this.injectControls().then((success: boolean) => {
-      console.log(`[UIRenderer] ${source}触发的注入${success ? '成功' : '失败'}`);
-    });
-  }
+  // 🚀 移除：统一注入入口已移动到ContentScriptCoordinator
 
   /**
    * 🚀 创建字幕叠加层

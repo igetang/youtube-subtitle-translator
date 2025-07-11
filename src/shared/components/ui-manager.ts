@@ -63,8 +63,9 @@ export class UIManager {
   private isLoadingTranslateState: boolean = false;
   
   // 🔧 修复：监听器重复注册防护变量
-  private sidePanelStateListenerAdded: boolean = false;
-  private sidePanelStateMessageHandler: ((message: any, sender: chrome.runtime.MessageSender, sendResponse: (response?: any) => void) => void) | null = null;
+  // 🔥 已移除：SidePanel状态监听器相关变量（由ContentScriptCoordinator统一处理）
+  // private sidePanelStateListenerAdded: boolean = false;
+  // private sidePanelStateMessageHandler: ... = null;
   
   // Tooltip元素引用
   private tooltipContainer: HTMLElement | null = null;
@@ -129,8 +130,8 @@ export class UIManager {
       this.startControlsCheck();        // ✅ 启动控件检查（有用）
       this.setupTabSwitchListener();    // ✅ 标签切换监听（有用）
       
-      // 3️⃣ 状态监听器设置（单独设置，避免重复）
-      this.setupSidePanelStateListener();
+      // 3️⃣ 🔥 已移除：SidePanel状态监听器（由ContentScriptCoordinator统一处理）
+      // this.setupSidePanelStateListener(); // 已移除，避免重复消息处理
       
       // 4️⃣ 初始状态加载（异步执行，不阻塞构造函数）
       this.loadInitialStates();
@@ -278,34 +279,11 @@ export class UIManager {
   }
   
   /**
-   * 设置SidePanel状态变化监听器
-   * 监听Background广播的状态变化消息
-   * 🔧 修复：防止重复注册监听器
+   * 🔥 已移除：SidePanel状态变化监听器
+   * 新架构通过ContentScriptCoordinator统一处理消息，避免重复监听
+   * 状态更新改为通过UIRenderer的update()方法被动接收
    */
-  private setupSidePanelStateListener(): void {
-    // 🔧 修复：检查是否已注册监听器，防止重复
-    if (this.sidePanelStateListenerAdded) {
-      console.log('[ui-manager] SidePanel状态监听器已存在，跳过重复注册');
-      return;
-    }
-
-    // 🔧 修复：使用命名函数引用，便于后续移除
-    this.sidePanelStateMessageHandler = (message: any, sender: chrome.runtime.MessageSender, sendResponse: (response?: any) => void) => {
-      if (message.type === 'SIDEPANEL_STATE_CHANGED') {
-        console.log(`[ui-manager] 📡 收到SidePanel状态变化通知: ${message.isOpen}`);
-        
-        // 🔧 优化：直接使用广播消息中的状态，避免重复检测
-        this.state.settingPanelOpen = message.isOpen;
-        this.updateSettingsButtonState(message.isOpen);
-        console.log(`[ui-manager] ✅ SidePanel状态已同步: ${message.isOpen}`);
-      }
-    };
-
-    chrome.runtime.onMessage.addListener(this.sidePanelStateMessageHandler);
-    this.sidePanelStateListenerAdded = true;
-    
-    console.log('[ui-manager] ✅ SidePanel状态变化监听器已设置');
-  }
+  // private setupSidePanelStateListener() - 已移除，避免重复消息处理
   
   /**
    * 检查并同步SidePanel状态
@@ -357,16 +335,10 @@ export class UIManager {
   }
   
   /**
-   * 🔧 修复：清理SidePanel状态监听器
+   * 🔥 已移除：SidePanel状态监听器清理方法
+   * 新架构通过ContentScriptCoordinator统一处理消息，无需独立清理
    */
-  private cleanupSidePanelStateListener(): void {
-    if (this.sidePanelStateMessageHandler && this.sidePanelStateListenerAdded) {
-      chrome.runtime.onMessage.removeListener(this.sidePanelStateMessageHandler);
-      this.sidePanelStateListenerAdded = false;
-      this.sidePanelStateMessageHandler = null;
-      console.log('[ui-manager] ✅ SidePanel状态监听器已清理');
-    }
-  }
+  // private cleanupSidePanelStateListener() - 已移除
 
   /**
    * 从存储中加载翻译激活状态
@@ -483,8 +455,8 @@ export class UIManager {
   private handlePageNavigation(): void {
     console.log('[ui-manager] 检测到页面导航，重置UI状态');
     
-    // 🔧 修复：清理事件监听器，防止重复注册
-    this.cleanupSidePanelStateListener();
+    // 🔥 已移除：SidePanel状态监听器清理（由ContentScriptCoordinator统一处理）
+    // this.cleanupSidePanelStateListener(); // 已移除
     
     // 停止持续监测
     this.stopControlsCheck();
@@ -1161,11 +1133,11 @@ export class UIManager {
         'vid-translate-settings-button',
         this.state.settingPanelOpen ? '关闭翻译设置' : '翻译设置',
         this.state.settingPanelOpen ? this.ACTIVE_SETTING_ICON_URL : this.SETTING_ICON_URL,
-        async () => {
+        () => {
           const newState = !this.state.settingPanelOpen;
           console.log(`[ui-manager] 设置按钮点击，切换状态为: ${newState}`);
           
-          // 🎯 architecture.md要求：统一使用消息传递方式
+          // 🔥 关键修复：使用同步函数保持用户手势上下文
           this.setSettingPanelOpen(newState);
         }
       );
@@ -1377,49 +1349,50 @@ export class UIManager {
    * @param open - 面板是否应打开
    * @param source - 触发此更改的来源
    */
-  public async setSettingPanelOpen(open: boolean, source: string = 'user-action'): Promise<void> {
-    console.log(`[ui-manager] 设置面板状态变更请求: ${open}, 来源: ${source}`);
+  public setSettingPanelOpen(open: boolean, source: string = 'user-action'): void {
+    console.log(`[ui-manager] 用户操作：切换设置面板到 ${open}, 来源: ${source}`);
     
-    // 🚀 新架构：使用统一的toggle逻辑，不再区分打开/关闭
-    console.log('[ui-manager] 使用新架构的 toggleSidePanel 消息');
+    // 🔥 关键修复：同步发送消息，保持用户手势上下文
+    console.log('[ui-manager] 同步发送 toggleSidePanel 消息');
     
-    try {
-      const response = await this.sendMessageWithFallback('toggleSidePanel', {
-        source: source === 'user-action' ? 'translation-button' : source
-      });
-      
-             if (response.success) {
-         const responseAny = response as any;
-         const isOpen = responseAny.state?.isOpen ?? responseAny.status === 'opened';
-         console.log(`[ui-manager] ✅ SidePanel toggle 成功，新状态: ${isOpen}`);
-         
-         // 🎯 根据实际结果更新UI状态
-         this.state.settingPanelOpen = isOpen;
-         this.updateSettingsButtonState(isOpen);
-         
-         // 显示操作反馈
-         const action = isOpen ? '打开' : '关闭';
-         this.showTooltip(
-           this.settingToggleButtonIcon?.parentElement || document.body,
-           `设置面板已${action}`,
-           2000
-         );
-         
-       } else {
-         console.warn('[ui-manager] ❌ SidePanel toggle 失败，尝试降级处理');
-         
-         // 🎯 保留降级处理机制
-         const responseAny = response as any;
-         if (responseAny.fallback === 'popup') {
-           await this.fallbackToPopup();
-         } else {
-           this.handleFinalFallbackFailure();
-         }
+    // 直接使用 chrome.runtime.sendMessage，不经过 sendMessageWithFallback 的异步包装
+    chrome.runtime.sendMessage({
+      type: 'toggleSidePanel',
+      data: { source: source === 'user-action' ? 'translation-button' : source },
+      timestamp: Date.now()
+    }, (response) => {
+      if (response && response.success) {
+        const responseAny = response as any;
+        const isOpen = responseAny.state?.isOpen ?? responseAny.status === 'opened';
+        console.log(`[ui-manager] ✅ SidePanel toggle 成功，新状态: ${isOpen}`);
+        
+        // 🎯 根据实际结果更新UI状态
+        this.state.settingPanelOpen = isOpen;
+        this.updateSettingsButtonState(isOpen);
+        
+        // 显示操作反馈
+        const action = isOpen ? '打开' : '关闭';
+        this.showTooltip(
+          this.settingToggleButtonIcon?.parentElement || document.body,
+          `设置面板已${action}`,
+          2000
+        );
+        
+      } else {
+        console.warn('[ui-manager] ❌ SidePanel toggle 失败，尝试降级处理');
+        
+        // 🎯 保留降级处理机制
+        const responseAny = response as any;
+        if (responseAny?.fallback === 'popup') {
+          this.fallbackToPopup().catch(error => {
+            console.error('[ui-manager] Popup降级失败:', error);
+            this.handleFinalFallbackFailure();
+          });
+        } else {
+          this.handleFinalFallbackFailure();
+        }
       }
-    } catch (error) {
-      console.error('[ui-manager] ❌ SidePanel toggle 异常:', error);
-      this.handleFinalFallbackFailure();
-    }
+    });
   }
 
   /**

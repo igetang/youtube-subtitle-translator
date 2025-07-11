@@ -27,6 +27,9 @@ export class RuntimeStateManager {
   private changeHandlers: Map<RuntimeStateChangeEvent, Set<RuntimeStateChangeHandler>>;
   private stateMemoryCache: Partial<RuntimeState> = {};
   private initialized: boolean = false;
+  
+  // 🔧 新增：同步缓存，用于保持用户手势上下文
+  private syncCache: { settingPanelOpen: boolean } = { settingPanelOpen: false };
 
   /**
    * 私有构造函数，防止直接实例化
@@ -181,36 +184,26 @@ export class RuntimeStateManager {
 
   /**
    * 使用默认状态
-   * 🔧 修复：只在真正需要时才写入默认状态，避免覆盖其他实例已设置的状态
+   * 🔧 优化：移除重复的存储检查，直接使用默认状态
    */
   private async useDefaultState(): Promise<void> {
-    console.log('[runtime-state-manager] 使用默认状态，但先检查是否有其他实例已设置状态...');
+    console.log('[runtime-state-manager] 使用默认状态（避免重复存储查询）...');
     
-    // 🔥 关键修复：再次检查存储，避免覆盖其他实例的数据
     try {
-      const latestCheck = await this.storageManager.getBatch([
-        RUNTIME_STATE_STORAGE_KEYS.TRANSLATE_ACTIVE,
-        RUNTIME_STATE_STORAGE_KEYS.SETTING_PANEL_OPEN
-      ], RUNTIME_STATE_CONFIG.STORAGE_AREA);
+      // 直接使用默认状态，避免重复的存储检查
+      const defaultState: RuntimeState = { ...DEFAULT_RUNTIME_STATE };
       
-      // 只设置没有值的字段
-      const mergedState: RuntimeState = {
-        translateActive: latestCheck[RUNTIME_STATE_STORAGE_KEYS.TRANSLATE_ACTIVE] !== undefined 
-          ? latestCheck[RUNTIME_STATE_STORAGE_KEYS.TRANSLATE_ACTIVE] 
-          : DEFAULT_RUNTIME_STATE.translateActive,
-        settingPanelOpen: latestCheck[RUNTIME_STATE_STORAGE_KEYS.SETTING_PANEL_OPEN] !== undefined 
-          ? latestCheck[RUNTIME_STATE_STORAGE_KEYS.SETTING_PANEL_OPEN] 
-          : DEFAULT_RUNTIME_STATE.settingPanelOpen
-      };
+      this.stateMemoryCache = defaultState;
+      // 🔧 同步更新 syncCache
+      this.syncCache.settingPanelOpen = defaultState.settingPanelOpen;
+      await this.saveToStorage(defaultState);
       
-      this.stateMemoryCache = mergedState;
-      await this.saveToStorage(mergedState);
-      
-      console.log('[runtime-state-manager] 已合并默认状态和现有状态:', mergedState);
+      console.log('[runtime-state-manager] 已设置默认状态:', defaultState);
     } catch (error) {
-      console.warn('[runtime-state-manager] 检查最新状态失败，使用纯默认状态:', error);
+      console.warn('[runtime-state-manager] 设置默认状态失败:', error);
       this.stateMemoryCache = { ...DEFAULT_RUNTIME_STATE };
-      await this.saveToStorage(this.stateMemoryCache as RuntimeState);
+      // 🔧 同步更新 syncCache
+      this.syncCache.settingPanelOpen = DEFAULT_RUNTIME_STATE.settingPanelOpen;
     }
   }
 
@@ -244,6 +237,9 @@ export class RuntimeStateManager {
         translateActive: storageData[RUNTIME_STATE_STORAGE_KEYS.TRANSLATE_ACTIVE] || DEFAULT_RUNTIME_STATE.translateActive,
         settingPanelOpen: storageData[RUNTIME_STATE_STORAGE_KEYS.SETTING_PANEL_OPEN] || DEFAULT_RUNTIME_STATE.settingPanelOpen
       };
+      
+      // 🔧 同步更新 syncCache
+      this.syncCache.settingPanelOpen = loadedState.settingPanelOpen;
       
       return {
         success: true,
@@ -359,10 +355,21 @@ export class RuntimeStateManager {
   }
 
   /**
+   * 🔧 新增：同步获取设置面板状态（用于保持用户手势上下文）
+   * @returns 设置面板是否打开
+   */
+  public getSettingPanelStateSync(): boolean {
+    return this.syncCache.settingPanelOpen;
+  }
+
+  /**
    * 设置设置面板状态
    */
   public async setSettingPanelState(open: boolean): Promise<void> {
     console.log(`[runtime-state-manager] 设置面板状态变更请求: ${open}`);
+    
+    // 🔧 立即更新同步缓存
+    this.syncCache.settingPanelOpen = open;
     
     if (!this.initialized) {
       await this.initialize();

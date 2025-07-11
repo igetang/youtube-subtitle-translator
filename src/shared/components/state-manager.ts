@@ -57,7 +57,7 @@ export class StateManager {
       // 发送状态更新到background
       const result = await chrome.runtime.sendMessage({
         type: 'setRuntimeState',
-        data: { key, value }
+        data: { stateKey: key, value }
       });
 
       if (result && result.success) {
@@ -111,7 +111,7 @@ export class StateManager {
     try {
       const result = await chrome.runtime.sendMessage({
         type: 'setUserPreferences',
-        data: { key, value }
+        data: { stateKey: key, value }
       });
 
       if (result && result.success) {

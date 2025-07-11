@@ -142,26 +142,10 @@ try {
     console.error('[Main World] MainWorldMessenger初始化时出错:', error);
   }
 
-// 发送就绪消息时不再包含messengerModule状态，只通知准备好了
-let readyMessageSent = false;
+// 🔥 架构重构：移除ready消息机制，实现解耦设计
+// main-world脚本专注于页面交互，不需要向content-script发送就绪消息
 
-function sendReadyMessage(): void {
-  if (!readyMessageSent) {
-    console.log('[Main World] 发送就绪消息');
-    window.postMessage({ 
-      source: 'main-world', 
-      type: 'MAIN_WORLD_READY',
-      timestamp: Date.now()
-    }, '*');
-    readyMessageSent = true;
-    
-    // ✅ 简化消息发送：移除重复的MESSENGER_READY和MESSAGE_FORWARDED
-    // 保持架构简单，避免重复日志
-  }
-}
-
-// 立即发送就绪消息
-sendReadyMessage();
+// 🔥 架构重构：移除立即发送就绪消息
 
 // 简化为一个监听器处理各种content-script请求
 window.addEventListener('message', (event: MessageEvent) => {
@@ -172,12 +156,7 @@ window.addEventListener('message', (event: MessageEvent) => {
   
   // 仅处理来自content-script的消息
   if (data.source === 'content-script') {
-    // 响应就绪状态请求
-    if (data.type === 'CHECK_MAIN_WORLD_READY') {
-      console.log('[Main World] 收到就绪检查请求，重新发送就绪消息');
-      sendReadyMessage();
-      return;
-    }
+    // 🔥 架构重构：移除就绪状态请求处理，不再需要ready消息机制
     
     // 处理轨道请求
     if (data.type === 'REQUEST_CAPTION_TRACKS') {
@@ -228,11 +207,9 @@ window.addEventListener('message', (event: MessageEvent) => {
   }
 });
 
-// 确保页面加载完成后也发送就绪消息
+// 🔥 架构重构：移除页面加载就绪消息发送，简化架构
 window.addEventListener('load', () => {
-  console.log('[Main World] 页面加载完成，确保就绪消息已发送');
-  sendReadyMessage();
+  console.log('[Main World] 页面加载完成');
 });
 
-// 不再需要重复发送就绪消息，避免引起混淆
-// setTimeout(sendReadyMessage, 100); 
+// 🔥 架构重构：彻底移除就绪消息机制 

@@ -6,6 +6,8 @@
 - **项目名称：** YouTube字幕翻译Chrome扩展
 - **架构：** Chrome Extension Manifest V3  
 - **项目路径：** /Users/lizhe/vtc/5.24
+- **代码路径：** /legacy 和 /backup 为旧架构代码路径
+                /src 为新代码路径，但是重构时未清理旧代码，里面新旧代码有重复地方，还未完整迁移重构完成。
 
 ## 技术栈
 - TypeScript + Chrome Extension API + Service Worker

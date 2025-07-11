@@ -18,24 +18,20 @@ console.log('[content-script-new] 🚀 新架构Content Script开始初始化...
 let coordinator: ContentScriptCoordinator | null = null;
 
 /**
- * 统一初始化入口 - 根本解决重复调用问题
+ * 统一初始化入口 - 简化版本，直接创建和初始化
+ * 🔥 架构重构：移除等待机制，实现立即初始化
  */
 async function initializeContentScript(): Promise<void> {
-  if (coordinator) {
-    console.log('[content-script-new] 协调器已初始化，跳过重复初始化');
-    return;
-  }
-
   try {
-    console.log('[content-script-new] 🚀 开始统一初始化...');
+    console.log('[content-script-new] 🚀 启动内容脚本协调器...');
     
     // 创建协调器实例
     coordinator = new ContentScriptCoordinator();
     
-    // 执行统一初始化 - 一次获取所有状态，分发给组件
+    // 委托给协调器执行真正的初始化工作
     await coordinator.initialize();
     
-    console.log('[content-script-new] ✅ 统一初始化完成');
+    console.log('[content-script-new] ✅ 协调器启动完成');
     
   } catch (error) {
     console.error('[content-script-new] ❌ 初始化失败:', error);
@@ -81,30 +77,10 @@ function injectMainWorldScript(): void {
 }
 
 /**
- * 设置消息处理器 - 简化版本，主要处理main-world ready事件
+ * 设置消息处理器 - 简化版本，只处理Chrome消息
+ * 🔥 架构重构：移除main-world ready事件依赖，实现独立初始化
  */
 function setupMessageHandlers(): void {
-  // 监听来自主世界脚本的消息
-  window.addEventListener('message', (event: MessageEvent<any>) => {
-    if (event.source !== window || !event.data?.source?.startsWith('main-world')) {
-      return;
-    }
-
-    const { type, messageType } = event.data;
-    
-    console.log(`[content-script-new] 📥 接收主世界消息: ${type}${messageType ? ` (${messageType})` : ''}`);
-
-    // 处理main-world ready事件
-    if (messageType === 'main-world:ready' || type === 'MAIN_WORLD_READY') {
-      if (!coordinator || !coordinator.isInitialized()) {
-        console.log('[content-script-new] 收到main-world ready，开始初始化');
-        initializeContentScript();
-      } else {
-        console.log('[content-script-new] 协调器已初始化，跳过重复初始化');
-      }
-    }
-  });
-
   // 监听Chrome消息
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (sender.id !== chrome.runtime.id) return true;
@@ -112,9 +88,8 @@ function setupMessageHandlers(): void {
     const messageType = message.type || message.action;
     console.log(`[content-script-new] 收到Chrome消息: ${messageType}`, message);
     
-    // 如果协调器已初始化，可以通过协调器处理消息
+    // 如果协调器已初始化，转发给协调器处理
     if (coordinator && coordinator.isInitialized()) {
-      // 将消息转发给协调器处理
       coordinator.handleUserAction('chromeMessage', {
         messageType,
         message,
@@ -123,7 +98,7 @@ function setupMessageHandlers(): void {
       });
     }
     
-    return true; // 保持异步响应通道开放
+    return true; // 保持消息通道开放
   });
 
   console.log('[content-script-new] 消息处理器设置完成');
@@ -170,12 +145,11 @@ async function main(): Promise<void> {
     // 3. 等待DOM准备
     await waitForDOMReady();
     
-    // 4. 注入主世界脚本
-    injectMainWorldScript();
+    // 4. 立即初始化ContentScriptCoordinator（架构重构：移除等待依赖）
+    await initializeContentScript();
     
-    // 5. 初始化Content Script（等待main-world ready事件）
-    // 不立即初始化，等待main-world ready事件
-    console.log('[content-script-new] 等待main-world ready事件...');
+    // 5. 并行注入主世界脚本（独立进行，无需等待）
+    injectMainWorldScript();
     
   } catch (error) {
     console.error('[content-script-new] ❌ 主要初始化流程失败:', error);
@@ -185,16 +159,7 @@ async function main(): Promise<void> {
 // 🚀 启动主要初始化流程
 main();
 
-// 确保在初始内容加载后检查是否需要重试
-document.addEventListener('DOMContentLoaded', () => {
-  console.log('[content-script-new] DOMContentLoaded - 检查初始化状态');
-  
-  if (!coordinator || !coordinator.isInitialized()) {
-    console.log('[content-script-new] 协调器未初始化，等待main-world ready事件');
-  } else {
-    console.log('[content-script-new] 协调器已初始化');
-  }
-});
+// 🔥 架构重构：移除DOMContentLoaded检查，因为已改为立即初始化模式
 
 // 导出协调器实例供调试使用
 declare global {

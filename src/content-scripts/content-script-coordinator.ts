@@ -15,6 +15,17 @@ export class ContentScriptCoordinator {
   private uiRenderer: any = null;      // UIRenderer实例
   private stateManager: any = null;    // StateManager实例
   private initialized = false;
+  
+  // DOM观察器和控件监测相关属性
+  private observerSetup = false;
+  private controlsInjected = false;
+  private injectionAttempts = 0;
+  private controlsCheckInterval: number | null = null;
+  
+  // 配置常量
+  private readonly MAX_INJECTION_ATTEMPTS = 5;
+  private readonly INJECTION_RETRY_DELAY = 1000;
+  private readonly CONTROL_CHECK_INTERVAL = 2000;
 
   constructor() {
     console.log('[ContentScriptCoordinator] 协调器已创建');
@@ -56,6 +67,9 @@ export class ContentScriptCoordinator {
 
       // 3. 设置组件间通信
       this.setupCommunication();
+      
+      // 4. 启动UI控制逻辑
+      this.startUIManagement();
 
       this.initialized = true;
       console.log('[ContentScriptCoordinator] ✅ 统一初始化完成');
@@ -115,17 +129,7 @@ export class ContentScriptCoordinator {
   }): Promise<void> {
     console.log('[ContentScriptCoordinator] 🚀 初始化单一职责组件...');
 
-    // 使用新的单一职责组件
-    await this.initializeNewComponents(stateData);
-
-    console.log('[ContentScriptCoordinator] ✅ 组件初始化完成');
-  }
-
-  /**
-   * 初始化新的单一职责组件
-   */
-  private async initializeNewComponents(stateData: any): Promise<void> {
-    // 导入新的单一职责组件
+    // 导入单一职责组件
     const { UIRenderer } = await import('../shared/components/ui-renderer');
     const { StateManager } = await import('../shared/components/state-manager');
 
@@ -137,7 +141,7 @@ export class ContentScriptCoordinator {
     this.stateManager = new StateManager();
     this.stateManager.initialize(stateData.runtimeState, stateData.userPreferences);
 
-    console.log('[ContentScriptCoordinator] ✅ 新架构组件初始化完成');
+    console.log('[ContentScriptCoordinator] ✅ 组件初始化完成');
   }
 
   /**
@@ -158,7 +162,15 @@ export class ContentScriptCoordinator {
    * 处理用户行为事件 - 组件间通信的中枢
    */
   handleUserAction(action: string, data: any): void {
-    console.log(`[ContentScriptCoordinator] 🎯 处理用户行为: ${action}`, data);
+    // 🔥 简化日志：只记录关键用户行为，避免重复日志
+    if (action === 'buttonClick') {
+      console.log(`[ContentScriptCoordinator] 🎯 ${data.buttonType}按钮点击`);
+    } else if (action === 'chromeMessage') {
+      // Chrome消息的具体处理由handleChromeMessage输出日志，这里不重复输出
+      // 避免重复：handleUserAction + handleChromeMessage 双重日志
+    } else {
+      console.log(`[ContentScriptCoordinator] 🎯 处理用户行为: ${action}`, data);
+    }
 
     switch (action) {
       case 'buttonClick':
@@ -170,6 +182,9 @@ export class ContentScriptCoordinator {
       case 'pageVisible':
         this.handlePageVisible(data);
         break;
+      case 'chromeMessage':
+        this.handleChromeMessage(data);
+        break;
       default:
         console.warn(`[ContentScriptCoordinator] 未知的用户行为: ${action}`);
     }
@@ -179,7 +194,7 @@ export class ContentScriptCoordinator {
    * 处理按钮点击
    */
   private handleButtonClick(data: any): void {
-    console.log('[ContentScriptCoordinator] 处理按钮点击:', data);
+    // 🔥 简化日志：上层已经记录了按钮点击，这里只处理逻辑
     
     if (!this.stateManager) {
       console.warn('[ContentScriptCoordinator] StateManager未初始化');
@@ -191,8 +206,103 @@ export class ContentScriptCoordinator {
       const newState = !data.currentState;
       this.stateManager.updateState('translateActive', newState);
     } else if (data.buttonType === 'settings') {
-      // 打开设置面板
-      this.stateManager.updateState('settingPanelOpen', true);
+      // 使用toggle逻辑，让backend实时检测状态（保持用户手势上下文）
+      this.toggleSidePanel();
+    }
+  }
+
+  /**
+   * 切换SidePanel状态 - 处理用户手势上下文限制
+   * 🔥 关键修复：Content script无法保持用户手势上下文传递给background
+   * 解决方案：提示用户点击扩展图标
+   */
+  private toggleSidePanel(): void {
+    // 🔥 发送SidePanel切换请求到background
+    chrome.runtime.sendMessage({
+      type: 'toggleSidePanel',
+      data: { source: 'translation-button' },
+      timestamp: Date.now()
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error('[ContentScriptCoordinator] ❌ SidePanel切换失败:', chrome.runtime.lastError);
+        return;
+      }
+      
+      if (response && response.success) {
+        console.log('[ContentScriptCoordinator] ✅ SidePanel切换成功:', response.status);
+      } else {
+        console.error('[ContentScriptCoordinator] ❌ SidePanel切换失败:', response?.error);
+      }
+    });
+  }
+  
+  /**
+   * 显示SidePanel操作提示
+   */
+  private showSidePanelHint(): void {
+    // 创建临时提示元素
+    const hint = document.createElement('div');
+    hint.textContent = '请点击浏览器工具栏中的扩展图标来打开/关闭翻译设置面板';
+    hint.style.cssText = `
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: #333;
+      color: white;
+      padding: 12px 16px;
+      border-radius: 8px;
+      z-index: 10000;
+      font-size: 14px;
+      max-width: 300px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      animation: fadeInOut 4s ease-in-out;
+    `;
+    
+    // 添加动画样式
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes fadeInOut {
+        0% { opacity: 0; transform: translateY(-10px); }
+        15% { opacity: 1; transform: translateY(0); }
+        85% { opacity: 1; transform: translateY(0); }
+        100% { opacity: 0; transform: translateY(-10px); }
+      }
+    `;
+    document.head.appendChild(style);
+    
+    document.body.appendChild(hint);
+    
+    // 4秒后自动移除
+    setTimeout(() => {
+      hint.remove();
+      style.remove();
+    }, 4000);
+    
+    console.log('[ContentScriptCoordinator] 💡 已显示SidePanel操作提示');
+  }
+
+  /**
+   * 打开SidePanel（保持用户手势上下文）
+   * @deprecated 推荐使用toggleSidePanel进行状态切换
+   */
+  private async openSidePanel(): Promise<void> {
+    console.log('[ContentScriptCoordinator] 🚀 打开SidePanel（用户手势上下文）');
+    
+    try {
+      // 发送打开sidepanel请求到background
+      const result = await chrome.runtime.sendMessage({
+        type: 'openSidePanel',
+        source: 'settings-button'
+      });
+      
+      if (result && result.success) {
+        console.log('[ContentScriptCoordinator] ✅ SidePanel打开成功');
+        // 注意：状态更新将由SidePanel的Port连接自动处理，避免重复调用
+      } else {
+        console.error('[ContentScriptCoordinator] ❌ SidePanel打开失败:', result?.error);
+      }
+    } catch (error) {
+      console.error('[ContentScriptCoordinator] ❌ 打开SidePanel出错:', error);
     }
   }
 
@@ -235,6 +345,27 @@ export class ContentScriptCoordinator {
     console.log('[ContentScriptCoordinator] 页面变为可见，刷新状态');
     // 可以在这里触发状态刷新，但通过协调器统一管理
     this.refreshStates();
+  }
+
+  /**
+   * 处理Chrome消息
+   */
+  private handleChromeMessage(data: any): void {
+    const { messageType, message } = data;
+    console.log(`[ContentScriptCoordinator] 处理Chrome消息: ${messageType}`, message);
+    
+    // 根据消息类型处理
+    switch (messageType) {
+      case 'SIDEPANEL_STATE_CHANGED':
+        // SidePanel状态变化消息，更新UI状态
+        if (message.isOpen !== undefined && this.uiRenderer) {
+          this.uiRenderer.update({ settingPanelOpen: message.isOpen });
+        }
+        break;
+      default:
+        // 其他Chrome消息暂时只记录，不处理
+        console.log(`[ContentScriptCoordinator] 收到其他Chrome消息: ${messageType}`);
+    }
   }
 
   /**
@@ -282,5 +413,171 @@ export class ContentScriptCoordinator {
 
   getStateManager(): any {
     return this.stateManager;
+  }
+  
+  /**
+   * 🚀 启动UI管理 - 成为唯一的UI决策点
+   */
+  private startUIManagement(): void {
+    console.log('[ContentScriptCoordinator] 🎯 启动UI管理模块');
+    
+    // 设置DOM观察器
+    this.setupDOMObserver();
+    
+    // 初始检查并尝试创建按钮
+    this.performInitialButtonCheck();
+  }
+  
+  /**
+   * 🚀 设置DOM观察器，监听YouTube控制栏变化
+   */
+  private setupDOMObserver(): void {
+    if (this.observerSetup) {
+      console.log('[ContentScriptCoordinator] DOM观察器已设置，跳过');
+      return;
+    }
+    
+    console.log('[ContentScriptCoordinator] 🔍 设置DOM观察器');
+    this.observerSetup = true;
+    
+    const observer = new MutationObserver((mutations) => {
+      // 如果控件已注入，不触发新的注入
+      if (this.controlsInjected || 
+          document.getElementById('vid-translate-toggle-button') || 
+          document.getElementById('vid-translate-settings-button')) {
+        return;
+      }
+      
+      let hasRelevantChanges = false;
+      mutations.forEach(mutation => {
+        if (mutation.type === 'childList') {
+          mutation.addedNodes.forEach((node) => {
+            if (node instanceof HTMLElement) {
+              if (node.classList && (
+                  node.classList.contains('ytp-right-controls') || 
+                  node.classList.contains('ytp-autonav-toggle-button') ||
+                  node.classList.contains('html5-video-player')
+                )) {
+                hasRelevantChanges = true;
+                console.log('[ContentScriptCoordinator] 检测到关键元素:', node.className);
+              }
+            }
+          });
+        }
+      });
+      
+      if (hasRelevantChanges) {
+        this.checkAndCreateButtons('DOM变化检测');
+      }
+    });
+    
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'style']
+    });
+    
+    console.log('[ContentScriptCoordinator] ✅ DOM观察器已设置');
+  }
+  
+  /**
+   * 🚀 执行初始按钮检查
+   */
+  private performInitialButtonCheck(): void {
+    console.log('[ContentScriptCoordinator] 🔍 执行初始按钮检查');
+    
+    const rightControls = document.querySelector('.ytp-right-controls');
+    const autoplayButton = document.querySelector('.ytp-autonav-toggle-button');
+    
+    if (rightControls && autoplayButton) {
+      console.log('[ContentScriptCoordinator] 初始检测到必要元素，尝试创建按钮');
+      this.checkAndCreateButtons('初始检测');
+    } else {
+      console.log('[ContentScriptCoordinator] 初始检测未找到必要元素，等待DOM变化');
+    }
+    
+    // 设置超时检查
+    setTimeout(() => {
+      if (!this.controlsInjected) {
+        console.log('[ContentScriptCoordinator] 超时检查，尝试创建按钮');
+        this.checkAndCreateButtons('超时检查');
+      }
+    }, 3000);
+  }
+  
+  /**
+   * 🚀 检查并创建按钮
+   */
+  private async checkAndCreateButtons(source: string): Promise<void> {
+    if (this.controlsInjected || !this.uiRenderer) {
+      return;
+    }
+    
+    console.log(`[ContentScriptCoordinator] ${source}触发按钮创建检查`);
+    
+    const rightControls = document.querySelector('.ytp-right-controls');
+    const autoplayButton = document.querySelector('.ytp-autonav-toggle-button');
+    
+    if (rightControls && autoplayButton) {
+      console.log('[ContentScriptCoordinator] 检测到YouTube控制栏就绪，调用UIRenderer创建按钮');
+      
+      const success = await this.uiRenderer.createButtons();
+      if (success) {
+        this.controlsInjected = true;
+        this.injectionAttempts = 0;
+        this.startControlsMonitoring();
+        // ✅ 移除重复日志：UIRenderer已输出"按钮创建完成"，避免重复
+      } else {
+        this.injectionAttempts++;
+        if (this.injectionAttempts < this.MAX_INJECTION_ATTEMPTS) {
+          console.log(`[ContentScriptCoordinator] 按钮创建失败，第${this.injectionAttempts}次尝试，将重试`);
+          setTimeout(() => this.checkAndCreateButtons(source + '-重试'), this.INJECTION_RETRY_DELAY);
+        } else {
+          console.warn('[ContentScriptCoordinator] 达到最大尝试次数，放弃创建按钮');
+        }
+      }
+    } else {
+      console.log('[ContentScriptCoordinator] YouTube控制栏尚未就绪，等待中...');
+    }
+  }
+  
+  /**
+   * 🚀 启动控件监测
+   */
+  private startControlsMonitoring(): void {
+    if (this.controlsCheckInterval !== null) {
+      return;
+    }
+    
+    console.log('[ContentScriptCoordinator] 🔄 启动控件监测');
+    
+    this.controlsCheckInterval = window.setInterval(() => {
+      if (this.controlsInjected) {
+        const translateButton = document.getElementById('vid-translate-toggle-button');
+        const settingsButton = document.getElementById('vid-translate-settings-button');
+        const autoplayButton = document.querySelector('.ytp-autonav-toggle-button');
+        const rightControls = document.querySelector('.ytp-right-controls');
+        
+        // 如果按钮丢失但YouTube控制栏就绪，尝试恢复
+        if ((!translateButton || !settingsButton) && autoplayButton && rightControls) {
+          console.log('[ContentScriptCoordinator] 检测到按钮丢失，尝试恢复');
+          this.controlsInjected = false;
+          this.injectionAttempts = 0;
+          this.checkAndCreateButtons('按钮恢复');
+        }
+      }
+    }, this.CONTROL_CHECK_INTERVAL);
+  }
+  
+  /**
+   * 🚀 停止控件监测
+   */
+  private stopControlsMonitoring(): void {
+    if (this.controlsCheckInterval !== null) {
+      window.clearInterval(this.controlsCheckInterval);
+      this.controlsCheckInterval = null;
+      console.log('[ContentScriptCoordinator] 🛑 已停止控件监测');
+    }
   }
 }

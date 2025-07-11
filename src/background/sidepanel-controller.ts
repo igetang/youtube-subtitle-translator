@@ -78,7 +78,7 @@ export class SidePanelController {
 
   /**
    * 检测 SidePanel 的真实状态
-   * 基于 getOptions() API 获取实际的 enabled 状态
+   * 基于存储读取获取状态，高性能方案
    * @param tabId 标签页ID
    * @returns SidePanel 状态
    */
@@ -86,15 +86,14 @@ export class SidePanelController {
     try {
       console.log(`[sidepanel-controller] 检测标签页 ${tabId} 的真实状态`);
       
-      // 使用 getOptions() 获取真实的 enabled 状态
-      const options = await chrome.sidePanel.getOptions({ tabId });
-      const enabled = options.enabled ?? false;
+      // 直接从存储读取状态，高性能方案
+      const enabled = await this.runtimeStateManager.getSettingPanelState();
       
-      console.log(`[sidepanel-controller] 标签页 ${tabId} 的 enabled 状态:`, enabled);
+      console.log(`[sidepanel-controller] 标签页 ${tabId} 的存储状态:`, enabled);
       
       const state: SidePanelState = {
         enabled,
-        isOpen: enabled, // 在这个方案中，enabled 即表示打开状态
+        isOpen: enabled, // enabled 即表示打开状态
         lastUpdateTime: Date.now()
       };
       
@@ -119,22 +118,13 @@ export class SidePanelController {
 
   /**
    * 获取 SidePanel 状态
-   * 优先从缓存获取，缓存失效时重新检测
+   * 存储读取优先，简化缓存逻辑
    * @param tabId 标签页ID
    * @returns SidePanel 状态
    */
   public async getSidePanelState(tabId: number): Promise<SidePanelState> {
-    const cached = this.stateCache.get(tabId);
-    const now = Date.now();
-    
-    // 如果缓存存在且在5秒内，直接返回缓存
-    if (cached && (now - cached.lastUpdateTime) < 5000) {
-      console.log(`[sidepanel-controller] 返回标签页 ${tabId} 的缓存状态:`, cached);
-      return cached;
-    }
-    
-    // 缓存不存在或已过期，重新检测
-    console.log(`[sidepanel-controller] 缓存不存在或已过期，重新检测标签页 ${tabId} 状态`);
+    // 存储读取已经很快，直接从存储获取最新状态
+    console.log(`[sidepanel-controller] 从存储获取标签页 ${tabId} 状态`);
     return await this.detectRealState(tabId);
   }
 
@@ -211,8 +201,8 @@ export class SidePanelController {
       // 更新运行时状态
       await this.runtimeStateManager.setSettingPanelState(newEnabled);
       
-      // 广播状态变化
-      this.broadcastStateChange(tabId, newState);
+      // 🔥 移除重复广播：由service-worker.ts统一处理状态广播
+      // this.broadcastStateChange(tabId, newState); // 已移除
       
       return {
         success: true,
@@ -231,69 +221,9 @@ export class SidePanelController {
     }
   }
 
-  /**
-   * 广播状态变化到相关标签页
-   * @param tabId 标签页ID
-   * @param state 新状态
-   */
-  private broadcastStateChange(tabId: number, state: SidePanelState): void {
-    try {
-      console.log(`[sidepanel-controller] 广播状态变化到标签页 ${tabId}:`, state);
-      
-      // 向指定标签页发送状态更新消息
-      chrome.tabs.sendMessage(tabId, {
-        action: 'sidePanelStateChanged',
-        data: {
-          enabled: state.enabled,
-          isOpen: state.isOpen,
-          source: state.source,
-          timestamp: state.lastUpdateTime
-        }
-      }).catch(error => {
-        // 忽略发送失败的错误（可能是标签页已关闭）
-        console.log(`[sidepanel-controller] 向标签页 ${tabId} 发送消息失败:`, error.message);
-      });
-      
-      // 发送全局状态变化事件
-      this.broadcastGlobalStateChange(state.isOpen);
-      
-    } catch (error) {
-      console.error('[sidepanel-controller] 广播状态变化失败:', error);
-    }
-  }
-
-  /**
-   * 广播全局状态变化到所有YouTube标签页
-   * @param isOpen 是否打开
-   */
-  private async broadcastGlobalStateChange(isOpen: boolean): Promise<void> {
-    try {
-      // 查询所有YouTube标签页
-      const tabs = await chrome.tabs.query({
-        url: YOUTUBE_ORIGINS.map(origin => `${origin}/*`).flat()
-      });
-      
-      console.log(`[sidepanel-controller] 向 ${tabs.length} 个YouTube标签页广播全局状态变化: ${isOpen}`);
-      
-      // 向所有YouTube标签页发送消息
-      const promises = tabs.map(tab => {
-        if (tab.id) {
-          return chrome.tabs.sendMessage(tab.id, {
-            action: 'sidePanelGlobalStateChanged',
-            data: { isOpen, timestamp: Date.now() }
-          }).catch(error => {
-            // 忽略发送失败的错误
-            console.log(`[sidepanel-controller] 向标签页 ${tab.id} 发送全局消息失败:`, error.message);
-          });
-        }
-      });
-      
-      await Promise.allSettled(promises);
-      
-    } catch (error) {
-      console.error('[sidepanel-controller] 广播全局状态变化失败:', error);
-    }
-  }
+  // 🔥 移除重复广播方法：由service-worker.ts统一处理状态广播
+  // private broadcastStateChange() - 已移除，避免重复广播
+  // private broadcastGlobalStateChange() - 已移除，避免重复广播
 
   /**
    * 清理指定标签页的状态缓存
