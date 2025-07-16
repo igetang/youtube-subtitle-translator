@@ -1,74 +1,34 @@
 # SidePanel架构设计文档
 
-> **文档创建**: 2025-01-16  
-> **版本**: v1.0  
-> **设计理念**: Chrome官方API + 最小化自定义逻辑 + 用户手势优先  
-> **状态**: 设计完成，待实施
+> **文档创建**: 2025-07-15  
+> **版本**: v2.0  
+> **设计理念**: Chrome官方API优先 + 统一状态检测 + 无状态存储  
+> **状态**: 重新设计完成，待实施
 
-## 🎯 **完整需求总结**
+## 🎯 **核心设计理念**
 
-### **核心功能需求**
-1. **全局状态同步**：所有YouTube标签页的SidePanel状态保持一致
-2. **UI按钮同步**：所有YouTube标签页的翻译设置按钮状态同步
-3. **操作方式衔接**：翻译设置按钮、插件图标、手动关闭三种方式完全联动
-4. **场景覆盖**：支持标签页切换、页面导航、页面刷新、首次加载
+### **关键理解**
+- **Chrome自动管理**：SidePanel的显示/隐藏和跨标签页同步
+- **我们的职责**：提供统一的状态检测和操作接口
+- **无状态存储**：不维护全局状态，每次实时检测Chrome状态
+- **操作同步延续**：所有操作基于相同状态源，逻辑完全同步
+- **🔥 用户手势上下文约束**：所有`chrome.sidePanel.open()`调用都必须在用户手势上下文中执行
 
-### **技术约束**
-- ✅ **用户手势上下文**：所有SidePanel操作必须在用户手势中执行
-- ✅ **Chrome官方API优先**：最大化利用Chrome原生能力
-- ✅ **架构简洁**：避免过度设计和复杂状态管理
-
-### **具体用户场景**
-1. **跨标签页同步**：用户在Tab A打开SidePanel → 切换到Tab B → Tab B的SidePanel也应该打开
-2. **操作方式衔接**：翻译按钮打开 → 插件图标关闭 → 翻译按钮状态正确更新
-3. **页面导航**：用户在YouTube内跳转视频，SidePanel状态保持
-4. **手动关闭检测**：用户点击X关闭SidePanel，所有标签页按钮状态更新
+### **三种操作方式完全同步**
+1. **翻译设置按钮** → 检测状态 → 执行相反操作
+2. **插件图标点击** → Chrome自动基于相同状态执行相反操作
+3. **手动关闭SidePanel** → 改变状态 → 下次操作自动检测到变化
 
 ---
 
-## 🏗️ **整体设计框架**
+## 🏗️ **简化架构设计**
 
-### **设计理念**
-```
-Chrome官方API + 最小化自定义逻辑 + 用户手势优先
-```
-
-### **核心架构图**
-```mermaid
-graph TB
-    A[Chrome原生能力] --> B[插件图标点击]
-    A --> C[跨标签页状态同步]
-    A --> D[网站特定启用]
-    
-    E[我们的增强] --> F[翻译按钮点击]
-    E --> G[状态检测与同步]
-    E --> H[手动关闭检测]
-    
-    I[chrome.runtime.getContexts] --> J[权威状态源]
-    J --> K[UI状态更新]
-    
-    B --> L[用户手势上下文]
-    F --> L
-    H --> L
-```
-
-### **职责分工**
-- **Chrome原生**：插件图标点击处理 + SidePanel跨标签页状态同步 + 网站特定启用
-- **我们负责**：翻译按钮点击处理 + 状态检测同步 + UI状态更新 + 手动关闭检测
-
----
-
-## 🔧 **完整架构实现**
-
-### **Layer 1: Chrome原生基础层**
-
+### **Layer 1: Chrome SidePanel自动管理层**
 ```typescript
 /**
- * 🎯 利用Chrome官方能力处理插件图标和基础管理
+ * 🎯 基于官方示例：只告诉Chrome哪些页面启用SidePanel
+ * Chrome自动处理显示/隐藏和跨标签页同步
  */
-
-// ✅ 启用Chrome自动插件图标处理（用户手势自动保持）
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
 const YOUTUBE_ORIGINS = [
   'https://www.youtube.com',
@@ -76,61 +36,41 @@ const YOUTUBE_ORIGINS = [
   'https://m.youtube.com'
 ];
 
-// ✅ 官方标准：网站特定启用 + 状态同步
+// 启用Chrome自动插件图标处理
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+
+// 官方标准：网站特定启用
 chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
-  if (!tab.url || !info.url) return;
+  if (!tab.url) return;
   
   try {
     const url = new URL(tab.url);
     
     if (YOUTUBE_ORIGINS.includes(url.origin)) {
-      // 1. 启用SidePanel功能
+      // YouTube页面：启用SidePanel
       await chrome.sidePanel.setOptions({
         tabId,
         path: 'src/sidepanel/sidepanel.html',
         enabled: true
       });
-      
-      // 2. 读取并同步状态（页面导航/刷新后）
-      const isOpen = await getSidePanelState();
-      syncUIState(tabId, isOpen, 'page-load');
-      
     } else {
-      await chrome.sidePanel.setOptions({ tabId, enabled: false });
+      // 其他网站：禁用SidePanel
+      await chrome.sidePanel.setOptions({
+        tabId,
+        enabled: false
+      });
     }
   } catch (error) {
-    console.error(`[onUpdated] 标签页 ${tabId} 处理失败:`, error);
+    console.error(`[背景服务] 更新SidePanel状态失败:`, error);
   }
 });
-
-// ✅ 标签页切换同步
-chrome.tabs.onActivated.addListener(async (activeInfo) => {
-  try {
-    const tab = await chrome.tabs.get(activeInfo.tabId);
-    if (tab.url && isYoutubeUrl(tab.url)) {
-      const isOpen = await getSidePanelState();
-      syncUIState(activeInfo.tabId, isOpen, 'tab-switch');
-    }
-  } catch (error) {
-    console.error(`[onActivated] 处理失败:`, error);
-  }
-});
-
-function isYoutubeUrl(url: string): boolean {
-  try {
-    const urlObj = new URL(url);
-    return YOUTUBE_ORIGINS.includes(urlObj.origin);
-  } catch (error) {
-    return false;
-  }
-}
 ```
 
-### **Layer 2: 状态检测核心层**
-
+### **Layer 2: 统一状态检测层**
 ```typescript
 /**
- * 🎯 基于chrome.runtime.getContexts()的权威状态检测
+ * 🎯 唯一权威状态源：Chrome的SidePanel实际状态
+ * 所有操作都基于这个状态检测来决定下一步行为
  */
 
 async function getSidePanelState(): Promise<boolean> {
@@ -140,351 +80,341 @@ async function getSidePanelState(): Promise<boolean> {
     });
     return contexts.length > 0;
   } catch (error) {
-    console.error('[getSidePanelState] 检测失败:', error);
+    console.error('[状态检测] 获取SidePanel状态失败:', error);
     return false;
   }
 }
 
-function syncUIState(tabId: number, isOpen: boolean, source: string): void {
-  chrome.tabs.sendMessage(tabId, {
-    type: 'UPDATE_BUTTON_STATE',
-    isOpen: isOpen,
-    source: source
-  }).catch(() => {
-    // Content Script可能未就绪，静默忽略
-  });
-  
-  console.log(`[${source}] 标签页 ${tabId} UI同步: ${isOpen ? '已打开' : '已关闭'}`);
-}
+// 状态检测消息处理
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'getSidePanelState') {
+    getSidePanelState()
+      .then(isOpen => sendResponse({ success: true, isOpen }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+});
 ```
 
-### **Layer 3: 用户操作处理层**
-
+### **Layer 3: 统一操作处理层**
 ```typescript
 /**
- * 🎯 处理翻译按钮点击（保持用户手势上下文）
+ * 🎯 翻译设置按钮点击处理
+ * 基于统一状态检测，执行相反操作，与插件图标逻辑完全同步
  */
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  
-  // 状态查询（初始化时使用）
-  if (message.type === 'getSidePanelState') {
-    getSidePanelStateForMessage().then(sendResponse);
-    return true;
-  }
-  
-  // 翻译按钮切换（关键：同步处理保持用户手势）
   if (message.type === 'toggleSidePanel') {
-    handleTranslateButtonToggle(sender).then(sendResponse);
+    handleToggleSidePanel(sender)
+      .then(sendResponse)
+      .catch(error => sendResponse({ success: false, error: error.message }));
     return true;
   }
 });
 
-async function handleTranslateButtonToggle(sender: chrome.runtime.MessageSender): Promise<any> {
+async function handleToggleSidePanel(sender: chrome.runtime.MessageSender): Promise<any> {
   const tabId = sender.tab?.id;
   if (!tabId) return { success: false, error: 'No tab ID' };
   
   try {
-    // 🔥 关键：在用户手势上下文中执行所有操作
-    
-    // 1. 检测当前状态
+    // 🔥 关键：检测当前状态，执行相反操作
     const isCurrentlyOpen = await getSidePanelState();
     
-    // 2. 执行相反操作（用户手势上下文保持）
     if (isCurrentlyOpen) {
-      // 关闭SidePanel
+      // 当前打开 → 关闭
       await chrome.sidePanel.setOptions({ tabId, enabled: false });
+      console.log(`[翻译按钮] SidePanel已关闭`);
     } else {
-      // 打开SidePanel（关键操作必须在用户手势中）
+      // 当前关闭 → 打开
       await chrome.sidePanel.setOptions({
         tabId,
         path: 'src/sidepanel/sidepanel.html',
         enabled: true
       });
-      await chrome.sidePanel.open({ tabId }); // 🔥 用户手势要求
+      
+      // 🔥 用户手势上下文约束：此调用必须在用户手势上下文中执行
+      // 翻译按钮点击事件提供了用户手势上下文，确保此调用成功
+      await chrome.sidePanel.open({ tabId });
+      console.log(`[翻译按钮] SidePanel已打开`);
     }
-    
-    const newState = !isCurrentlyOpen;
-    console.log(`[翻译按钮] SidePanel状态切换: ${newState ? '已打开' : '已关闭'}`);
     
     return { 
       success: true, 
-      newState: newState
+      newState: !isCurrentlyOpen
     };
     
   } catch (error) {
     console.error('[翻译按钮] 操作失败:', error);
+    
+    // 🔥 用户手势上下文错误处理
+    if (error.message?.includes('user gesture')) {
+      return { 
+        success: false, 
+        error: '需要用户手势上下文',
+        errorType: 'USER_GESTURE_REQUIRED'
+      };
+    }
+    
     return { 
       success: false, 
       error: error.message 
     };
   }
 }
-
-async function getSidePanelStateForMessage(): Promise<any> {
-  try {
-    const isOpen = await getSidePanelState();
-    return { success: true, isOpen: isOpen };
-  } catch (error) {
-    return { success: false, error: error.message, isOpen: false };
-  }
-}
 ```
 
-### **Layer 4: 手动关闭检测层**
-
+### **Layer 4: UI状态同步层**
 ```typescript
 /**
- * 🎯 监听手动关闭并同步状态
+ * 🎯 在需要时获取状态并更新UI
+ * 不维护全局状态，每次都实时检测
  */
 
-// SidePanel中建立Port连接
-// src/sidepanel/sidepanel.ts
-const port = chrome.runtime.connect({ name: 'sidepanel-lifecycle' });
-console.log('[sidepanel] Port连接已建立');
-
-// Background中监听Port生命周期
-chrome.runtime.onConnect.addListener((port) => {
-  if (port.name === 'sidepanel-lifecycle') {
-    console.log('[background] SidePanel已连接');
-    
-    port.onDisconnect.addListener(async () => {
-      console.log('[background] 检测到SidePanel断开');
-      
-      // 延迟确认真正关闭
-      setTimeout(async () => {
-        const isStillOpen = await getSidePanelState();
-        if (!isStillOpen) {
-          // 通知当前活动标签页
-          const [activeTab] = await chrome.tabs.query({ 
-            active: true, 
-            currentWindow: true 
-          });
-          if (activeTab?.id && isYoutubeUrl(activeTab.url || '')) {
-            syncUIState(activeTab.id, false, 'manual-close');
-          }
-        }
-      }, 100);
-    });
-  }
-});
-```
-
-### **Layer 5: Content Script响应层**
-
-```typescript
-/**
- * 🎯 Content Script状态同步和初始化
- */
-
-// 消息监听
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'UPDATE_BUTTON_STATE') {
-    updateTranslateButtonState(message.isOpen);
-    console.log(`[content-script] 按钮状态更新: ${message.isOpen ? '已打开' : '已关闭'} (${message.source})`);
-  }
-});
-
-// 翻译按钮点击处理（保持用户手势）
-async function onTranslateButtonClick() {
+// Content Script: 页面初始化时同步状态
+async function initializeButtonState() {
   try {
-    // 🔥 直接在用户点击事件中发送消息
-    const result = await chrome.runtime.sendMessage({
-      type: 'toggleSidePanel'
-    });
-    
-    if (result.success) {
-      // 立即更新当前按钮状态
-      updateTranslateButtonState(result.newState);
-    } else {
-      console.error('SidePanel操作失败:', result.error);
-    }
-  } catch (error) {
-    console.error('翻译按钮操作失败:', error);
-  }
-}
-
-// 页面初始化时获取状态
-async function initializeTranslateButton() {
-  try {
-    // 1. 渲染按钮
-    renderTranslateButton();
-    
-    // 2. 获取初始状态
     const result = await chrome.runtime.sendMessage({
       type: 'getSidePanelState'
     });
     
     if (result.success) {
-      updateTranslateButtonState(result.isOpen);
-      console.log(`[content-script] 初始状态: ${result.isOpen ? '已打开' : '已关闭'}`);
+      updateButtonDisplay(result.isOpen);
+      console.log(`[内容脚本] 初始状态: ${result.isOpen ? '已打开' : '已关闭'}`);
     }
-    
   } catch (error) {
-    console.error('[content-script] 初始化失败:', error);
-    updateTranslateButtonState(false); // 降级默认状态
+    console.error('[内容脚本] 获取初始状态失败:', error);
+    updateButtonDisplay(false); // 降级到默认状态
   }
 }
 
-// 智能初始化
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initializeTranslateButton);
-} else {
-  initializeTranslateButton();
+// 翻译按钮点击处理
+async function onTranslateButtonClick() {
+  try {
+    const result = await chrome.runtime.sendMessage({
+      type: 'toggleSidePanel'
+    });
+    
+    if (result.success) {
+      updateButtonDisplay(result.newState);
+      console.log(`[翻译按钮] 状态切换成功: ${result.newState ? '已打开' : '已关闭'}`);
+    }
+  } catch (error) {
+    console.error('[翻译按钮] 操作失败:', error);
+  }
 }
 
-// 按钮状态更新函数
-function updateTranslateButtonState(isOpen: boolean): void {
-  const button = document.querySelector('[data-translate-button]');
+// 按钮显示更新
+function updateButtonDisplay(isOpen: boolean) {
+  const button = document.querySelector('[data-translate-settings-button]');
   if (button) {
     button.textContent = isOpen ? '翻译设置 (已打开)' : '翻译设置';
     button.setAttribute('data-state', isOpen ? 'open' : 'closed');
   }
 }
+```
 
-// 按钮渲染函数
-function renderTranslateButton(): void {
-  // 具体的按钮渲染逻辑
-  const button = document.createElement('button');
-  button.setAttribute('data-translate-button', 'true');
-  button.addEventListener('click', onTranslateButtonClick);
-  // ... 其他渲染逻辑
+### **Layer 5: 手动关闭检测层**
+```typescript
+/**
+ * 🎯 监听用户手动关闭SidePanel
+ * 确保下次操作能正确检测到状态变化
+ */
+
+// SidePanel中建立Port连接
+// src/sidepanel/sidepanel.ts
+const port = chrome.runtime.connect({ name: 'sidepanel-lifecycle' });
+
+// Background监听Port生命周期
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === 'sidepanel-lifecycle') {
+    console.log('[背景服务] SidePanel已连接');
+    
+    port.onDisconnect.addListener(() => {
+      console.log('[背景服务] SidePanel已断开');
+      // 不需要额外处理，getSidePanelState()会自动检测到状态变化
+    });
+  }
+});
+```
+
+---
+
+## 🔥 **用户手势上下文约束**
+
+### **关键约束**
+Chrome Extensions的`chrome.sidePanel.open()`API必须在用户手势上下文中调用，这是Chrome的安全机制。
+
+### **用户手势上下文的来源**
+1. **用户点击事件**：button.onclick, element.addEventListener('click')
+2. **键盘事件**：keydown, keypress, keyup
+3. **其他用户交互**：focus, blur, input等
+
+### **用户手势上下文的传递**
+```typescript
+// ✅ 正确：在用户点击事件中直接调用
+button.addEventListener('click', async () => {
+  // 用户手势上下文存在
+  const result = await chrome.runtime.sendMessage({ type: 'toggleSidePanel' });
+});
+
+// ✅ 正确：在消息监听器中立即处理
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'toggleSidePanel') {
+    // 用户手势上下文从Content Script传递到Background
+    chrome.sidePanel.open({ tabId: sender.tab.id }); // 成功
+  }
+});
+
+// ❌ 错误：在setTimeout中调用
+button.addEventListener('click', () => {
+  setTimeout(() => {
+    chrome.sidePanel.open({ tabId }); // 失败：用户手势上下文丢失
+  }, 100);
+});
+
+// ❌ 错误：在tabs.onUpdated中调用
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  chrome.sidePanel.open({ tabId }); // 失败：没有用户手势上下文
+});
+```
+
+### **我们的实现策略**
+1. **翻译按钮点击** → 用户手势上下文存在 → 立即发送消息到Background → 立即调用`chrome.sidePanel.open()`
+2. **插件图标点击** → Chrome自动处理，无需我们管理用户手势上下文
+3. **手动关闭** → 不需要用户手势上下文，只是监听Port断开
+
+### **错误处理**
+```typescript
+try {
+  await chrome.sidePanel.open({ tabId });
+} catch (error) {
+  if (error.message?.includes('user gesture')) {
+    // 用户手势上下文丢失，提供用户友好的错误提示
+    console.error('需要用户手势上下文才能打开SidePanel');
+    // 可以显示提示，引导用户点击插件图标
+  }
 }
 ```
 
 ---
 
-## 🔗 **三种操作方式衔接机制**
+## 🔄 **三种操作方式同步延续**
 
-### **衔接原理**
+### **核心同步机制**
 ```
-所有操作都会影响SidePanel的实际状态
-→ chrome.runtime.getContexts()能检测到状态变化
-→ 通过Port监听、标签页事件、消息通信实现状态传递
+所有操作 → 检测getSidePanelState() → 执行相反操作
 ```
 
-### **具体衔接流程**
+### **具体同步场景**
 
-#### **翻译按钮 ↔ 插件图标**
+#### **场景1: 翻译按钮 → 插件图标**
 ```
-场景1: 翻译按钮打开 → 插件图标关闭
-1. 翻译按钮点击 → handleTranslateButtonToggle() → chrome.sidePanel.open()
-2. 用户点击插件图标 → Chrome原生关闭SidePanel
-3. 用户切换标签页 → onActivated → getSidePanelState() → 检测到已关闭
-4. syncUIState() → 翻译按钮状态更新为"已关闭"
-
-场景2: 插件图标打开 → 翻译按钮关闭
-1. 插件图标点击 → Chrome原生打开SidePanel
-2. 用户切换标签页 → onActivated → getSidePanelState() → 检测到已打开
-3. syncUIState() → 翻译按钮状态更新为"已打开"
-4. 翻译按钮点击 → 检测状态为已打开 → 执行关闭操作
+1. 用户点击翻译按钮 → 检测状态：关闭 → 执行打开 → SidePanel打开
+2. 用户点击插件图标 → Chrome检测状态：打开 → 自动关闭 → SidePanel关闭
 ```
 
-#### **插件图标 ↔ 手动关闭**
+#### **场景2: 插件图标 → 翻译按钮**
 ```
-1. 插件图标打开SidePanel → Chrome原生处理 → Port连接建立
-2. 用户手动点击X关闭 → Chrome关闭SidePanel → Port断开
-3. Port断开监听器触发 → getSidePanelState()确认关闭
-4. syncUIState() → 通知当前活动标签页更新UI
+1. 用户点击插件图标 → Chrome检测状态：关闭 → 自动打开 → SidePanel打开
+2. 用户点击翻译按钮 → 检测状态：打开 → 执行关闭 → SidePanel关闭
 ```
 
-#### **翻译按钮 ↔ 手动关闭**
+#### **场景3: 手动关闭 → 任何操作**
 ```
-1. 翻译按钮打开SidePanel → chrome.sidePanel.open() → Port连接建立
-2. 用户手动点击X关闭 → Chrome关闭SidePanel → Port断开
-3. Port断开监听器触发 → getSidePanelState()确认关闭
-4. syncUIState() → 通知当前活动标签页更新UI
+1. 用户手动关闭SidePanel → Port断开 → 状态变为关闭
+2. 用户点击任何按钮 → 检测状态：关闭 → 执行打开 → SidePanel打开
+```
+
+#### **场景4: 跨标签页操作**
+```
+1. 标签页A：用户操作打开SidePanel
+2. 切换到标签页B → Chrome自动显示SidePanel（同一网站）
+3. 标签页B：用户操作 → 检测状态：打开 → 执行关闭 → SidePanel关闭
+4. 切换回标签页A → Chrome自动隐藏SidePanel（状态同步）
 ```
 
 ---
 
-## 📊 **场景覆盖完整性**
+## 🎯 **架构优势**
 
-### **标签页切换场景**
-```
-触发器: chrome.tabs.onActivated
-处理流程: 检测YouTube页面 → 获取SidePanel状态 → 同步UI状态
-覆盖场景: 用户在不同YouTube标签页间切换
-```
+### **1. 完全基于Chrome官方机制**
+- ✅ 使用官方`setPanelBehavior`处理插件图标
+- ✅ 使用官方`runtime.getContexts`作为权威状态源
+- ✅ 利用Chrome自动跨标签页同步能力
 
-### **页面导航场景**
-```
-触发器: chrome.tabs.onUpdated
-处理流程: 启用SidePanel功能 → 获取当前状态 → 同步UI状态
-覆盖场景: YouTube站内导航、视频切换
-```
+### **2. 无状态存储，实时检测**
+- ✅ 不维护全局状态变量
+- ✅ 每次操作都检测实时状态
+- ✅ 避免状态不一致问题
 
-### **页面刷新场景**
-```
-触发器: chrome.tabs.onUpdated + Content Script初始化
-处理流程: 重新启用功能 → Content Script主动获取状态 → 初始化UI
-覆盖场景: 用户刷新页面、强制刷新
-```
+### **3. 操作逻辑完全同步**
+- ✅ 所有操作基于相同状态源
+- ✅ 执行相同的切换逻辑
+- ✅ 三种操作方式完全互通
 
-### **首次加载场景**
-```
-触发器: Content Script初始化
-处理流程: 渲染按钮 → 主动获取状态 → 设置初始UI状态
-覆盖场景: 首次访问YouTube页面
-```
+### **4. 用户手势上下文保证**
+- ✅ 翻译按钮点击在用户手势上下文中处理
+- ✅ 插件图标点击由Chrome自动保持用户手势
+- ✅ 所有`chrome.sidePanel.open()`调用都在用户操作中
 
 ---
 
-## 🎯 **架构核心优势**
+## 🚀 **实施步骤**
 
-### **1. 用户手势上下文保证**
-- ✅ 翻译按钮点击直接在消息处理器中调用Chrome API
-- ✅ 插件图标点击由Chrome原生处理，自动保持用户手势
-- ✅ 所有`chrome.sidePanel.open()`调用都在用户操作响应中
+### **Step 1: 实现Chrome自动管理层**
+- 实现官方标准的`tabs.onUpdated`监听
+- 设置`setPanelBehavior`启用插件图标自动处理
+- 移除不必要的`tabs.onActivated`监听
 
-### **2. Chrome官方API最大化利用**
-- ✅ `setPanelBehavior({ openPanelOnActionClick: true })`处理插件图标
-- ✅ `chrome.runtime.getContexts()`作为权威状态源
-- ✅ Chrome原生跨标签页状态同步能力
-- ✅ 标准的`onUpdated`和`onActivated`事件处理
+### **Step 2: 实现统一状态检测**
+- 实现`getSidePanelState()`函数
+- 实现状态查询消息处理
+- 确保状态检测的可靠性
 
-### **3. 完整场景覆盖**
-- ✅ 标签页切换：`chrome.tabs.onActivated`
-- ✅ 页面导航：`chrome.tabs.onUpdated`
-- ✅ 页面刷新：`onUpdated` + Content Script初始化
-- ✅ 首次加载：Content Script主动状态获取
+### **Step 3: 实现统一操作处理**
+- 实现`handleToggleSidePanel()`函数
+- 确保用户手势上下文保持
+- 实现错误处理和降级机制
 
-### **4. 架构简洁稳定**
-- ✅ 无复杂广播机制
-- ✅ 基于事件驱动的状态同步
-- ✅ 优雅降级和错误处理
-- ✅ 清晰的分层架构和职责分离
+### **Step 4: 实现UI状态同步**
+- Content Script初始化时获取状态
+- 翻译按钮点击处理
+- 按钮显示状态更新
+
+### **Step 5: 实现手动关闭检测**
+- SidePanel中建立Port连接
+- Background监听Port生命周期
+- 确保状态变化能被检测到
 
 ---
 
-## 🚀 **实施指导**
+## 🧪 **测试验证清单**
 
-### **实施优先级**
-1. **P0（核心）**：Layer 1 + Layer 2 - Chrome原生基础 + 状态检测
-2. **P1（重要）**：Layer 3 - 翻译按钮点击处理
-3. **P2（增强）**：Layer 4 + Layer 5 - 手动关闭检测 + Content Script响应
+### **基础功能**
+- [ ] 翻译按钮点击能正确切换SidePanel状态
+- [ ] 插件图标点击能正确切换SidePanel状态
+- [ ] 手动关闭SidePanel后状态检测正确
 
-### **测试验证清单**
-- [ ] 插件图标点击能正确开关SidePanel
-- [ ] 翻译设置按钮点击能正确开关SidePanel
-- [ ] 两种操作方式状态完全同步
-- [ ] 标签页切换时状态正确同步
-- [ ] 页面导航后状态保持
-- [ ] 页面刷新后状态恢复
-- [ ] 手动关闭后状态正确更新
-- [ ] 用户手势上下文正确保持
+### **同步延续**
+- [ ] 翻译按钮打开 → 插件图标关闭 → 状态同步
+- [ ] 插件图标打开 → 翻译按钮关闭 → 状态同步
+- [ ] 手动关闭 → 任何操作打开 → 状态同步
 
-### **关键技术要点**
-1. **用户手势保持**：所有涉及`chrome.sidePanel.open()`的操作必须在直接的用户操作响应中
-2. **状态检测可靠性**：`chrome.runtime.getContexts()`作为唯一权威状态源
-3. **错误处理**：所有API调用都有完整的try-catch和降级机制
-4. **性能优化**：避免不必要的状态检测和UI更新
+### **跨标签页**
+- [ ] 标签页A操作 → 切换到标签页B → SidePanel状态正确
+- [ ] 标签页B操作 → 切换回标签页A → SidePanel状态正确
+- [ ] 页面刷新后状态恢复正确
+
+### **边界情况**
+- [ ] 网络错误时降级处理
+- [ ] 权限错误时用户提示
+- [ ] 用户手势上下文丢失时处理
 
 ---
 
 ## 📚 **相关文档**
 
 - [Chrome SidePanel API官方文档](https://developer.chrome.com/docs/extensions/reference/api/sidePanel)
+- [Chrome官方SidePanel示例](https://github.com/GoogleChrome/chrome-extensions-samples/tree/main/functional-samples/cookbook.sidepanel-site-specific)
 - [Chrome Extension用户手势要求](https://developer.chrome.com/docs/extensions/develop/concepts/user-activation)
 - [项目主架构文档](./architecture.md)
-- [跨标签页同步问题追踪](./cross-tab-sync-issues.md) 

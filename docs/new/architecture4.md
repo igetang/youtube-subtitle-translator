@@ -1,3 +1,34 @@
+# VTC 5.24 架构设计文档 - Part 4 (翻译服务架构)
+
+> **文档更新**: 2025-07-16  
+> **版本**: v5.24.7+ (**当前统一版本**)  
+> **当前方案**: ✅ **Popup Fallback** (已实施完成)
+
+## 🚨 **方案变更说明**
+
+### **✅ 当前采用方案: Popup Fallback**
+- **翻译服务**: 完全适配Popup架构，支持双重界面调用
+- **消息通信**: 简化的翻译请求流程，移除SidePanel专用消息
+- **服务管理**: 统一的翻译服务管理，支持Popup和ContentScript调用
+
+### **❌ 已放弃方案: SidePanel**
+
+**放弃原因**:
+1. **兼容性问题**: Chrome 114+限制，排除约30%用户
+2. **权限复杂性**: 需要scripting权限，用户授权困难
+3. **用户体验不一致**: "死按钮"问题，非YouTube页面无响应
+4. **开发维护成本**: 复杂的动态状态管理和Port连接处理
+5. **实际用户反馈**: 用户对动态逻辑感到困惑，偏好一致性体验
+
+**放弃影响**:
+1. **消息类型清理**: 移除`OPEN_SIDEPANEL`等SidePanel专用消息
+2. **通信简化**: 移除SidePanel源类型的消息路由
+3. **服务调用优化**: 统一为Popup和ContentScript的调用方式
+
+> **📚 保留说明**: SidePanel相关翻译服务调用保留作为历史记录和技术参考
+
+---
+
 ## 第8章 翻译服务架构
 
 > **架构依赖**：
@@ -396,7 +427,7 @@ interface ErrorRecoveryHandler {
 
 **消息分类体系**：
 - **数据获取**: YouTube字幕数据、用户设置等数据请求
-- **功能操作**: 翻译请求、SidePanel控制等功能调用
+- **功能操作**: 翻译请求、Popup界面交互等功能调用
 - **状态同步**: 运行时状态、UI状态等状态同步
 - **系统通知**: 错误处理、性能监控等系统级消息
 
@@ -431,7 +462,7 @@ enum MessageType {
   TRANSLATION_RESPONSE = 'TRANSLATION_RESPONSE',
   
   // 设置相关
-  OPEN_SIDEPANEL = 'OPEN_SIDEPANEL',
+  OPEN_SIDEPANEL = 'OPEN_SIDEPANEL',  // 📚 已废弃：SidePanel专用消息
   SETTINGS_UPDATE = 'SETTINGS_UPDATE',
   
   // 状态同步
@@ -448,7 +479,7 @@ interface Message<T = any> {
   tabId?: number;
   requestId?: string;
   timestamp?: number;
-  source?: 'background' | 'content' | 'sidepanel' | 'popup';
+  source?: 'background' | 'content' | 'sidepanel' | 'popup';  // 注：sidepanel已废弃，当前主要使用popup
 }
 
 /**
@@ -555,7 +586,7 @@ class BackgroundService {
     // 注册各类消息处理器
     this.messageRouter.register(MessageType.REQUEST_RAW_TRACKS, this.handleRawTracksRequest);
     this.messageRouter.register(MessageType.TRANSLATION_REQUEST, this.handleTranslationRequest);
-    this.messageRouter.register(MessageType.OPEN_SIDEPANEL, this.handleOpenSidePanel);
+    this.messageRouter.register(MessageType.OPEN_SIDEPANEL, this.handleOpenSidePanel);  // 📚 已废弃：SidePanel处理器
     
     // 监听消息
     chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
@@ -736,7 +767,12 @@ graph TD
     D[Popup] -->|chrome.runtime.sendMessage| B
     B -->|直接调用| E[内部组件]
     E -->|MessageRouter| F[其他内部组件]
+    
+    %% 已废弃：SidePanel相关连接
+    style C fill:#ffcccc,stroke:#ff6666,stroke-dasharray: 5 5
 ```
+
+> **⚠️ 图表说明**: 红色虚线部分为已废弃的SidePanel通信，当前主要使用Popup和ContentScript通信
 
 #### 9.5.2 消息传递策略
 
@@ -770,6 +806,7 @@ class CrossComponentMessaging {
   
   /**
    * SidePanel 发送消息到 Background
+   * @deprecated 已废弃：SidePanel方案已放弃，请使用Popup通信
    */
   async sendFromSidePanel<T>(messageType: MessageType, payload: T): Promise<MessageResponse> {
     return new Promise((resolve) => {

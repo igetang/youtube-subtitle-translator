@@ -16,7 +16,8 @@ import {
   RuntimeStateChangeEvent,
   DEFAULT_RUNTIME_STATE 
 } from '../shared/types/runtime-state-types';
-import { sidePanelController, SidePanelSource } from './sidepanel-controller';
+// 移除SidePanel相关导入
+// import { sidePanelController, SidePanelSource } from './sidepanel-controller';
 
 // === 全局管理器实例 ===
 const userPreferencesManager = UserPreferencesManager.getInstance();
@@ -53,169 +54,98 @@ function isYoutubeUrl(url: string): boolean {
 }
 
 /**
- * 🚀 新架构：禁用自动打开，使用统一的toggle控制
- * 基于 sidepanel-开关实现指南.md 的已验证方案
+ * 🎯 Popup状态检测函数
+ * 替代原有的SidePanel状态检测逻辑
  */
-chrome.sidePanel
-  .setPanelBehavior({ openPanelOnActionClick: false })
-  .catch((error) => console.error('[background] 设置SidePanel行为失败:', error));
-
-/**
- * 🚀 步骤1：插件图标点击处理 - 基于 sidepanel-开关实现指南.md
- * 🔥 修复：使用回调函数保持用户手势上下文，避免"user gesture"错误
- */
-chrome.action.onClicked.addListener((tab) => {
-  if (!tab.id || !tab.url || !isYoutubeUrl(tab.url)) return;
-
-  console.log(`[background] 插件图标点击，标签页: ${tab.id}`);
-
-  // 🔧 统一使用 runtimeStateManager 同步检测状态
-  const isCurrentlyOpen = runtimeStateManager.getSettingPanelStateSync();
-  console.log(`[background] 插件图标点击，当前状态: ${isCurrentlyOpen ? '已打开' : '未打开'}`);
-  
-  if (isCurrentlyOpen) {
-    // 当前打开 → 关闭（使用回调函数保持用户手势）
-    chrome.sidePanel.setOptions({ tabId: tab.id, enabled: false }, () => {
-      if (chrome.runtime.lastError) {
-        console.error(`[background] 关闭SidePanel失败:`, chrome.runtime.lastError);
-        return;
-      }
-      
-      console.log(`[background] ❌ SidePanel已关闭 (插件图标)`);
-      
-      // 🔧 移除重复广播：统一由Port断开监听器处理状态管理  
-      // 职责分离：插件图标点击只负责Chrome API调用，状态管理由Port生命周期统一处理
+async function getPopupState(): Promise<boolean> {
+  try {
+    const contexts = await chrome.runtime.getContexts({
+      contextTypes: [chrome.runtime.ContextType.POPUP]
     });
-  } else {
-    // 当前关闭 → 打开（使用回调函数保持用户手势）
-    chrome.sidePanel.setOptions({ 
-      tabId: tab.id, 
-      path: 'src/sidepanel/sidepanel.html',
-      enabled: true 
-    }, () => {
-      if (chrome.runtime.lastError) {
-        console.error(`[background] 设置SidePanel选项失败:`, chrome.runtime.lastError);
-        
-        // 失败时降级到popup
-        chrome.action.setPopup({ popup: 'src/popup/popup.html' }, () => {
-          console.log('[background] SidePanel失败，已降级到popup');
-        });
-        return;
-      }
-      
-             // 🔥 关键：在回调中立即调用open()，保持用户手势上下文
-       chrome.sidePanel.open({ tabId: tab.id } as any, () => {
-        if (chrome.runtime.lastError) {
-          console.error(`[background] 打开SidePanel失败:`, chrome.runtime.lastError);
-          
-          // 失败时降级到popup
-          chrome.action.setPopup({ popup: 'src/popup/popup.html' }, () => {
-            console.log('[background] SidePanel打开失败，已降级到popup');
-          });
-          return;
-        }
-        
-        console.log(`[background] ✅ SidePanel已打开 (插件图标)`);
-        
-        // 成功时清除popup设置
-        chrome.action.setPopup({ popup: '' });
-        
-        // 🔧 移除重复广播：统一由Port连接监听器处理状态管理
-        // 职责分离：插件图标点击只负责Chrome API调用，状态管理由Port生命周期统一处理
-      });
-    });
+    return contexts.length > 0;
+  } catch (error) {
+    console.error('[状态检测] 获取Popup状态失败:', error);
+    return false;
   }
-});
+}
 
 /**
- * 🚀 官方标准：监听标签页更新，实现站点特定的SidePanel管理
- * 基于Google官方示例，严格按照最佳实践实现
+ * 🎯 标签页图标状态管理
+ * Popup Fallback方案：popup在manifest中配置为全局可用，这里只管理图标状态
  */
 chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
-  // 只在URL变化时处理，避免重复触发
-  if (!tab.url || !info.url) return;
+  if (!tab.url) return;
   
   try {
     const url = new URL(tab.url);
     
     if (YOUTUBE_ORIGINS.includes(url.origin)) {
-      // YouTube页面：启用SidePanel
-      await chrome.sidePanel.setOptions({
+      // YouTube页面：正常图标
+      await chrome.action.setIcon({
         tabId,
-        path: 'src/sidepanel/sidepanel.html',
-        enabled: true
+        path: {
+          16: 'icons/icon16.png',
+          48: 'icons/icon48.png'
+        }
       });
-      console.log(`[background] ✅ SidePanel已启用 (YouTube页面: ${tabId})`);
+      
+      console.log(`[background] ✅ YouTube页面图标已设置 (标签页: ${tabId})`);
     } else {
-      // 其他网站：禁用SidePanel
-      await chrome.sidePanel.setOptions({
+      // 其他网站：保持正常图标（popup内部会处理页面检测）
+      await chrome.action.setIcon({
         tabId,
-        enabled: false
+        path: {
+          16: 'icons/icon16.png',
+          48: 'icons/icon48.png'
+        }
       });
-      console.log(`[background] ❌ SidePanel已禁用 (非YouTube页面: ${tabId})`);
+      
+      console.log(`[background] ✅ 非YouTube页面图标已设置 (标签页: ${tabId})`);
     }
   } catch (error) {
-    console.error(`[background] 更新SidePanel状态失败 (标签页: ${tabId}):`, error);
+    console.error(`[background] 更新图标状态失败 (标签页: ${tabId}):`, error);
   }
 });
 
-/**
- * 🔧 向后兼容：保留现有的updateSidePanelForTab函数
- * @deprecated 请使用上面的tabs.onUpdated监听器
- */
-async function updateSidePanelForTab(tabId: number, url: string): Promise<void> {
-  try {
-    if (isYoutubeUrl(url)) {
-      await chrome.sidePanel.setOptions({
-        tabId,
-        path: 'src/sidepanel/sidepanel.html',
-        enabled: true
-      });
-      console.log(`[background] YouTube页面 ${tabId} 启用sidepanel`);
-    } else {
-      await chrome.sidePanel.setOptions({
-        tabId,
-        enabled: false
-      });
-      console.log(`[background] 非YouTube页面 ${tabId} 禁用sidepanel`);
-    }
-  } catch (error) {
-    console.error(`[background] 更新标签页 ${tabId} sidepanel状态失败:`, error);
-  }
-}
+// === Toast通知和Action点击处理已移除 ===
+// 现在使用Popup Fallback方案：所有页面都可以打开popup，popup内部处理页面检测和界面显示
 
 // === 极简Port方案：监听SidePanel生命周期 ===
 
 /**
- * 🚀 优化后的Port监听器 - SidePanel生命周期的最可靠检测点
- * 🎯 Port连接 = SidePanel真正可用，但不重复保存状态（已在操作时保存）
+ * 🎯 Popup生命周期管理 - 替代原有的SidePanel Port监听器
+ * Port连接 = Popup真正可用，监听Popup的生命周期事件
  */
 function setupPortListener(): void {
   chrome.runtime.onConnect.addListener(async (port) => {
-    if (port.name === 'sidepanel-lifecycle') {
-      console.log('[background] 🔥 SidePanel Port连接建立 - 确认SidePanel已实际打开');
+    if (port.name === 'popup-lifecycle') {
+      console.log('[background] 🔥 Popup Port连接建立 - 确认Popup已实际打开');
       
       try {
-        // 🔧 统一状态管理：Port连接 = SidePanel真正打开
+        // 🔧 统一状态管理：Port连接 = Popup真正打开
         await runtimeStateManager.setSettingPanelState(true);
         broadcastSidePanelStateChange(true);
-        console.log('[background] ✅ SidePanel状态已更新为打开');
+        console.log('[background] ✅ Popup状态已更新为打开');
         
       } catch (error) {
-        console.error('[background] 处理SidePanel打开事件失败:', error);
+        console.error('[background] 处理Popup打开事件失败:', error);
       }
       
       port.onDisconnect.addListener(async () => {
-        console.log('[background] 🔥 检测到SidePanel关闭（Port断开）');
+        console.log('[background] 🔥 检测到Popup关闭（Port断开）');
         
         try {
-          // 🔧 统一状态管理：Port断开 = SidePanel真正关闭
+          // 🔧 统一状态管理：Port断开 = Popup真正关闭
           await runtimeStateManager.setSettingPanelState(false);
+          
+          // 🔧 修复：统一使用broadcastSidePanelStateChange，避免重复和消息类型不匹配
+          // 移除重复的直接消息发送，由broadcastSidePanelStateChange统一处理
+          
           broadcastSidePanelStateChange(false);
-          console.log('[background] ✅ SidePanel状态已更新为关闭');
+          console.log('[background] ✅ Popup状态已更新为关闭，所有标签页已同步');
           
         } catch (error) {
-          console.error('[background] 处理SidePanel关闭事件失败:', error);
+          console.error('[background] 处理Popup关闭事件失败:', error);
         }
       });
     }
@@ -259,6 +189,17 @@ chrome.runtime.onStartup.addListener(async () => {
   
   try {
     await initializeManagers();
+    
+    // 🎯 新增：确保启动时默认禁用Popup
+    // 防止浏览器启动时popup在非YouTube页面仍然可用
+    await chrome.action.setPopup({ popup: '' });
+    await chrome.action.setIcon({
+      path: {
+        16: 'icons/icon16-disabled.png',
+        48: 'icons/icon48-disabled.png'
+      }
+    });
+    console.log('[background] ✅ 启动时Popup状态已设置为禁用');
   } catch (error) {
     console.error('[background] onStartup 初始化失败:', error);
   }
@@ -282,14 +223,13 @@ self.addEventListener('activate', (event: any) => {
  * 基于 architecture.md 3.4 按钮交互完整流程设计
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // 🔥 同步处理层：需要用户手势上下文的关键操作
-  // SidePanel的打开和关闭都必须在用户手势上下文中执行
-  if (message.type === 'toggleSidePanel') {
-    console.log(`[background] 🚀 直接处理toggleSidePanel (Legacy方式), 来自: ${
+  // 🎯 同步处理层：Popup操作处理
+  // 替代原有的SidePanel逻辑，改为Popup实现
+  if (message.type === 'togglePopup') {
+    console.log(`[background] 🚀 直接处理togglePopup, 来自: ${
       sender.tab ? `标签页ID ${sender.tab.id}` : '扩展内部'
     }`);
     
-    // 🔥 回到Legacy代码方式：直接在消息监听器中处理，保持用户手势上下文
     const tabId = sender.tab?.id;
     const tabUrl = sender.tab?.url;
     
@@ -301,54 +241,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
     
-    // 🔧 统一使用 runtimeStateManager（同步方法保持用户手势）
-    const isCurrentlyOpen = runtimeStateManager.getSettingPanelStateSync();
-    console.log(`[background] 翻译按钮，当前状态: ${isCurrentlyOpen ? '已打开' : '未打开'}`);
-    
-    if (isCurrentlyOpen) {
-      // 当前打开 → 关闭（使用回调函数保持用户手势）
-      chrome.sidePanel.setOptions({ tabId, enabled: false }, () => {
-        if (chrome.runtime.lastError) {
-          console.error(`[background] 关闭SidePanel失败:`, chrome.runtime.lastError);
-          sendResponse({ success: false, error: chrome.runtime.lastError.message });
-          return;
-        }
-        
-        console.log(`[background] ❌ SidePanel已关闭 (翻译按钮)`);
-        sendResponse({ success: true, status: 'closed' });
-        
-        // 🔧 移除状态更新：统一由Port断开监听器处理
-        // 职责分离：主动关闭逻辑只负责Chrome API调用和用户响应
-      });
-    } else {
-      // 当前关闭 → 打开（使用回调函数保持用户手势）
-      chrome.sidePanel.setOptions({ 
-        tabId, 
-        path: 'src/sidepanel/sidepanel.html',
-        enabled: true 
-      }, () => {
-        if (chrome.runtime.lastError) {
-          console.error(`[background] 设置SidePanel选项失败:`, chrome.runtime.lastError);
-          sendResponse({ success: false, error: chrome.runtime.lastError.message });
-          return;
-        }
-        
-        // 🔥 关键：在回调函数中立即调用sidePanel.open()，保持用户手势上下文
-        chrome.sidePanel.open({ tabId }, () => {
-          if (chrome.runtime.lastError) {
-            console.error(`[background] 打开SidePanel失败:`, chrome.runtime.lastError);
-            sendResponse({ success: false, error: chrome.runtime.lastError.message });
-            return;
-          }
-          
-          console.log(`[background] ✅ SidePanel已打开 (翻译按钮)`);
-          sendResponse({ success: true, status: 'opened' });
-          
-          // 🔧 移除状态更新：统一由Port连接监听器处理
-          // 职责分离：主动打开逻辑只负责Chrome API调用和用户响应
+    // 检测当前Popup状态并执行相反操作
+    getPopupState().then(isCurrentlyOpen => {
+      console.log(`[background] 翻译按钮，当前Popup状态: ${isCurrentlyOpen ? '已打开' : '未打开'}`);
+      
+      if (isCurrentlyOpen) {
+        // 当前打开 → 关闭
+        // Popup通过程序化关闭
+        chrome.runtime.sendMessage({
+          type: 'closePopup'
+        }).then(() => {
+          console.log(`[background] ❌ Popup已关闭 (翻译按钮)`);
+          sendResponse({ success: true, status: 'closed', newState: false });
+        }).catch(error => {
+          console.error(`[background] 关闭Popup失败:`, error);
+          sendResponse({ success: false, error: error.message });
         });
-      });
-    }
+      } else {
+        // 当前关闭 → 打开
+        // 🔥 优势：Popup不需要用户手势上下文限制
+        chrome.action.openPopup().then(() => {
+          console.log(`[background] ✅ Popup已打开 (翻译按钮)`);
+          sendResponse({ success: true, status: 'opened', newState: true });
+        }).catch(error => {
+          console.error(`[background] 打开Popup失败:`, error);
+          sendResponse({ success: false, error: error.message });
+        });
+      }
+    }).catch(error => {
+      console.error(`[background] 获取Popup状态失败:`, error);
+      sendResponse({ success: false, error: error.message });
+    });
     
     return true; // 异步响应
   }
@@ -361,11 +284,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   // 🔧 修复：只对未被直接处理的消息进行异步处理
-  // 已经被直接处理的消息（toggleSidePanel, openSidePanel）不应该再次进入异步流程
+  // 已经被直接处理的消息（togglePopup, openSidePanel）不应该再次进入异步流程
   
   // 🔧 优秀Chrome扩展设计：分层处理模式
   // 需要用户手势上下文的消息必须同步处理
-  const SYNC_MESSAGES = ['toggleSidePanel', 'openSidePanel'];
+  const SYNC_MESSAGES = ['togglePopup', 'openSidePanel'];
   
   if (SYNC_MESSAGES.includes(message.type)) {
     // 🔥 关键：这些消息已经在上面直接处理了，避免重复执行
@@ -384,33 +307,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true; // 异步响应
 });
 
-// 🔧 保留标签页切换监听器，但使用标准实现
-chrome.tabs.onActivated.addListener(async (activeInfo) => {
-  try {
-    const tab = await chrome.tabs.get(activeInfo.tabId);
-    if (tab.url) {
-      console.log(`[background] 标签页切换到 ${activeInfo.tabId} (${tab.url})`);
-      const url = new URL(tab.url);
-      
-      if (YOUTUBE_ORIGINS.includes(url.origin)) {
-        await chrome.sidePanel.setOptions({
-          tabId: activeInfo.tabId,
-          path: 'src/sidepanel/sidepanel.html',
-          enabled: true
-        });
-        console.log(`[background] ✅ 标签页切换 - SidePanel已启用`);
-      } else {
-        await chrome.sidePanel.setOptions({
-          tabId: activeInfo.tabId,
-          enabled: false
-        });
-        console.log(`[background] ❌ 标签页切换 - SidePanel已禁用`);
-      }
-    }
-  } catch (error) {
-    console.error(`[background] 标签页切换处理失败:`, error);
-  }
-});
+// 🔧 移除重复的tabs.onActivated监听器
+// 原因：官方示例只使用tabs.onUpdated，它已经能处理所有情况（包括标签页切换）
+// 重复的监听器可能导致状态同步冲突
 
 /**
  * 🔧 监听标签页关闭
@@ -455,10 +354,20 @@ async function routeMessage(
   const { type, data } = message;
   
   switch (type) {
-    // === SidePanel 相关消息 ===
-    // 🔧 移除重复处理：toggleSidePanel和openSidePanel已在主监听器中直接处理
-    // case 'toggleSidePanel': // 已移除 - 在主监听器中直接处理
-    // case 'openSidePanel': // 已移除 - 在主监听器中直接处理
+    // === Popup 相关消息 ===
+    // 🎯 状态查询消息处理 - 替代原有的SidePanel逻辑
+    case 'getPopupState':
+      const isOpen = await getPopupState();
+      return { success: true, isOpen };
+    
+    // 🎯 Popup切换处理 - 替代原有的toggleSidePanel逻辑
+    case 'togglePopup':
+      return await handleTogglePopup(sender, data);
+    
+    // 🔧 向后兼容：保留getSidePanelState处理器，但改为Popup实现
+    case 'getSidePanelState':
+      const sidePanelIsOpen = await getPopupState();
+      return { success: true, isOpen: sidePanelIsOpen };
     
     // 🔧 向后兼容：保留closeSidePanel处理器
     case 'closeSidePanel':
@@ -601,7 +510,100 @@ async function routeMessage(
 // === 消息处理器实现 ===
 
 /**
- * 🚀 修复：处理 SidePanel 切换请求 - 回归Legacy模式
+ * 🎯 处理Popup切换请求 - 替代原有的SidePanel逻辑
+ * 基于用户手势上下文执行Popup打开/关闭操作
+ */
+async function handleTogglePopup(sender: chrome.runtime.MessageSender, data?: any): Promise<any> {
+  if (!sender.tab || !sender.tab.id) {
+    console.warn('[background] togglePopup 缺少有效的标签页信息');
+    return {
+      success: false,
+      error: 'Invalid sender for toggling popup'
+    };
+  }
+
+  const tabId = sender.tab.id;
+  const tabUrl = sender.tab.url;
+  const source = data?.source || 'translation-button';
+  
+  console.log(`[background] 收到切换 Popup 请求，标签页: ${tabId}，来源: ${source}`);
+  
+  // 检查是否为YouTube页面
+  if (!tabUrl || !isYoutubeUrl(tabUrl)) {
+    console.warn(`[background] 非YouTube页面不能操作Popup: ${tabUrl}`);
+    return {
+      success: false,
+      error: '只有YouTube页面才能打开翻译设置面板',
+      fallback: 'popup'
+    };
+  }
+  
+  try {
+    // 🔥 关键修复：检测Popup真实状态
+    const isCurrentlyOpen = await getPopupState();
+    
+    console.log(`[background] 当前Popup状态: ${isCurrentlyOpen ? '已打开' : '已关闭'}`);
+    
+    if (isCurrentlyOpen) {
+      // 当前已打开，无法直接关闭Popup，返回提示
+      console.log(`[background] ⚠️ Popup已打开，无法通过API关闭 (标签页: ${tabId})`);
+      
+      return {
+        success: true,
+        status: 'already_open',
+        isOpen: true,
+        message: 'Popup已打开，请手动关闭或直接在Popup中操作'
+      };
+    } else {
+      // 当前未打开，执行打开操作
+      console.log(`[background] 🚀 准备打开Popup (标签页: ${tabId})`);
+      
+      // 确保popup路径设置正确
+      await chrome.action.setPopup({
+        tabId,
+        popup: 'src/popup/popup.html'
+      });
+      
+      // 🔥 用户手势上下文：直接调用openPopup()
+      await chrome.action.openPopup();
+      console.log(`[background] ✅ Popup已打开 (标签页: ${tabId})`);
+      
+      return {
+        success: true,
+        status: 'opened',
+        isOpen: true,
+        message: 'Popup已打开'
+      };
+    }
+    
+  } catch (error) {
+    console.error(`[background] 切换 Popup 失败，标签页: ${tabId}:`, error);
+    
+    // 分析具体错误类型
+    const errorMessage = error instanceof Error ? error.message : '未知错误';
+    
+    // 🔥 用户手势上下文错误处理
+    if (errorMessage.includes('user gesture') || errorMessage.includes('user activation')) {
+      console.error('[background] ❌ 用户手势上下文不足，无法打开Popup');
+      return {
+        success: false,
+        error: '需要用户手势上下文才能打开Popup',
+        errorType: 'USER_GESTURE_REQUIRED',
+        fallback: 'icon_click',
+        message: '请点击扩展图标打开设置面板'
+      };
+    }
+    
+    return {
+      success: false,
+      error: `操作失败: ${errorMessage}`,
+      fallback: 'popup'
+    };
+  }
+}
+
+/**
+ * ⚠️ DEPRECATED: 处理SidePanel切换请求（保留向后兼容）
  * 直接调用Chrome API，避免用户手势丢失问题
  * 基于 sidepanel-开关实现指南.md 的分析
  */
@@ -616,7 +618,7 @@ async function handleToggleSidePanel(sender: chrome.runtime.MessageSender, data?
 
   const tabId = sender.tab.id;
   const tabUrl = sender.tab.url;
-  const source = data?.source || SidePanelSource.TRANSLATION_BUTTON;
+  const source = data?.source || 'translation-button';
   
   console.log(`[background] 收到切换 SidePanel 请求，标签页: ${tabId}，来源: ${source}`);
   
@@ -693,6 +695,51 @@ async function handleToggleSidePanel(sender: chrome.runtime.MessageSender, data?
 // 🔧 移除 sidePanelStateCache，统一使用 runtimeStateManager 管理状态
 
 /**
+ * 🎯 统一的Popup降级处理函数
+ * 直接打开popup，如果失败给出提示
+ */
+async function fallbackToPopup(reason: string): Promise<void> {
+  console.log(`[background] 🔄 降级到Popup，原因: ${reason}`);
+  
+  try {
+    // 设置popup路径并立即打开
+    chrome.action.setPopup({ popup: 'src/popup/popup.html' }, async () => {
+      if (chrome.runtime.lastError) {
+        console.error('[background] ❌ 设置popup路径失败:', chrome.runtime.lastError);
+        return;
+      }
+      
+      // 立即打开popup
+      try {
+        await chrome.action.openPopup();
+        console.log('[background] ✅ Popup已打开');
+      } catch (error) {
+        console.error('[background] ❌ 打开popup失败:', error);
+        console.log('[background] ⚠️ 请再次点击扩展图标打开设置');
+      }
+    });
+  } catch (error) {
+    console.error('[background] ❌ Popup降级处理失败:', error);
+  }
+}
+
+/**
+ * 🎯 权威状态检测：使用Chrome官方推荐的getContexts方法检测SidePanel状态
+ * 基于SAD.md设计 - Layer 2: 状态检测核心层
+ */
+async function getSidePanelState(): Promise<boolean> {
+  try {
+    const contexts = await chrome.runtime.getContexts({
+      contextTypes: [chrome.runtime.ContextType.SIDE_PANEL]
+    });
+    return contexts.length > 0;
+  } catch (error) {
+    console.error('[getSidePanelState] 检测失败:', error);
+    return false;
+  }
+}
+
+/**
  * 🧪 测试函数：使用官方推荐的getContexts方法检测SidePanel状态
  */
 async function testSidePanelStateWithGetContexts(tabId: number): Promise<void> {
@@ -734,6 +781,10 @@ async function testSidePanelStateWithGetContexts(tabId: number): Promise<void> {
     const managerState = runtimeStateManager.getSettingPanelStateSync();
     console.log(`[background] 🧪 状态管理器状态: ${managerState}`);
     
+    // 方法5：使用新的权威状态检测
+    const authoritative = await getSidePanelState();
+    console.log(`[background] 🧪 权威状态检测结果: ${authoritative}`);
+    
     // 总结对比
     const isOpenByGetContexts = tabSpecificContexts.length > 0;
     const isEnabledByGetOptions = options.enabled ?? false;
@@ -741,7 +792,8 @@ async function testSidePanelStateWithGetContexts(tabId: number): Promise<void> {
       'getContexts检测结果': isOpenByGetContexts ? '已打开' : '未打开',
       'getOptions检测结果': isEnabledByGetOptions ? '已启用' : '未启用',
       '状态管理器状态': managerState ? '已打开' : '未打开',
-      '一致性检查': isOpenByGetContexts === managerState ? '✅一致' : '❌不一致'
+      '权威状态检测': authoritative ? '已打开' : '未打开',
+      '一致性检查': isOpenByGetContexts === authoritative ? '✅一致' : '❌不一致'
     });
     
   } catch (error) {
@@ -786,10 +838,10 @@ async function handleToggleSidePanelSync(sender: chrome.runtime.MessageSender, d
       console.log(`[background] ❌ SidePanel已关闭 (翻译按钮, 标签页: ${tabId})`);
       
       // 🔧 移除状态更新：统一由Port断开监听器处理
-      // 只保留必要的缓存清理
-      setTimeout(() => {
-        sidePanelController.clearStateCache(tabId);
-      }, 0);
+      // 原有的缓存清理已不需要（SidePanel已废弃）
+      // setTimeout(() => {
+      //   sidePanelController.clearStateCache(tabId);
+      // }, 0);
       
       return { success: true, status: 'closed', message: 'SidePanel已关闭' };
       
@@ -807,10 +859,10 @@ async function handleToggleSidePanelSync(sender: chrome.runtime.MessageSender, d
       console.log(`[background] ✅ SidePanel已打开 (翻译按钮, 标签页: ${tabId})`);
       
       // 🔧 移除状态更新：统一由Port连接监听器处理
-      // 只保留必要的缓存清理
-      setTimeout(() => {
-        sidePanelController.clearStateCache(tabId);
-      }, 0);
+      // 原有的缓存清理已不需要（SidePanel已废弃）
+      // setTimeout(() => {
+      //   sidePanelController.clearStateCache(tabId);
+      // }, 0);
       
       return { success: true, status: 'opened', message: 'SidePanel已打开' };
     }
@@ -1010,35 +1062,16 @@ async function handleOpenPopupFallback(sender: chrome.runtime.MessageSender): Pr
   try {
     console.log('[background] 执行popup降级策略...');
     
-    // 尝试通过action API打开popup
-    if (chrome.action && chrome.action.openPopup) {
-      try {
-        await chrome.action.openPopup();
-        console.log('[background] 成功通过chrome.action.openPopup打开popup');
-        
-        // 更新运行时状态
-        await runtimeStateManager.setSettingPanelState(true);
-        
-        return {
-          success: true,
-          status: 'success',
-          message: 'Popup opened successfully',
-          method: 'action.openPopup'
-        };
-      } catch (popupError) {
-        console.warn('[background] chrome.action.openPopup 失败:', popupError);
-        // 继续尝试其他方法
-      }
-    }
+    // 使用统一的降级函数
+    await fallbackToPopup('消息请求降级');
     
-    // 如果action.openPopup不可用或失败，返回失败
-    // (在新架构中，popup会通过manifest的default_popup自动处理)
-    console.log('[background] action.openPopup不可用，依赖manifest default_popup');
+    // 更新运行时状态
+    await runtimeStateManager.setSettingPanelState(true);
+    
     return {
-      success: false,
-      status: 'error',
-      message: 'Popup fallback methods not available',
-      error: 'No popup fallback available'
+      success: true,
+      status: 'success',
+      message: 'Popup fallback executed'
     };
     
   } catch (error) {
@@ -1277,6 +1310,17 @@ async function setupDefaultSettings(): Promise<void> {
     // 避免重复调用导致的状态转换冲突
     console.log('[background] 默认运行时状态将由 RuntimeStateManager 自动处理');
     
+    // 🎯 新增：设置默认Popup禁用状态
+    // 确保扩展安装时所有页面的popup都是禁用的，只有YouTube页面才会启用
+    await chrome.action.setPopup({ popup: '' });
+    await chrome.action.setIcon({
+      path: {
+        16: 'icons/icon16-disabled.png',
+        48: 'icons/icon48-disabled.png'
+      }
+    });
+    console.log('[background] ✅ 默认Popup状态已设置为禁用');
+    
     console.log('[background] ✅ 默认设置已初始化');
   } catch (error) {
     console.error('[background] ❌ 设置默认设置失败:', error);
@@ -1403,8 +1447,9 @@ function broadcastSidePanelStateChange(isOpen: boolean): void {
     tabs.forEach(tab => {
       if (tab.id) {
         chrome.tabs.sendMessage(tab.id, {
-          type: 'SIDEPANEL_STATE_CHANGED',
-          isOpen
+          type: 'UPDATE_BUTTON_STATE',
+          isOpen,
+          source: 'cross-tab-sync'
         }).catch(() => {
           // 忽略错误：标签页可能没有content script或已关闭
         });
@@ -1412,6 +1457,21 @@ function broadcastSidePanelStateChange(isOpen: boolean): void {
     });
   });
   console.log(`[background] 📡 已广播SidePanel状态变化: ${isOpen} 到所有YouTube标签页`);
+}
+
+
+
+/**
+ * 🎯 消息处理专用状态获取函数 - 基于SAD.md设计
+ * 用于响应Content Script的状态查询请求
+ */
+async function getSidePanelStateForMessage(): Promise<any> {
+  try {
+    const isOpen = await getSidePanelState();
+    return { success: true, isOpen: isOpen };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : '未知错误', isOpen: false };
+  }
 }
 
 /**

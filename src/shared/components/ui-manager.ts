@@ -1353,18 +1353,18 @@ export class UIManager {
     console.log(`[ui-manager] 用户操作：切换设置面板到 ${open}, 来源: ${source}`);
     
     // 🔥 关键修复：同步发送消息，保持用户手势上下文
-    console.log('[ui-manager] 同步发送 toggleSidePanel 消息');
+    console.log('[ui-manager] 同步发送 togglePopup 消息');
     
     // 直接使用 chrome.runtime.sendMessage，不经过 sendMessageWithFallback 的异步包装
     chrome.runtime.sendMessage({
-      type: 'toggleSidePanel',
+      type: 'togglePopup',
       data: { source: source === 'user-action' ? 'translation-button' : source },
       timestamp: Date.now()
     }, (response) => {
       if (response && response.success) {
         const responseAny = response as any;
         const isOpen = responseAny.state?.isOpen ?? responseAny.status === 'opened';
-        console.log(`[ui-manager] ✅ SidePanel toggle 成功，新状态: ${isOpen}`);
+        console.log(`[ui-manager] ✅ Popup toggle 成功，新状态: ${isOpen}`);
         
         // 🎯 根据实际结果更新UI状态
         this.state.settingPanelOpen = isOpen;

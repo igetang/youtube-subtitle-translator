@@ -1,3 +1,34 @@
+# VTC 5.24 架构设计文档 - Part 3 (存储与缓存架构)
+
+> **文档更新**: 2025-07-16  
+> **版本**: v5.24.7+ (**当前统一版本**)  
+> **当前方案**: ✅ **Popup Fallback** (已实施完成)
+
+## 🚨 **方案变更说明**
+
+### **✅ 当前采用方案: Popup Fallback**
+- **存储架构**: 完全适配Popup架构，优化页面检测和界面切换
+- **缓存策略**: 支持双重界面的数据缓存需求
+- **消息通信**: 简化的存储消息，移除复杂的SidePanel状态管理
+
+### **❌ 已放弃方案: SidePanel**
+
+**放弃原因**:
+1. **兼容性问题**: Chrome 114+限制，排除约30%用户
+2. **权限复杂性**: 需要scripting权限，用户授权困难
+3. **用户体验不一致**: "死按钮"问题，非YouTube页面无响应
+4. **开发维护成本**: 复杂的动态状态管理和Port连接处理
+5. **实际用户反馈**: 用户对动态逻辑感到困惑，偏好一致性体验
+
+**放弃影响**:
+1. **状态管理简化**: 移除复杂的SidePanel状态同步
+2. **消息类型精简**: 移除SidePanel专用消息类型
+3. **缓存优化**: 移除SidePanel多标签页切换缓存
+
+> **📚 保留说明**: SidePanel相关存储逻辑保留作为历史记录和技术参考
+
+---
+
 ## 6. 存储与缓存架构
 
 ### 6.1 存储设计原则
@@ -41,15 +72,15 @@
 
 ### 6.3 缓存处理流程
 
-#### 6.3.1 翻译设置按钮缓存流程
+#### 6.3.1 Popup界面缓存流程 ⭐ **当前方案**
 
 **完整缓存检查顺序**：
 ```
-用户点击翻译设置按钮
+用户点击扩展图标
     ↓
-[UIManager] 设置按钮点击事件
+[Chrome] 自动打开Popup
     ↓ 
-发送 openSidePanel 消息到 Background
+[Popup] 页面检测 → 发送数据请求到 Background
     ↓
 [Background] 三层缓存检查：
     ↓
@@ -68,10 +99,27 @@
 │    - 如无缓存则调用YouTube API获取         │
 └─────────────────────────────────────────┘
     ↓
-合并设置数据和轨道信息 → 发送到SidePanel
+合并设置数据和轨道信息 → 发送到Popup界面
 ```
 
-#### 6.3.2 智能写入机制
+#### 6.3.2 传统SidePanel缓存流程 📚 **已放弃**
+
+> **📚 历史记录**: 以下为SidePanel的缓存流程，保留作为技术参考  
+> **放弃原因**: 复杂的消息流和状态管理，用户体验不一致
+
+```
+用户点击翻译设置按钮 (传统模式)
+    ↓
+[UIManager] 设置按钮点击事件
+    ↓ 
+发送 openSidePanel 消息到 Background  // ❌ 已废弃
+    ↓
+[Background] 动态启用SidePanel + 缓存检查  // ❌ 已废弃
+    ↓
+合并设置数据和轨道信息 → 发送到SidePanel  // ❌ 已废弃
+```
+
+#### 6.3.3 智能写入机制
 
 **写入优化策略**：
 
@@ -386,12 +434,12 @@ if (currentState === TranslateActiveState.PENDING) {
   // B48: 状态仍为PENDING，继续检测或超时处理
 }
 
-// 注意：设置面板状态改为页面级管理，通过chrome.sidePanel API检测
+// ❌ 已废弃：设置面板状态改为页面级管理，通过chrome.sidePanel API检测
 ```
 
 **v5.24.7+极简架构优势**：
 - ✅ **专注核心**: 仅管理翻译状态，移除设置面板相关状态
-- ✅ **简化管理**: 翻译状态跨标签页共享，SidePanel状态页面级管理
+- ✅ **简化管理**: 翻译状态跨标签页共享，Popup界面状态简化管理
 - ✅ **类型安全**: TranslateActiveState枚举提供编译时检查
 - ✅ **状态清晰**: INACTIVE/ACTIVE/PENDING语义明确，易于调试
 - ✅ **性能优化**: 移除不必要状态，减少存储操作
@@ -678,7 +726,7 @@ interface TranslationCacheData {
   ```
 - **安全特性**: 
   - ✅ **排除敏感信息**: translationService使用TranslationServiceForStorage类型，不包含API密钥
-  - ✅ **源语言完整性**: availableSourceLanguages包含所有可用源语言，支持SidePanel显示
+  - ✅ **源语言完整性**: availableSourceLanguages包含所有可用源语言，支持Popup界面显示
 - **特点**: 循环覆盖，存满后覆盖最早的（LRU策略）
 - **管理器**: 由翻译模块和缓存管理器共同管理
 - **清理策略**: 基于`lastUsed`时间戳和存储配额
@@ -745,7 +793,7 @@ interface TranslationCacheData {
 - ✅ **标准化兼容**: 遵循Web标准，与播放器完美兼容  
 - ✅ **缓存精度**: 键中包含model和temperature，确保缓存匹配准确性
 - ✅ **即插即用**: 可直接用于字幕显示，无需二次处理
-- ✅ **源语言完整**: availableSourceLanguages支持SidePanel源语言选择功能
+- ✅ **源语言完整**: availableSourceLanguages支持Popup界面源语言选择功能
 - ✅ **安全存储**: 使用TranslationServiceForStorage，排除API密钥等敏感信息
 - ✅ **自动管理**: LRU策略自动清理，Hash验证保证数据可靠性
 
@@ -908,7 +956,7 @@ function calculateTranslationDataHash(data: Omit<TranslationCacheData, 'dataHash
 
 **存储层集成**：
 - 复用现有的`UserPreferencesManager`
-- ❌ 已移除 (v5.24.7+): 扩展`RuntimeStateManager`处理SidePanel状态，改为页面级状态管理
+- ❌ 已移除 (v5.24.7+): 扩展`RuntimeStateManager`处理SidePanel状态，改为Popup页面内检测
 - 利用现有的三层分离架构
 
 **通信层集成**：

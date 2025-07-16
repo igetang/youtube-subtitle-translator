@@ -70,6 +70,9 @@ export class ContentScriptCoordinator {
       
       // 4. 启动UI控制逻辑
       this.startUIManagement();
+      
+      // 5. 🎯 初始化时获取Popup状态
+      await this.initializePopupState();
 
       this.initialized = true;
       console.log('[ContentScriptCoordinator] ✅ 统一初始化完成');
@@ -206,32 +209,31 @@ export class ContentScriptCoordinator {
       const newState = !data.currentState;
       this.stateManager.updateState('translateActive', newState);
     } else if (data.buttonType === 'settings') {
-      // 使用toggle逻辑，让backend实时检测状态（保持用户手势上下文）
-      this.toggleSidePanel();
+      // 使用toggle逻辑，让backend实时检测状态
+      this.togglePopup();
     }
   }
 
   /**
-   * 切换SidePanel状态 - 处理用户手势上下文限制
-   * 🔥 关键修复：Content script无法保持用户手势上下文传递给background
-   * 解决方案：提示用户点击扩展图标
+   * 切换Popup状态 - 替代原有的SidePanel逻辑
+   * 🎯 发送Popup切换请求到background
    */
-  private toggleSidePanel(): void {
-    // 🔥 发送SidePanel切换请求到background
+  private togglePopup(): void {
+    // 发送Popup切换请求到background
     chrome.runtime.sendMessage({
-      type: 'toggleSidePanel',
+      type: 'togglePopup',
       data: { source: 'translation-button' },
       timestamp: Date.now()
     }, (response) => {
       if (chrome.runtime.lastError) {
-        console.error('[ContentScriptCoordinator] ❌ SidePanel切换失败:', chrome.runtime.lastError);
+        console.error('[ContentScriptCoordinator] ❌ Popup切换失败:', chrome.runtime.lastError);
         return;
       }
       
       if (response && response.success) {
-        console.log('[ContentScriptCoordinator] ✅ SidePanel切换成功:', response.status);
+        console.log('[ContentScriptCoordinator] ✅ Popup切换成功:', response.status);
       } else {
-        console.error('[ContentScriptCoordinator] ❌ SidePanel切换失败:', response?.error);
+        console.error('[ContentScriptCoordinator] ❌ Popup切换失败:', response?.error);
       }
     });
   }
@@ -356,15 +358,55 @@ export class ContentScriptCoordinator {
     
     // 根据消息类型处理
     switch (messageType) {
-      case 'SIDEPANEL_STATE_CHANGED':
-        // SidePanel状态变化消息，更新UI状态
+      case 'UPDATE_BUTTON_STATE':
+        // 🎯 SAD.md设计：标准的UI状态更新消息
         if (message.isOpen !== undefined && this.uiRenderer) {
           this.uiRenderer.update({ settingPanelOpen: message.isOpen });
+          console.log(`[ContentScriptCoordinator] 按钮状态更新: ${message.isOpen ? '已打开' : '已关闭'} (${message.source})`);
         }
         break;
+        
+      case 'SIDEPANEL_STATE_CHANGED':
+        // 🔧 向后兼容：保持对旧消息格式的支持
+        if (message.isOpen !== undefined && this.uiRenderer) {
+          this.uiRenderer.update({ settingPanelOpen: message.isOpen });
+          console.log(`[ContentScriptCoordinator] 状态变化 (兼容模式): ${message.isOpen ? '已打开' : '已关闭'}`);
+        }
+        break;
+        
       default:
         // 其他Chrome消息暂时只记录，不处理
         console.log(`[ContentScriptCoordinator] 收到其他Chrome消息: ${messageType}`);
+    }
+  }
+
+  /**
+   * 🎯 初始化时获取Popup状态
+   */
+  private async initializePopupState(): Promise<void> {
+    try {
+      console.log('[ContentScriptCoordinator] 🎯 获取Popup初始状态...');
+      
+      // 发送getPopupState消息到Background
+      const result = await chrome.runtime.sendMessage({
+        type: 'getPopupState'
+      });
+      
+      if (result && result.success && this.uiRenderer) {
+        this.uiRenderer.update({ settingPanelOpen: result.isOpen });
+        console.log(`[ContentScriptCoordinator] ✅ Popup初始状态: ${result.isOpen ? '已打开' : '已关闭'}`);
+      } else {
+        console.warn('[ContentScriptCoordinator] ⚠️ 获取Popup状态失败，使用默认状态');
+        if (this.uiRenderer) {
+          this.uiRenderer.update({ settingPanelOpen: false });
+        }
+      }
+    } catch (error) {
+      console.error('[ContentScriptCoordinator] ❌ 初始化Popup状态失败:', error);
+      // 降级到默认状态
+      if (this.uiRenderer) {
+        this.uiRenderer.update({ settingPanelOpen: false });
+      }
     }
   }
 
