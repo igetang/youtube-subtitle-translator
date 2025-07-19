@@ -54,6 +54,22 @@ function isYoutubeUrl(url: string): boolean {
 }
 
 /**
+ * 从URL中提取视频ID
+ */
+function extractVideoIdFromUrl(url: string): string | null {
+  try {
+    const urlObj = new URL(url);
+    if (urlObj.pathname === '/watch') {
+      return urlObj.searchParams.get('v');
+    }
+    return null;
+  } catch (error) {
+    console.warn('[background] 提取视频ID失败:', url, error);
+    return null;
+  }
+}
+
+/**
  * 🎯 Popup状态检测函数
  * 替代原有的SidePanel状态检测逻辑
  */
@@ -364,6 +380,17 @@ async function routeMessage(
     case 'togglePopup':
       return await handleTogglePopup(sender, data);
     
+    // 🎯 Popup初始化数据请求 - 新架构核心消息
+    case 'getPopupInitData':
+      return await handleGetPopupInitData(message, sender);
+    
+    // 🎯 Popup生命周期消息
+    case 'popupClosed':
+      return await handlePopupClosed(sender);
+    
+    case 'popupBlurred':
+      return await handlePopupBlurred(sender);
+    
     // 🔧 向后兼容：保留getSidePanelState处理器，但改为Popup实现
     case 'getSidePanelState':
       const sidePanelIsOpen = await getPopupState();
@@ -598,6 +625,152 @@ async function handleTogglePopup(sender: chrome.runtime.MessageSender, data?: an
       success: false,
       error: `操作失败: ${errorMessage}`,
       fallback: 'popup'
+    };
+  }
+}
+
+/**
+ * 🎯 处理Popup初始化数据请求 - 新架构核心功能
+ * 返回PopupContext数据结构
+ */
+async function handleGetPopupInitData(message: any, sender: chrome.runtime.MessageSender): Promise<any> {
+  const { tabId } = message;
+  
+  try {
+    console.log(`[background] 处理getPopupInitData请求，标签页ID: ${tabId}`);
+    
+    // 1. 获取标签页信息
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab || !tab.url) {
+      console.warn(`[background] 无法获取标签页信息: ${tabId}`);
+      return {
+        type: 'popupInitDataResponse',
+        popupContext: null
+      };
+    }
+    
+    // 2. 检查是否为YouTube页面
+    const isYoutube = isYoutubeUrl(tab.url);
+    if (!isYoutube) {
+      console.log(`[background] 非YouTube页面: ${tab.url}`);
+      return {
+        type: 'popupInitDataResponse',
+        popupContext: null
+      };
+    }
+    
+    // 3. 提取视频ID
+    const videoId = extractVideoIdFromUrl(tab.url);
+    if (!videoId) {
+      console.warn(`[background] 无法提取视频ID: ${tab.url}`);
+      return {
+        type: 'popupInitDataResponse',
+        popupContext: null
+      };
+    }
+    
+    // 4. 获取用户偏好设置
+    const userPreferencesResult = await handleUserPreferencesGet({});
+    const userPreferences = userPreferencesResult.success ? userPreferencesResult.data : {};
+    
+    // 5. 向Content Script请求字幕轨道数据
+    let availableSourceLanguages = [];
+    let detectedSourceLang = 'auto';
+    
+    try {
+      console.log(`[background] 向Content Script请求字幕轨道数据...`);
+      const trackResponse = await chrome.tabs.sendMessage(tabId, {
+        type: 'getVideoTrackData',
+        videoId
+      });
+      
+      if (trackResponse && trackResponse.success && trackResponse.trackData) {
+        availableSourceLanguages = trackResponse.trackData;
+        console.log(`[background] 获取到${availableSourceLanguages.length}个字幕轨道`);
+      } else {
+        console.warn(`[background] 获取字幕轨道数据失败:`, trackResponse);
+      }
+    } catch (error) {
+      console.error(`[background] 请求字幕轨道数据失败:`, error);
+    }
+    
+    // 6. 构建PopupContext
+    const popupContext = {
+      videoId,
+      tabId,
+      userPreferences,
+      detectedSourceLang,
+      languagePolicy: {
+        conflictState: { hasConflict: false },
+        languageListState: { isLocked: false }
+      },
+      availableSourceLanguages
+    };
+    
+    console.log(`[background] PopupContext已构建:`, popupContext);
+    
+    return {
+      type: 'popupInitDataResponse',
+      popupContext
+    };
+    
+  } catch (error) {
+    console.error(`[background] 处理getPopupInitData失败:`, error);
+    return {
+      type: 'popupInitDataResponse',
+      popupContext: null,
+      error: error instanceof Error ? error.message : '获取初始化数据失败'
+    };
+  }
+}
+
+/**
+ * 🎯 处理Popup关闭事件
+ */
+async function handlePopupClosed(sender: chrome.runtime.MessageSender): Promise<any> {
+  try {
+    console.log(`[background] 处理popupClosed事件`);
+    
+    // 更新运行时状态
+    await runtimeStateManager.setSettingPanelState(false);
+    
+    // 广播状态变化
+    await broadcastSidePanelStateChange(false);
+    
+    return {
+      success: true,
+      message: 'Popup关闭事件已处理'
+    };
+    
+  } catch (error) {
+    console.error(`[background] 处理popupClosed失败:`, error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : '处理Popup关闭事件失败'
+    };
+  }
+}
+
+/**
+ * 🎯 处理Popup失去焦点事件
+ */
+async function handlePopupBlurred(sender: chrome.runtime.MessageSender): Promise<any> {
+  try {
+    console.log(`[background] 处理popupBlurred事件`);
+    
+    // 对于失去焦点事件，我们只记录日志，不改变状态
+    // 因为用户可能只是临时点击了其他地方，popup仍然可能是打开的
+    
+    return {
+      success: true,
+      message: 'Popup失去焦点事件已处理'
+    };
+    
+  } catch (error) {
+    console.error(`[background] 处理popupBlurred失败:`, error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : '处理Popup失去焦点事件失败'
     };
   }
 }

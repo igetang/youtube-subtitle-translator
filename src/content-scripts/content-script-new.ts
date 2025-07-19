@@ -77,6 +77,82 @@ function injectMainWorldScript(): void {
 }
 
 /**
+ * 处理获取视频轨道数据的请求
+ * 通过向main-world脚本发送REQUEST_CAPTION_TRACKS消息获取真实数据
+ */
+function handleGetVideoTrackData(videoId: string, sendResponse: (response: any) => void): void {
+  console.log(`[content-script-new] 开始获取视频轨道数据，videoId: ${videoId}`);
+  
+  // 生成唯一的请求ID
+  const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  // 设置超时机制
+  const timeout = setTimeout(() => {
+    window.removeEventListener('message', responseHandler);
+    console.warn(`[content-script-new] 获取轨道数据超时，videoId: ${videoId}`);
+    sendResponse({
+      success: false,
+      error: '获取轨道数据超时'
+    });
+  }, 5000); // 5秒超时
+  
+  // 监听main-world的响应
+  const responseHandler = (event: MessageEvent) => {
+    if (event.source !== window || !event.data) return;
+    
+    const { source, type, _requestId, payload, error } = event.data;
+    if (source === 'main-world' && type === 'CAPTION_TRACKS_RESPONSE' && _requestId === requestId) {
+      clearTimeout(timeout);
+      window.removeEventListener('message', responseHandler);
+      
+      if (error) {
+        console.error(`[content-script-new] main-world返回错误: ${error}`);
+        sendResponse({
+          success: false,
+          error: error
+        });
+        return;
+      }
+      
+      const captionTracks = payload?.captionTracks;
+      if (captionTracks && captionTracks.length > 0) {
+        console.log(`[content-script-new] 成功获取到${captionTracks.length}条轨道数据`, captionTracks);
+        
+        // 转换为统一数据格式
+        const trackData = captionTracks.map((track: any) => ({
+          languageCode: track.languageCode || 'unknown',
+          languageName: track.name?.simpleText || track.name || 'Unknown',
+          kind: track.kind || 'standard'
+        }));
+        
+        sendResponse({
+          success: true,
+          trackData: trackData
+        });
+      } else {
+        console.log(`[content-script-new] 未获取到轨道数据或轨道为空`);
+        sendResponse({
+          success: true,
+          trackData: []
+        });
+      }
+    }
+  };
+  
+  window.addEventListener('message', responseHandler);
+  
+  // 向main-world发送获取轨道请求
+  window.postMessage({
+    source: 'content-script',
+    type: 'REQUEST_CAPTION_TRACKS',
+    videoId: videoId,
+    _requestId: requestId
+  }, '*');
+  
+  console.log(`[content-script-new] 已发送REQUEST_CAPTION_TRACKS请求，requestId: ${requestId}`);
+}
+
+/**
  * 设置消息处理器 - 简化版本，只处理Chrome消息
  * 🔥 架构重构：移除main-world ready事件依赖，实现独立初始化
  */
@@ -88,7 +164,17 @@ function setupMessageHandlers(): void {
     const messageType = message.type || message.action;
     console.log(`[content-script-new] 收到Chrome消息: ${messageType}`, message);
     
-    // 如果协调器已初始化，转发给协调器处理
+    // 🎯 处理getVideoTrackData消息（用于Popup初始化）
+    if (messageType === 'getVideoTrackData') {
+      console.log(`[content-script-new] 处理getVideoTrackData请求，视频ID: ${message.videoId}`);
+      
+      // 向main-world脚本请求真实的字幕轨道数据
+      handleGetVideoTrackData(message.videoId, sendResponse);
+      
+      return true; // 异步响应
+    }
+    
+    // 其他消息转发给协调器处理
     if (coordinator && coordinator.isInitialized()) {
       coordinator.handleUserAction('chromeMessage', {
         messageType,

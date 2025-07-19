@@ -52,9 +52,8 @@ export const targetLanguages: Language[] = [
   { code: 'lt', name: 'Lietuvių (Lithuanian)', englishName: 'Lithuanian', regionCode: 'LT', callingCode: '+370' }, // Assuming LT
   
   // 主要亚洲语言
-  { code: 'zh-CN', name: '简体中文 (Simplified Chinese)', englishName: 'Chinese (Simplified)', regionCode: 'CN', callingCode: '+86' }, 
-  { code: 'zh-Hans', name: '简体中文 (Simplified Chinese)', englishName: 'Chinese (Simplified)', regionCode: 'CN', callingCode: '+86' }, 
-  { code: 'zh-Hant', name: '繁體中文 (Traditional Chinese)', englishName: 'Chinese (Traditional)' }, 
+  { code: 'zh-CN', name: '简体中文', englishName: 'Chinese (Simplified)', regionCode: 'CN', callingCode: '+86' }, 
+  { code: 'zh-TW', name: '繁體中文', englishName: 'Chinese (Traditional)', regionCode: 'TW', callingCode: '+886' }, 
   { code: 'ja', name: '日本語 (Japanese)', englishName: 'Japanese', regionCode: 'JP', callingCode: '+81' }, 
   { code: 'ko', name: '한국어 (Korean)', englishName: 'Korean', regionCode: 'KR', callingCode: '+82' }, 
   { code: 'vi', name: 'Tiếng Việt (Vietnamese)', englishName: 'Vietnamese', regionCode: 'VN', callingCode: '+84' }, 

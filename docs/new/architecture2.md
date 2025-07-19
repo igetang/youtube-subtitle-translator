@@ -83,9 +83,9 @@ interface ProcessedSubtitleEvent {
 
 ```typescript
 /**
- * 通用UI上下文数据 - 适用于Popup和SidePanel
+ * Popup上下文数据 - Popup架构的核心数据结构
  */
-interface UIContext {
+interface PopupContext {
   /** 当前视频 ID */
   videoId: string;
   /** 当前标签页 ID */
@@ -127,7 +127,7 @@ interface PopupInterfaceData {
   /** 页面检测结果 */
   pageDetection: PopupPageDetection;
   /** YouTube功能界面数据（页面类型为youtube时） */
-  youtubeUIData?: UIContext;
+  youtubeUIData?: PopupContext;
   /** 使用说明界面数据（页面类型为non-youtube时） */
   usageGuideData?: UsageGuideData;
 }
@@ -173,7 +173,7 @@ interface PopupPageDetection {
  */
 interface PopupInterfaceData {
   detection: PopupPageDetection;     // 页面检测结果
-  uiContext?: UIContext;             // YouTube页面时的UI上下文
+  popupContext?: PopupContext;       // YouTube页面时的Popup上下文
   usageGuide?: UsageGuideData;       // 非YouTube页面时的使用指导
 }
 
@@ -200,6 +200,22 @@ interface UsageStep {
 }
 
 /**
+ * Popup初始化消息类型
+ */
+interface PopupInitMessage {
+  type: 'getPopupInitData';
+  tabId: number;
+}
+
+/**
+ * Popup初始化响应消息类型
+ */
+interface PopupInitResponse {
+  type: 'popupInitDataResponse';
+  popupContext: PopupContext | null;  // null表示非YouTube页面
+}
+
+/**
  * Popup专用的轨道信息（复用通用格式）
  */
 interface AvailableTrackForPopup extends AvailableTrackForUI {
@@ -217,8 +233,10 @@ interface AvailableTrackForPopup extends AvailableTrackForUI {
  * SidePanel上下文数据 - Background向SidePanel传输的主要数据
  * @deprecated 已放弃SidePanel方案，仅作历史记录保留
  */
-interface SidePanelContext extends UIContext {
-  // 继承通用UI上下文，无需额外字段
+interface SidePanelContext {
+  // @deprecated 已放弃SidePanel方案，仅作历史记录保留
+  // 原本继承UIContext，现在对应PopupContext的功能
+  // 内容与PopupContext完全相同，无额外字段
 }
 
 /**
@@ -234,7 +252,7 @@ interface AvailableTrackForSidePanel extends AvailableTrackForUI {
 
 ```typescript
 /**
- * 通用UI轨道信息（适用于Popup和SidePanel）
+ * UI轨道信息（适用于Popup界面）
  */
 interface AvailableTrackForUI {
   name: string;           // 显示名称，如 "English", "中文(自动生成)"
@@ -1089,7 +1107,7 @@ Background重新计算互锁状态
 **数据切换方案**：
 - 用户打开SidePanel后，切换标签页时更新SidePanel显示的数据
 - 仅在SidePanel已打开时执行数据切换，避免不必要的计算
-- 每次切换重新构建对应视频的SidePanelContext
+- 每次切换重新构建对应视频的PopupContext（历史记录）
 
 #### 5.7.2 切换流程 📚
 
@@ -1113,8 +1131,8 @@ class TabSwitchHandler {
       return;
     }
     
-    // 2. 构建该页面的SidePanelContext
-    const context = await this.buildSidePanelContext(tabInfo);
+    // 2. 构建该页面的PopupContext（历史记录）
+    const context = await this.buildPopupContext(tabInfo);
     
     // 3. 更新SidePanel显示的数据
     await this.sendToSidePanel('SIDEPANEL_CONTEXT_UPDATE', context);
@@ -1123,7 +1141,7 @@ class TabSwitchHandler {
     console.log(`[TabSwitch] 数据已切换: ${tabInfo.videoId}`);
   }
   
-  private async buildSidePanelContext(tabInfo: TabInfo): Promise<SidePanelContext> {
+  private async buildPopupContext(tabInfo: TabInfo): Promise<PopupContext> {
     // 构建数据的完整逻辑
     const userPreferences = await this.loadUserPreferences();
     const detectedSourceLang = await this.detectOrLoadSourceLanguage(tabInfo.videoId);
@@ -1188,10 +1206,10 @@ class TabSwitchHandler {
 **数据准备逻辑**：
 ```typescript
 /**
- * 插件初始化时的SidePanelContext预准备
+ * 插件初始化时的PopupContext预准备（历史记录）
  */
 class PluginInitializer {
-  async prepareSidePanelContext(): Promise<SidePanelContext> {
+  async preparePopupContext(): Promise<PopupContext> {
     // 1. 获取当前活跃标签页信息
     const { videoId, tabId } = await this.getCurrentVideoInfo();
     
@@ -1318,7 +1336,7 @@ class OpenAIConfigHandler {
 
 **场景1：新用户首次使用**
 ```
-插件初始化 → 加载默认设置 → 构建SidePanelContext → 显示初始状态
+插件初始化 → 加载默认设置 → 构建PopupContext → 显示初始状态
 ```
 
 **场景2：多标签页切换**  

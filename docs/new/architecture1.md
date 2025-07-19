@@ -1234,7 +1234,7 @@ sequenceDiagram
 1. **用户点击设置按钮** → 发送`openSidePanel`消息
 2. **Background处理** → 调用`chrome.sidePanel.open()`
 3. **SidePanel初始化** → 加载用户设置和视频数据
-4. **数据传输** → 发送`SidePanelContext`到界面
+4. **数据传输** → 发送`PopupContext`到界面
 5. **UI更新** → 显示设置界面和状态信息
 
 **⚡ 简化优势**：
@@ -1531,7 +1531,7 @@ class LanguageVariantMatcher {
 1. **用户点击设置按钮** → 发送`openSidePanel`消息
 2. **Background处理** → 调用`chrome.sidePanel.open()`
 3. **SidePanel初始化** → 加载用户设置和视频数据
-4. **数据传输** → 发送`SidePanelContext`到界面
+4. **数据传输** → 发送`PopupContext`到界面
 5. **UI渲染** → 显示设置界面和状态信息
 
 详细的数据加载流程、缓存策略、语言冲突处理等内容，请参考第5章的完整SidePanel架构设计。
