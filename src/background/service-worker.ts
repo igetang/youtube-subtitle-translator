@@ -1590,8 +1590,32 @@ async function handleGetTrackCache(data: any): Promise<any> {
 }
 
 async function handleApiConnectionTest(data: any): Promise<any> {
-  console.warn('[background] handleApiConnectionTest 尚未实现');
-  return { success: false, error: 'Function not implemented yet' };
+  console.log('[background] 开始API连接测试:', data);
+  
+  const { apiType, apiKey, forceTest } = data;
+  
+  try {
+    // 免费API测试逻辑
+    if (apiType === 'google-free' || apiType === 'microsoft-free') {
+      return await testFreeTranslationService(apiType);
+    } 
+    // 付费API测试逻辑
+    else {
+      if (!apiKey || apiKey.trim() === '') {
+        return {
+          success: false,
+          message: '请输入API密钥'
+        };
+      }
+      return await testPaidApiService(apiType, apiKey);
+    }
+  } catch (error) {
+    console.error('[background] API连接测试失败:', error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : '未知错误'
+    };
+  }
 }
 
 async function handleErrorReport(data: any): Promise<any> {
@@ -1762,6 +1786,483 @@ async function handleGetSidePanelStatus(sender: chrome.runtime.MessageSender): P
     return {
       success: false,
       isEnabled: false
+    };
+  }
+}
+
+// === API测试相关函数 ===
+
+/**
+ * 测试免费翻译服务
+ */
+async function testFreeTranslationService(apiType: string): Promise<{success: boolean, message: string}> {
+  console.log(`[background] 测试免费翻译服务: ${apiType}`);
+  
+  const testText = 'Hello, this is a test message.';
+  const sourceLang = 'en';
+  const targetLang = 'zh-Hans';
+  
+  try {
+    if (apiType === 'google-free') {
+      const result = await testGoogleTranslateService(testText, sourceLang, targetLang);
+      return {
+        success: true,
+        message: `Google翻译测试成功: ${result}`
+      };
+    } else if (apiType === 'microsoft-free') {
+      const result = await testMicrosoftTranslateService(testText, sourceLang, targetLang);
+      return {
+        success: true,
+        message: `Microsoft翻译测试成功: ${result}`
+      };
+    } else {
+      return {
+        success: false,
+        message: `未知的免费API类型: ${apiType}`
+      };
+    }
+  } catch (error) {
+    console.error(`[background] 免费翻译服务测试失败:`, error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : '测试失败'
+    };
+  }
+}
+
+/**
+ * 测试付费API服务
+ */
+async function testPaidApiService(apiType: string, apiKey: string): Promise<{success: boolean, message: string}> {
+  console.log(`[background] 测试付费API服务: ${apiType}`);
+  
+  try {
+    if (apiType === 'openai') {
+      return await testOpenAIService(apiKey, 'gpt-3.5-turbo');
+    } else if (apiType === 'deepl') {
+      return {
+        success: false,
+        message: 'DeepL API测试功能尚未实现'
+      };
+    } else if (apiType === 'gemini') {
+      return {
+        success: false,
+        message: 'Gemini API测试功能尚未实现'
+      };
+    } else {
+      return {
+        success: false,
+        message: `API类型 ${apiType} 测试功能尚未实现`
+      };
+    }
+  } catch (error) {
+    console.error(`[background] 付费API服务测试失败:`, error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : '测试失败'
+    };
+  }
+}
+
+/**
+ * 测试Google翻译服务 - 双路径测试
+ */
+async function testGoogleTranslateService(testText: string, sourceLang: string, targetLang: string): Promise<string> {
+  let pathAResult = '失败';
+  let pathBResult = '失败';
+  let pathATranslation = '';
+  let pathBTranslation = '';
+  
+  // 测试路径A: /translate_a/single
+  try {
+    console.log('[background] 测试Google翻译路径A...');
+    pathATranslation = await testGoogleTranslatePathA(testText, sourceLang, targetLang);
+    pathAResult = '成功✅';
+  } catch (error) {
+    console.error('[background] Google翻译路径A测试失败:', error);
+    pathAResult = `失败❌ (${(error as Error).message})`;
+  }
+  
+  // 测试路径B: /translate_a/t
+  try {
+    console.log('[background] 测试Google翻译路径B...');
+    pathBTranslation = await testGoogleTranslatePathB(testText, sourceLang, targetLang);
+    pathBResult = '成功✅';
+  } catch (error) {
+    console.error('[background] Google翻译路径B测试失败:', error);
+    pathBResult = `失败❌ (${(error as Error).message})`;
+  }
+  
+  // 生成测试结果消息
+  let resultMessage = `Google翻译测试结果:\n`;
+  resultMessage += `- 路径A (/translate_a/single): ${pathAResult}\n`;
+  resultMessage += `- 路径B (/translate_a/t): ${pathBResult}\n`;
+  
+  if (pathAResult.includes('成功') || pathBResult.includes('成功')) {
+    resultMessage += `\n翻译示例:\n`;
+    if (pathAResult.includes('成功')) {
+      resultMessage += `- 路径A: "${pathATranslation}"\n`;
+    }
+    if (pathBResult.includes('成功')) {
+      resultMessage += `- 路径B: "${pathBTranslation}"\n`;
+    }
+    
+    // 检查是否有至少一条路径成功
+    if (pathAResult.includes('成功') && pathBResult.includes('成功')) {
+      return `${resultMessage}\n✅ 两条路径均可用!`;
+    } else {
+      return `${resultMessage}\n⚠️ 部分路径可用，系统将自动切换`;
+    }
+  } else {
+    return `${resultMessage}\n❌ 所有路径均不可用`;
+  }
+}
+
+/**
+ * 测试Google翻译路径A - /translate_a/single
+ */
+async function testGoogleTranslatePathA(testText: string, sourceLang: string, targetLang: string): Promise<string> {
+  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t&q=${encodeURIComponent(testText)}`;
+  
+  const options = {
+    method: 'GET',
+    headers: {
+      'Accept': 'application/json, text/javascript, */*; q=0.01',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      'Referer': 'https://translate.google.com/',
+      'Origin': 'https://translate.google.com'
+    }
+  };
+  
+  try {
+    const response = await fetch(url, options);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    // 解析Google API返回格式: [[["翻译结果","原文",""],null,"en"]]
+    if (data && Array.isArray(data) && data.length > 0 && Array.isArray(data[0])) {
+      let translatedText = '';
+      for (const item of data[0]) {
+        if (Array.isArray(item) && item.length > 0) {
+          translatedText += item[0];
+        }
+      }
+      return translatedText || '翻译结果为空';
+    } else {
+      throw new Error('翻译返回格式异常');
+    }
+  } catch (error) {
+    throw new Error(`路径A失败: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * 测试Google翻译路径B - /translate_a/t  
+ */
+async function testGoogleTranslatePathB(testText: string, sourceLang: string, targetLang: string): Promise<string> {
+  const url = `https://translate.googleapis.com/translate_a/t?client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t&q=${encodeURIComponent(testText)}`;
+  
+  const options = {
+    method: 'GET',
+    headers: {
+      'Accept': '*/*',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8', 
+      'Referer': 'https://translate.google.com/',
+      'Origin': 'https://translate.google.com'
+    }
+  };
+  
+  try {
+    const response = await fetch(url, options);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    // 解析结果 - 路径B可能返回不同格式
+    if (data) {
+      if (Array.isArray(data) && data.length > 0) {
+        if (typeof data[0] === 'string') {
+          // 简单格式：["翻译结果"]
+          return data[0];
+        } else if (Array.isArray(data[0])) {
+          // 复杂格式：[["翻译片段1"],["翻译片段2"]]
+          let translatedText = '';
+          for (const item of data) {
+            if (Array.isArray(item) && item.length > 0 && typeof item[0] === 'string') {
+              translatedText += item[0];
+            }
+          }
+          return translatedText;
+        }
+      }
+      throw new Error('翻译返回格式异常');
+    } else {
+      throw new Error('翻译返回空数据');
+    }
+  } catch (error) {
+    throw new Error(`路径B失败: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * 测试微软翻译服务 - 双路径测试
+ */
+async function testMicrosoftTranslateService(testText: string, sourceLang: string, targetLang: string): Promise<string> {
+  let pathAResult = '失败';
+  let pathBResult = '失败';
+  let pathATranslation = '';
+  let pathBTranslation = '';
+  
+  // 测试路径A: Edge认证令牌
+  try {
+    console.log('[background] 测试微软翻译路径A...');
+    pathATranslation = await testMicrosoftTranslatePathA(testText, sourceLang, targetLang);
+    pathAResult = '成功✅';
+  } catch (error) {
+    console.error('[background] 微软翻译路径A测试失败:', error);
+    pathAResult = `失败❌ (${(error as Error).message})`;
+  }
+  
+  // 测试路径B: API-Edge端点
+  try {
+    console.log('[background] 测试微软翻译路径B...');
+    pathBTranslation = await testMicrosoftTranslatePathB(testText, sourceLang, targetLang);
+    pathBResult = '成功✅';
+  } catch (error) {
+    console.error('[background] 微软翻译路径B测试失败:', error);
+    pathBResult = `失败❌ (${(error as Error).message})`;
+  }
+  
+  // 生成测试结果消息
+  let resultMessage = `微软翻译测试结果:\n`;
+  resultMessage += `- 路径A (Edge认证令牌): ${pathAResult}\n`;
+  resultMessage += `- 路径B (API-Edge端点): ${pathBResult}\n`;
+  
+  if (pathAResult.includes('成功') || pathBResult.includes('成功')) {
+    resultMessage += `\n翻译示例:\n`;
+    if (pathAResult.includes('成功')) {
+      resultMessage += `- 路径A: "${pathATranslation}"\n`;
+    }
+    if (pathBResult.includes('成功')) {
+      resultMessage += `- 路径B: "${pathBTranslation}"\n`;
+    }
+    
+    // 检查是否有至少一条路径成功
+    if (pathAResult.includes('成功') && pathBResult.includes('成功')) {
+      return `${resultMessage}\n✅ 两条路径均可用!`;
+    } else {
+      return `${resultMessage}\n⚠️ 部分路径可用，系统将自动切换`;
+    }
+  } else {
+    return `${resultMessage}\n❌ 所有路径均不可用`;
+  }
+}
+
+/**
+ * 测试微软翻译路径A - Edge认证令牌
+ */
+async function testMicrosoftTranslatePathA(testText: string, sourceLang: string, targetLang: string): Promise<string> {
+  try {
+    // 微软API语言代码映射
+    const msLangMap: Record<string, string> = {
+      'zh-Hans': 'zh-Hans', // 简体中文
+      'zh-Hant': 'zh-Hant', // 繁体中文
+      'en': 'en',           // 英语
+    };
+    
+    // 转换语言代码格式
+    const from = msLangMap[sourceLang] || sourceLang;
+    const to = msLangMap[targetLang] || targetLang;
+    
+    // 获取认证令牌
+    const tokenUrl = 'https://edge.microsoft.com/translate/auth';
+    const tokenOptions = {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+        'Accept': '*/*',
+        'Origin': 'https://www.bing.com',
+        'Referer': 'https://www.bing.com/translator'
+      }
+    };
+    
+    const authResponse = await fetch(tokenUrl, tokenOptions);
+    
+    if (!authResponse.ok) {
+      throw new Error(`无法获取微软翻译认证令牌，状态码: ${authResponse.status}`);
+    }
+    
+    const authToken = await authResponse.text();
+    
+    // 调用翻译API
+    const translationUrl = `https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&from=${from}&to=${to}`;
+    const translationOptions = {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+        'Accept': 'application/json',
+        'Origin': 'https://www.bing.com',
+        'Referer': 'https://www.bing.com/translator'
+      },
+      body: JSON.stringify([{ Text: testText }])
+    };
+    
+    const response = await fetch(translationUrl, translationOptions);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    if (Array.isArray(data) && data.length > 0 && data[0].translations && 
+        Array.isArray(data[0].translations) && data[0].translations.length > 0) {
+      return data[0].translations[0].text;
+    } else {
+      throw new Error('翻译结果格式异常');
+    }
+  } catch (error) {
+    throw new Error(`路径A失败: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * 测试微软翻译路径B - API-Edge端点
+ */
+async function testMicrosoftTranslatePathB(testText: string, sourceLang: string, targetLang: string): Promise<string> {
+  try {
+    // 微软API语言代码映射
+    const msLangMap: Record<string, string> = {
+      'zh-Hans': 'zh-Hans', // 简体中文
+      'zh-Hant': 'zh-Hant', // 繁体中文
+      'en': 'en',           // 英语
+    };
+    
+    // 转换语言代码格式
+    const from = msLangMap[sourceLang] || sourceLang;
+    const to = msLangMap[targetLang] || targetLang;
+    
+    // 获取认证令牌
+    const tokenUrl = 'https://edge.microsoft.com/translate/auth';
+    const tokenOptions = {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+        'Accept': '*/*',
+        'Origin': 'https://www.bing.com',
+        'Referer': 'https://www.bing.com/translator'
+      }
+    };
+    
+    const authResponse = await fetch(tokenUrl, tokenOptions);
+    
+    if (!authResponse.ok) {
+      throw new Error(`无法获取微软翻译认证令牌，状态码: ${authResponse.status}`);
+    }
+    
+    const authToken = await authResponse.text();
+    
+    // 调用翻译API - 使用Edge端点
+    const translationUrl = `https://api-edge.cognitive.microsofttranslator.com/translate?api-version=3.0&from=${from}&to=${to}&includeSentenceLength=true`;
+    const translationOptions = {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+        'Accept': 'application/json',
+        'Origin': 'https://www.bing.com',
+        'Referer': 'https://www.bing.com/translator'
+      },
+      body: JSON.stringify([{ Text: testText }])
+    };
+    
+    const response = await fetch(translationUrl, translationOptions);
+    
+    if (!response.ok) {
+      // 尝试获取详细错误信息
+      let errorDetail = '';
+      try {
+        errorDetail = await response.text();
+      } catch (e) {
+        errorDetail = '无法获取详细错误信息';
+      }
+      
+      throw new Error(`微软翻译路径B请求失败，状态码: ${response.status}，错误详情: ${errorDetail}`);
+    }
+    
+    const data = await response.json();
+    
+    if (Array.isArray(data) && data.length > 0 && data[0].translations && 
+        Array.isArray(data[0].translations) && data[0].translations.length > 0) {
+      return data[0].translations[0].text;
+    } else {
+      throw new Error('翻译结果格式异常');
+    }
+  } catch (error) {
+    throw new Error(`路径B失败: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * 测试OpenAI服务
+ */
+async function testOpenAIService(apiKey: string, model: string): Promise<{success: boolean, message: string}> {
+  const url = 'https://api.openai.com/v1/chat/completions';
+  
+  const options = {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: model,
+      messages: [
+        {
+          role: 'user',
+          content: 'Say "test successful" in Chinese.'
+        }
+      ],
+      max_tokens: 10,
+      temperature: 0
+    })
+  };
+  
+  try {
+    const response = await fetch(url, options);
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      const errorMsg = errorData?.error?.message || `HTTP ${response.status}: ${response.statusText}`;
+      throw new Error(errorMsg);
+    }
+    
+    const data = await response.json();
+    
+    if (data.choices && data.choices.length > 0) {
+      const result = data.choices[0].message?.content || '测试成功';
+      return {
+        success: true,
+        message: `OpenAI API测试成功: ${result}`
+      };
+    } else {
+      throw new Error('OpenAI返回格式异常');
+    }
+  } catch (error) {
+    console.error('[background] OpenAI测试失败:', error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : 'OpenAI测试失败'
     };
   }
 }

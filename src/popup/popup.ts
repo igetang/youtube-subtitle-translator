@@ -12,9 +12,25 @@ import {
   VideoSourceLanguageCacheManager,
   UserPreferencesManager
 } from '../shared/storage';
+import { SubtitleMode, TranslationServiceType, UserPreferences } from '../shared/types/user-preferences-types';
+import { SimplifiedCaptionTrack } from '../shared/types/subtitle-types';
 
 const videoSourceLanguageCacheManager = new VideoSourceLanguageCacheManager();
 const userPreferencesManager = UserPreferencesManager.getInstance();
+
+// === 步骤2：源语言缓存数据结构 ===
+interface VideoSourceLanguageItem {
+  videoId: string;
+  // 该视频所有可用的源语言列表
+  availableSourceLanguages: SimplifiedCaptionTrack[];
+  // 用户选中的具体源语言轨道
+  selectedSourceTrack: SimplifiedCaptionTrack | null;
+}
+
+interface VideoSourceLanguageCache {
+  items: VideoSourceLanguageItem[];
+  maxSize: number; // 固定为10，FIFO策略
+}
 
 console.log('[Popup] 初始化开始...');
 
@@ -38,6 +54,7 @@ function getBaseLangCode(langCode: string): string {
  * 数字越小优先级越高
  */
 const COMMON_LANGUAGES_PRIORITY: Record<string, number> = {
+  'auto': 0,   // 自动检测 - 最高优先级
   'zh-CN': 1,  // 中文简体
   'zh-TW': 2,  // 中文繁体
   'en': 3,     // 英语
@@ -558,7 +575,14 @@ function matchLanguageMainstream(language: Language, searchTerm: string): boolea
  */
 function getLanguagePriority(langCode: string): number {
   const baseCode = getBaseLangCode(langCode);
-  return COMMON_LANGUAGES_PRIORITY[langCode] || COMMON_LANGUAGES_PRIORITY[baseCode] || 1000;
+  const priority = COMMON_LANGUAGES_PRIORITY[langCode] || COMMON_LANGUAGES_PRIORITY[baseCode] || 1000;
+  
+  // 调试日志
+  if (langCode === 'auto') {
+    console.log(`[DEBUG] getLanguagePriority(${langCode}): baseCode=${baseCode}, priority=${priority}`);
+  }
+  
+  return priority;
 }
 
 /**
@@ -652,11 +676,12 @@ function sortTrackData(trackData: any[], searchTerm: string = ''): any[] {
     .filter(track => matchTrackData(track, searchTerm).match) // 匹配→显示，不匹配→隐藏
     .sort((a, b) => {
       if (!searchTerm.trim()) {
-        // 无搜索：按预设优先级
-        const priorityA = getLanguagePriority(a.languageCode);
-        const priorityB = getLanguagePriority(b.languageCode);
-        if (priorityA !== priorityB) return priorityA - priorityB;
-        return generateLanguageDisplayName(a).localeCompare(generateLanguageDisplayName(b));
+        // "自动检测"排在第一位，其他保持API原始顺序
+        if (a.languageCode === 'auto') return -1;
+        if (b.languageCode === 'auto') return 1;
+        
+        // 其他语言保持原始顺序（不排序）
+        return 0;
       }
       
       // 有搜索：代码匹配优先 + 常用性微调 + 字母顺序
@@ -1006,6 +1031,8 @@ let apiKeyInput: HTMLInputElement | null = null;
 let apiInfoLink: HTMLAnchorElement | null = null;
 let customApiPanel: HTMLDivElement | null = null;
 let testApiKeyButton: HTMLButtonElement | null = null;
+let modelSelect: HTMLSelectElement | null = null;
+let temperatureInput: HTMLInputElement | null = null;
 
 // === 新增: API面板相关元素引用 ===
 let serviceTypePanel: HTMLDivElement | null = null;
@@ -1047,6 +1074,8 @@ function initializeDOMElements(): void {
   apiInfoLink = document.getElementById('api-info-link') as HTMLAnchorElement;
   customApiPanel = document.getElementById('custom-api-panel') as HTMLDivElement;
   testApiKeyButton = document.getElementById('test-api-key') as HTMLButtonElement;
+  modelSelect = document.getElementById('openai-model') as HTMLSelectElement;
+  temperatureInput = document.getElementById('openai-temperature') as HTMLInputElement;
 
   // === 新增: API面板元素引用 ===
   serviceTypePanel = document.getElementById('service-type-panel') as HTMLDivElement;
@@ -1134,6 +1163,11 @@ function populateTargetLanguages(searchTerm: string = ''): void {
     option.textContent = displayName;
     option.dataset.value = lang.code;
     
+    // 高亮当前选中的目标语言
+    if (currentTargetLang && lang.code === currentTargetLang) {
+      option.classList.add('selected');
+    }
+    
     // 应用语言族互斥逻辑：如果与源语言属于同一语言族，设为禁用状态
     if (currentSourceLang && currentSourceLang !== 'auto' && isSameLanguageFamily(currentSourceLang, lang.code)) {
       option.classList.add('disabled');
@@ -1169,7 +1203,8 @@ function populateTargetLanguages(searchTerm: string = ''): void {
  */
 async function saveTargetLanguage(langCode: string): Promise<void> {
   try {
-    await chrome.storage.local.set({ targetLanguage: langCode });
+    await userPreferencesManager.updateUserPreferences({ targetLang: langCode });
+    console.log('[Popup] 目标语言已保存:', langCode);
     
     // 重新填充源语言列表以应用语言族互斥逻辑
     populateSourceLanguages();
@@ -1181,58 +1216,6 @@ async function saveTargetLanguage(langCode: string): Promise<void> {
     }
 }
 
-/**
- * 加载设置
- */
-async function loadSettings(): Promise<void> {
-  try {
-    const result = await chrome.storage.local.get([
-      'sourceLanguage',
-      'sourceTrackKind',
-      'targetLanguage',
-      'subtitleType',
-      'translationApi',
-      'apiKey'
-    ]);
-    
-    // 加载源语言
-    if (result.sourceLanguage && result.sourceTrackKind) {
-      currentSourceLang = result.sourceLanguage;
-      currentSourceTrackKind = result.sourceTrackKind;
-      updateSourceLanguageDisplay(result.sourceLanguage, result.sourceTrackKind);
-    }
-    
-    // 加载目标语言
-    if (result.targetLanguage && targetLangSelectedValue) {
-      const lang = targetLanguages.find(l => l.code === result.targetLanguage);
-      if (lang) {
-        targetLangSelectedValue.textContent = generateTargetLanguageDisplayName(lang);
-        currentTargetLang = result.targetLanguage;
-      }
-    }
-    
-    // 加载字幕类型
-    if (result.subtitleType && subtitleTypeSwitch) {
-      subtitleTypeSwitch.checked = result.subtitleType === 'dual';
-    }
-    
-    // 加载翻译API
-    if (result.translationApi && translationApiSelect) {
-      translationApiSelect.value = result.translationApi;
-      // === 新增: 加载设置后立即更新面板显示 ===
-      updateApiPanels(result.translationApi);
-    }
-    
-    // 加载API密钥
-    if (result.apiKey && apiKeyInput) {
-      apiKeyInput.value = result.apiKey;
-    }
-    
-    console.log('[Popup] 设置加载完成');
-  } catch (error) {
-    console.error('[Popup] 加载设置失败:', error);
-  }
-}
 
 /**
  * 添加事件监听器
@@ -1262,48 +1245,12 @@ function addEventListeners(): void {
     });
   }
   
-  // 字幕类型切换
-  if (subtitleTypeSwitch) {
-    subtitleTypeSwitch.addEventListener('change', async () => {
-      const subtitleType = subtitleTypeSwitch?.checked ? 'dual' : 'target';
-      try {
-        await chrome.storage.local.set({ subtitleType });
-        console.log('[Popup] 字幕类型已保存:', subtitleType);
-      } catch (error) {
-        console.error('[Popup] 保存字幕类型失败:', error);
-      }
-    });
-  }
-
-  // === 修改: 翻译API选择事件监听器 ===
-  if (translationApiSelect) {
-    translationApiSelect.addEventListener('change', async () => {
-      const apiType = translationApiSelect?.value;
-      try {
-        await chrome.storage.local.set({ translationApi: apiType });
-        console.log('[Popup] 翻译API已保存:', apiType);
-        
-        // === 新增: 更新面板显示 ===
-        if (apiType) {
-          updateApiPanels(apiType);
-        }
-      } catch (error) {
-        console.error('[Popup] 保存翻译API失败:', error);
-      }
-    });
-  }
-
-  // API密钥输入
-  if (apiKeyInput) {
-    apiKeyInput.addEventListener('change', async () => {
-      const apiKey = apiKeyInput?.value;
-      try {
-        await chrome.storage.local.set({ apiKey });
-        console.log('[Popup] API密钥已保存');
-      } catch (error) {
-        console.error('[Popup] 保存API密钥失败:', error);
-      }
-    });
+  // === 步骤3：统一监听器实现 ===
+  setupUnifiedSettingsListener();
+  
+  // 测试API连接按钮
+  if (testApiKeyButton) {
+    testApiKeyButton.addEventListener('click', () => handleTestApiConnection());
   }
   
   // 源语言下拉菜单
@@ -1333,7 +1280,10 @@ function addEventListeners(): void {
   
   // 源语言选项点击事件委托
   if (sourceLangOptions) {
+    console.log('[DEBUG] 绑定源语言选项点击事件监听器');
     sourceLangOptions.addEventListener('click', handleSourceLanguageOptionClick);
+  } else {
+    console.error('[DEBUG] sourceLangOptions 元素不存在，无法绑定事件监听器');
   }
   
   // 点击外部关闭下拉菜单
@@ -1358,16 +1308,8 @@ async function initializeYouTubeUI(): Promise<void> {
   console.log('[Popup] 初始化YouTube功能界面...');
   
   try {
-    // 初始化DOM元素引用
-    initializeDOMElements();
-    
-    // 初始化UI组件
-    addEventListeners();
-    await loadSettings();
-    populateTargetLanguages();
-    
-    // 请求视频轨道数据
-    await requestPopupInitData();
+    // 步骤4：统一初始化流程
+    await initializeUnifiedStorage();
     
     console.log('[Popup] YouTube功能界面初始化完成');
     
@@ -1378,16 +1320,123 @@ async function initializeYouTubeUI(): Promise<void> {
 }
 
 /**
- * 请求Popup初始化数据（基于新架构）
+ * 步骤4：统一初始化流程 - 整合两套存储的读取和UI更新
  */
-async function requestPopupInitData(): Promise<void> {
+async function initializeUnifiedStorage(): Promise<void> {
+  console.log('[Popup] 🔄 步骤4：开始统一初始化流程...');
+  
+  try {
+    // 1. 基础设置
+    console.log('[Popup] 1/6 - 初始化DOM元素和事件监听器');
+    initializeDOMElements();
+    addEventListeners();
+    
+    // 2. 初始化UserPreferencesManager并加载用户偏好设置
+    console.log('[Popup] 2/6 - 加载用户偏好设置 (UserPreferencesManager)');
+    await userPreferencesManager.initialize();
+    const userPreferences = await userPreferencesManager.getUserPreferences();
+    console.log('[Popup] 用户偏好设置已加载:', userPreferences);
+    
+    // 3. 更新用户偏好设置相关的UI
+    console.log('[Popup] 3/6 - 更新用户偏好设置UI');
+    await updateUserPreferencesUI(userPreferences);
+    
+    // 4. 获取PopupContext数据（包含源语言信息）
+    console.log('[Popup] 4/6 - 获取PopupContext数据');
+    const popupContext = await requestPopupContextData();
+    
+    // 5. 加载源语言数据并更新UI
+    console.log('[Popup] 5/6 - 加载源语言数据 (VideoSourceLanguageCache)');
+    await loadSourceLanguageData(popupContext);
+    
+    // 6. 设置统一事件监听器
+    console.log('[Popup] 6/6 - 设置统一事件监听器');
+    setupUnifiedSettingsListener();
+    
+    console.log('[Popup] ✅ 统一初始化流程完成');
+    
+  } catch (error) {
+    console.error('[Popup] ❌ 统一初始化流程失败:', error);
+    throw error;
+  }
+}
+
+/**
+ * 更新用户偏好设置UI
+ */
+async function updateUserPreferencesUI(userPreferences: UserPreferences): Promise<void> {
+  try {
+    // 更新目标语言显示
+    if (userPreferences.targetLang) {
+      currentTargetLang = userPreferences.targetLang;
+      if (targetLangSelectedValue) {
+        const lang = targetLanguages.find(l => l.code === userPreferences.targetLang);
+        if (lang) {
+          targetLangSelectedValue.textContent = generateTargetLanguageDisplayName(lang);
+        }
+      }
+    }
+    
+    // 更新字幕模式
+    if (subtitleTypeSwitch) {
+      subtitleTypeSwitch.checked = userPreferences.subtitleMode === SubtitleMode.BILINGUAL;
+    }
+    
+    // 更新翻译服务配置
+    if (userPreferences.translationService) {
+      const service = userPreferences.translationService;
+      console.log('[Popup] 正在设置翻译服务UI:', service);
+      
+      // 设置翻译API选择器
+      if (translationApiSelect) {
+        console.log('[Popup] 设置翻译API选择器:', service.type);
+        translationApiSelect.value = service.type;
+        updateApiPanels(service.type);
+        console.log('[Popup] 翻译API选择器设置完成，当前值:', translationApiSelect.value);
+      } else {
+        console.warn('[Popup] translationApiSelect 元素未找到');
+      }
+      
+      // 设置API密钥
+      if (apiKeyInput && service.apiKey) {
+        apiKeyInput.value = service.apiKey;
+        console.log('[Popup] API密钥已设置');
+      }
+      
+      // 设置模型选择
+      if (modelSelect && service.model) {
+        modelSelect.value = service.model;
+        console.log('[Popup] 模型选择已设置:', service.model);
+      }
+      
+      // 设置温度参数
+      if (temperatureInput && service.temperature !== null && service.temperature !== undefined) {
+        temperatureInput.value = service.temperature.toString();
+        console.log('[Popup] 温度参数已设置:', service.temperature);
+      }
+    }
+    
+    // 填充目标语言列表
+    populateTargetLanguages();
+    
+    console.log('[Popup] 用户偏好设置UI更新完成');
+    
+  } catch (error) {
+    console.error('[Popup] 更新用户偏好设置UI失败:', error);
+    throw error;
+  }
+}
+
+/**
+ * 请求PopupContext数据
+ */
+async function requestPopupContextData(): Promise<any> {
   if (!currentTabId) {
-    console.log('[Popup] 无法请求初始化数据: 缺少标签页ID');
-    return;
+    console.log('[Popup] 无法请求PopupContext: 缺少标签页ID');
+    return null;
   }
   
   try {
-    // 向Background Script请求Popup初始化数据
     const response = await chrome.runtime.sendMessage({
       type: 'getPopupInitData',
       tabId: currentTabId
@@ -1395,69 +1444,88 @@ async function requestPopupInitData(): Promise<void> {
     
     if (response && response.type === 'popupInitDataResponse') {
       const popupContext = response.popupContext;
+      console.log('[Popup] PopupContext数据已获取:', popupContext);
       
+      // 更新全局变量
       if (popupContext) {
-        console.log('[Popup] PopupContext数据已获取:', popupContext);
-        
-        // 更新全局变量
         currentVideoId = popupContext.videoId;
-        
-        // 从PopupContext中提取并设置数据
-        if (popupContext.availableSourceLanguages) {
-          uiTrackData = popupContext.availableSourceLanguages;
-          console.log('[Popup] 源语言列表已设置:', uiTrackData);
-        }
-        
-        // 加载用户偏好设置
-        if (popupContext.userPreferences) {
-          await loadUserPreferencesFromContext(popupContext.userPreferences);
-        }
-        
-        // 更新源语言列表
-        populateSourceLanguages();
-        
-        // 如果有检测到的源语言，进行自动设置
-        if (popupContext.detectedSourceLang) {
-          await handleDetectedSourceLanguage(popupContext.detectedSourceLang);
-        }
-        
-      } else {
-        console.log('[Popup] 非YouTube页面，PopupContext为null');
       }
+      
+      return popupContext;
     } else {
       console.log('[Popup] 无效的PopupContext响应:', response);
+      return null;
     }
   } catch (error) {
     console.error('[Popup] 请求PopupContext数据失败:', error);
+    return null;
   }
 }
 
 /**
- * 从PopupContext中加载用户偏好设置
+ * 加载源语言数据并更新UI
  */
-async function loadUserPreferencesFromContext(userPreferences: any): Promise<void> {
+async function loadSourceLanguageData(popupContext: any): Promise<void> {
   try {
-    console.log('[Popup] 从PopupContext加载用户偏好设置:', userPreferences);
-    
-    // 设置目标语言
-    if (userPreferences.targetLang) {
-      await setTargetLanguage(userPreferences.targetLang);
+    if (!currentVideoId) {
+      console.log('[Popup] 无法加载源语言数据: 缺少视频ID');
+      return;
     }
     
-    // 设置字幕模式
-    if (userPreferences.subtitleMode) {
-      await setSubtitleMode(userPreferences.subtitleMode);
+    // 使用步骤2的源语言缓存机制获取可用语言列表
+    const availableLanguages = await getAvailableSourceLanguages(currentVideoId);
+    if (availableLanguages.length > 0) {
+      // 转换为UI格式，并添加"自动检测"选项
+      uiTrackData = [
+        // 首先添加"自动检测"选项
+        {
+          languageCode: 'auto',
+          languageName: '自动检测',
+          kind: 'auto'
+        },
+        // 然后添加实际的轨道数据
+        ...availableLanguages.map(track => ({
+          languageCode: track.languageCode,
+          languageName: track.name,
+          kind: track.kind || 'standard'
+        }))
+      ];
+      console.log('[Popup] 源语言列表已获取（包含自动检测）:', uiTrackData);
     }
     
-    // 设置翻译服务配置
-    if (userPreferences.translationService) {
-      await setTranslationServiceConfig(userPreferences.translationService);
+    // 先加载用户之前选择的源语言，设置全局变量
+    const selectedTrack = await getSelectedSourceTrack(currentVideoId);
+    if (selectedTrack) {
+      currentSourceLang = selectedTrack.languageCode;
+      currentSourceTrackKind = selectedTrack.kind || 'standard';
+      console.log('[Popup] 已恢复用户选择的源语言:', selectedTrack);
+      console.log('[Popup] 当前全局变量 - currentSourceLang:', currentSourceLang, 'currentSourceTrackKind:', currentSourceTrackKind);
+    } else {
+      console.log('[Popup] 未找到用户之前选择的源语言，保持默认值 auto');
     }
+    
+    // 然后填充源语言选择器（此时 currentSourceLang 已经设置正确）
+    if (availableLanguages.length > 0) {
+      populateSourceLanguages();
+    }
+    
+    // 最后更新显示
+    if (selectedTrack) {
+      updateSourceLanguageDisplay(selectedTrack.languageCode, selectedTrack.kind || 'standard');
+    }
+    
+    // 处理自动检测的源语言（仅在用户未手动选择时）
+    if (popupContext && popupContext.detectedSourceLang && !selectedTrack) {
+      await handleDetectedSourceLanguage(popupContext.detectedSourceLang);
+    }
+    
+    console.log('[Popup] 源语言数据加载完成');
     
   } catch (error) {
-    console.error('[Popup] 从PopupContext加载用户偏好设置失败:', error);
+    console.error('[Popup] 加载源语言数据失败:', error);
   }
 }
+
 
 /**
  * 处理检测到的源语言
@@ -1467,12 +1535,20 @@ async function handleDetectedSourceLanguage(detectedLang: string): Promise<void>
     console.log('[Popup] 处理检测到的源语言:', detectedLang);
     
     // 自动设置源语言（如果用户没有手动选择过）
-    const savedSourceLang = await videoSourceLanguageCacheManager.getVideoSourceLanguage(currentVideoId || '');
+    // 使用与loadSourceLanguageData相同的检查机制
+    const savedSourceTrack = await getSelectedSourceTrack(currentVideoId || '');
     
-    if (!savedSourceLang) {
+    if (!savedSourceTrack) {
       console.log('[Popup] 自动设置检测到的源语言:', detectedLang);
       await saveSourceLanguage(detectedLang, 'auto');
+      // 更新全局变量
+      currentSourceLang = detectedLang;
+      currentSourceTrackKind = 'auto';
+      // 重新填充源语言选择器以更新选中状态
+      populateSourceLanguages();
       updateSourceLanguageDisplay(detectedLang, 'auto');
+    } else {
+      console.log('[Popup] 用户已选择源语言，跳过自动设置:', savedSourceTrack);
     }
     
   } catch (error) {
@@ -1525,25 +1601,11 @@ function populateSourceLanguages(searchTerm: string = ''): void {
   // 清空现有选项
   sourceLangOptions.innerHTML = '';
   
-  // 添加自动检测选项（始终显示，不受搜索影响）
-  const autoOption = document.createElement('div');
-  autoOption.className = 'custom-select-option';
-  autoOption.setAttribute('data-value', 'auto');
-  autoOption.setAttribute('data-kind', 'auto');
-  autoOption.textContent = '自动检测';
-  
-  if (currentSourceLang === 'auto') {
-    autoOption.classList.add('selected');
-  }
-  
-  // 自动检测选项只在无搜索词或搜索词匹配时显示
-  if (!searchTerm.trim() || '自动检测'.includes(searchTerm.trim()) || 'auto'.toLowerCase().includes(searchTerm.toLowerCase())) {
-    sourceLangOptions!.appendChild(autoOption);
-  }
-  
-  // 使用智能排序和搜索处理轨道数据
+  // 使用智能排序和搜索处理轨道数据（现在包含"自动检测"选项）
   if (uiTrackData && Array.isArray(uiTrackData)) {
+    console.log('[DEBUG] 排序前的 uiTrackData:', uiTrackData.map(t => `${t.languageCode}(${t.languageName})`));
     const sortedTracks = sortTrackData(uiTrackData, searchTerm);
+    console.log('[DEBUG] 排序后的 sortedTracks:', sortedTracks.map(t => `${t.languageCode}(${t.languageName})`));
     
     // 如果有搜索词但没有匹配结果，显示提示
     if (sortedTracks.length === 0 && searchTerm.trim() && !('自动检测'.includes(searchTerm.trim()) || 'auto'.toLowerCase().includes(searchTerm.toLowerCase()))) {
@@ -1594,15 +1656,20 @@ function populateSourceLanguages(searchTerm: string = ''): void {
     });
   }
   
-  console.log(`[Popup] populateSourceLanguages: 显示 ${uiTrackData.length} 个源语言选项 (搜索: "${searchTerm}")`);
+  console.log(`[DEBUG] populateSourceLanguages 完成: 显示 ${uiTrackData?.length || 0} 个源语言选项 (搜索: "${searchTerm}")`);
+  console.log('[DEBUG] sourceLangOptions 元素:', sourceLangOptions);
+  console.log('[DEBUG] sourceLangOptions 子元素数量:', sourceLangOptions?.children.length);
 }
 
 /**
  * 处理源语言选项点击事件
  */
 function handleSourceLanguageOptionClick(event: Event): void {
+  console.log('[DEBUG] handleSourceLanguageOptionClick 被调用，event:', event);
   const target = event.target as HTMLElement;
+  console.log('[DEBUG] 点击目标元素:', target, 'classList:', target.classList);
   if (!target.classList.contains('custom-select-option')) {
+    console.log('[DEBUG] 目标元素不是 custom-select-option，退出');
     return;
   }
   
@@ -1633,6 +1700,7 @@ function handleSourceLanguageOptionClick(event: Event): void {
   }
   
   // 保存到存储
+  console.log('[DEBUG] 用户点击源语言选项，准备保存:', { languageCode, trackKind, currentVideoId });
   saveSourceLanguage(languageCode, trackKind);
   
   // 重新填充目标语言列表以应用语言族互斥逻辑
@@ -1646,7 +1714,10 @@ function handleSourceLanguageOptionClick(event: Event): void {
  * 更新源语言显示
  */
 function updateSourceLanguageDisplay(languageCode: string, trackKind: string): void {
+  console.log('[Popup] updateSourceLanguageDisplay 被调用:', { languageCode, trackKind });
+  
   if (!sourceLangSelectedValue) {
+    console.warn('[Popup] sourceLangSelectedValue 元素不存在');
     return;
   }
   
@@ -1665,90 +1736,337 @@ function updateSourceLanguageDisplay(languageCode: string, trackKind: string): v
       displayText = generateLanguageDisplayName(trackInfo);
     } else {
       displayText = languageCode;
+      console.warn('[Popup] 未找到匹配的轨道信息:', { languageCode, trackKind, uiTrackData });
     }
   }
   
+  console.log('[Popup] 设置源语言显示文本:', displayText);
   sourceLangSelectedValue.textContent = displayText;
   sourceLangSelectedValue.setAttribute('data-value', languageCode);
   sourceLangSelectedValue.setAttribute('data-kind', trackKind);
 }
 
 /**
- * 保存源语言设置
+ * 保存源语言设置（新架构）
  */
 async function saveSourceLanguage(languageCode: string, trackKind: string): Promise<void> {
   try {
-    await chrome.storage.local.set({ 
-      sourceLanguage: languageCode,
-      sourceTrackKind: trackKind
-    });
-    console.log('[Popup] 源语言设置已保存:', { languageCode, trackKind });
+    if (!currentVideoId) {
+      console.error('[Popup] currentVideoId为空，无法保存源语言');
+      return;
+    }
+    
+    // 在uiTrackData中查找匹配的轨道（现在包含"自动检测"选项）
+    const selectedTrack = uiTrackData.find(track => 
+      track.languageCode === languageCode && 
+      (track.kind || 'standard') === trackKind
+    );
+    
+    if (selectedTrack) {
+      // 将uiTrackData格式转换为SimplifiedCaptionTrack格式
+      const simplifiedTrack: SimplifiedCaptionTrack = {
+        baseUrl: '', // 自动检测和其他选项不需要baseUrl
+        languageCode: selectedTrack.languageCode,
+        name: selectedTrack.languageName,
+        kind: selectedTrack.kind as 'asr' | 'forced' | undefined
+      };
+      
+      // 保存轨道信息
+      await saveSelectedSourceTrack(currentVideoId, simplifiedTrack);
+      console.log('[Popup] 源语言设置已保存:', simplifiedTrack);
+    } else {
+      console.warn('[Popup] 未找到匹配的源语言轨道:', { languageCode, trackKind, uiTrackData });
+    }
   } catch (error) {
     console.error('[Popup] 保存源语言设置失败:', error);
   }
 }
 
+// 注意：setTargetLanguage、setSubtitleMode、setTranslationServiceConfig 函数已删除
+// 这些功能现在直接通过saveTargetLanguage和loadSettings中的UserPreferencesManager处理
+// 统一的事件监听器将在步骤3中实现
+
+// === 步骤3：统一监听器函数 ===
+
 /**
- * 设置目标语言
+ * 设置统一的设置修改监听器
+ * 处理：源语言、目标语言、字幕类型、翻译服务 4大项
  */
-async function setTargetLanguage(langCode: string): Promise<void> {
+function setupUnifiedSettingsListener(): void {
+  document.addEventListener('change', async (event) => {
+    const target = event.target as HTMLElement;
+    
+    // 只处理我们关心的元素
+    switch (target.id) {
+      case 'source-language-select':
+        await handleSourceLanguageChange(target as HTMLSelectElement);
+        break;
+        
+      case 'target-language-select':
+        await handleTargetLanguageChange(target as HTMLSelectElement);
+        break;
+        
+      case 'subtitle-type-switch':
+        await handleSubtitleModeChange(target as HTMLInputElement);
+        break;
+        
+      // 翻译服务相关的所有字段统一处理
+      case 'translation-api':
+      case 'api-key':
+      case 'openai-model':
+      case 'openai-temperature':
+        await handleTranslationServiceChange();
+        break;
+        
+      default:
+        // 不是我们关心的元素，忽略
+        return;
+    }
+  });
+}
+
+/**
+ * 处理源语言变更
+ */
+async function handleSourceLanguageChange(selectElement: HTMLSelectElement): Promise<void> {
   try {
-    await saveTargetLanguage(langCode);
+    const selectedOption = selectElement.selectedOptions[0];
+    if (!selectedOption) return;
+    
+    const languageCode = selectedOption.value;
+    const trackKind = selectedOption.dataset.kind || 'standard';
+    
+    console.log('[Popup] 统一监听器 - 源语言变更:', { languageCode, trackKind });
+    
+    // 使用步骤2实现的新缓存机制
+    await saveSourceLanguage(languageCode, trackKind);
     
     // 更新UI显示
-    const targetLanguageTrigger = document.getElementById('target-language-trigger');
-    if (targetLanguageTrigger) {
-      const selectedValue = targetLanguageTrigger.querySelector('.selected-value');
-      const language = targetLanguages.find(lang => lang.code === langCode);
-      if (selectedValue && language) {
-        selectedValue.textContent = language.name;
-      }
-    }
+    updateSourceLanguageDisplay(languageCode, trackKind);
     
-    console.log('[Popup] 目标语言已设置:', langCode);
+    // 重新填充目标语言列表以应用语言族互斥逻辑
+    populateTargetLanguages();
+    
   } catch (error) {
-    console.error('[Popup] 设置目标语言失败:', error);
+    console.error('[Popup] 统一监听器 - 源语言变更失败:', error);
   }
 }
 
 /**
- * 设置字幕模式
+ * 处理目标语言变更
  */
-async function setSubtitleMode(mode: string): Promise<void> {
+async function handleTargetLanguageChange(selectElement: HTMLSelectElement): Promise<void> {
   try {
-    await chrome.storage.local.set({ subtitleMode: mode });
+    const langCode = selectElement.value;
+    console.log('[Popup] 统一监听器 - 目标语言变更:', langCode);
+    
+    // 使用步骤1实现的UserPreferencesManager
+    await userPreferencesManager.updateUserPreferences({ targetLang: langCode });
     
     // 更新UI显示
-    const subtitleSwitch = document.getElementById('subtitle-type-switch') as HTMLInputElement;
-    if (subtitleSwitch) {
-      subtitleSwitch.checked = mode === 'bilingual';
+    const targetLangSelectedValue = document.getElementById('target-language-selected-value');
+    if (targetLangSelectedValue) {
+      const lang = targetLanguages.find(l => l.code === langCode);
+      if (lang) {
+        targetLangSelectedValue.textContent = generateTargetLanguageDisplayName(lang);
+      }
     }
     
-    console.log('[Popup] 字幕模式已设置:', mode);
+    // 重新填充源语言列表以应用语言族互斥逻辑
+    populateSourceLanguages();
+    
   } catch (error) {
-    console.error('[Popup] 设置字幕模式失败:', error);
+    console.error('[Popup] 统一监听器 - 目标语言变更失败:', error);
   }
 }
 
 /**
- * 设置翻译服务配置
+ * 处理字幕模式变更
  */
-async function setTranslationServiceConfig(config: any): Promise<void> {
+async function handleSubtitleModeChange(switchElement: HTMLInputElement): Promise<void> {
   try {
-    // 保存翻译服务配置到存储
-    await chrome.storage.local.set({ translationServiceConfig: config });
+    const subtitleMode = switchElement.checked ? SubtitleMode.BILINGUAL : SubtitleMode.TARGET_ONLY;
+    console.log('[Popup] 统一监听器 - 字幕模式变更:', subtitleMode);
     
-    // 更新UI显示（这里可能需要根据具体的config结构来实现）
-    if (config.provider) {
-      const apiSelect = document.getElementById('translation-api') as HTMLSelectElement;
-      if (apiSelect) {
-        apiSelect.value = config.provider;
+    // 使用步骤1实现的UserPreferencesManager
+    await userPreferencesManager.updateUserPreferences({ subtitleMode });
+    
+  } catch (error) {
+    console.error('[Popup] 统一监听器 - 字幕模式变更失败:', error);
+  }
+}
+
+/**
+ * 处理翻译服务变更（整体更新）
+ */
+async function handleTranslationServiceChange(): Promise<void> {
+  try {
+    console.log('[Popup] 统一监听器 - 翻译服务变更');
+    
+    // 从UI读取完整的翻译服务配置
+    const translationApiSelect = document.getElementById('translation-api') as HTMLSelectElement;
+    const apiKeyInput = document.getElementById('api-key') as HTMLInputElement;
+    const modelSelect = document.getElementById('openai-model') as HTMLSelectElement;
+    const temperatureInput = document.getElementById('openai-temperature') as HTMLInputElement;
+    
+    // 获取当前用户设置
+    const userPreferences = await userPreferencesManager.getUserPreferences();
+    
+    // 构建新的翻译服务配置（基于现有配置更新）
+    const updatedService = {
+      ...userPreferences.translationService,
+      type: (translationApiSelect?.value as TranslationServiceType) || userPreferences.translationService.type,
+      apiKey: apiKeyInput?.value || userPreferences.translationService.apiKey || '',
+      model: modelSelect?.value || userPreferences.translationService.model,
+      temperature: temperatureInput?.value ? parseFloat(temperatureInput.value) : userPreferences.translationService.temperature
+    };
+    
+    // 一次性更新整个翻译服务配置
+    await userPreferencesManager.updateUserPreferences({ translationService: updatedService });
+    
+    // 更新UI面板显示
+    if (translationApiSelect?.value) {
+      updateApiPanels(translationApiSelect.value);
+    }
+    
+    console.log('[Popup] 统一监听器 - 翻译服务配置已更新:', updatedService);
+    
+  } catch (error) {
+    console.error('[Popup] 统一监听器 - 翻译服务变更失败:', error);
+  }
+}
+
+// === 步骤2：源语言缓存管理函数 ===
+
+/**
+ * 获取视频的可用源语言列表（Local Storage → API）
+ */
+async function getAvailableSourceLanguages(videoId: string): Promise<SimplifiedCaptionTrack[]> {
+  try {
+    // 1. 检查Local Storage缓存
+    const result = await chrome.storage.local.get('video_source_language_cache');
+    const cache: VideoSourceLanguageCache = result.video_source_language_cache || { items: [], maxSize: 10 };
+    
+    // 查找该视频的缓存
+    const cachedItem = cache.items.find(item => item.videoId === videoId);
+    if (cachedItem && cachedItem.availableSourceLanguages.length > 0) {
+      console.log('[Popup] 使用缓存的源语言列表:', cachedItem.availableSourceLanguages);
+      return cachedItem.availableSourceLanguages;
+    }
+    
+    // 2. Local Storage没有，调用API获取
+    console.log('[Popup] 缓存未命中，从API获取源语言列表...');
+    
+    if (!currentTabId) {
+      console.error('[Popup] currentTabId为空，无法发送消息');
+      return [];
+    }
+    
+    const response = await chrome.tabs.sendMessage(currentTabId, {
+      type: 'getVideoTrackData',
+      videoId
+    });
+    
+    if (response && response.success && Array.isArray(response.trackData)) {
+      // 3. 转换为SimplifiedCaptionTrack格式
+      const availableSourceLanguages: SimplifiedCaptionTrack[] = response.trackData.map((track: any) => ({
+        baseUrl: track.baseUrl || '',
+        languageCode: track.languageCode || 'unknown',
+        name: track.languageName || 'Unknown',
+        kind: track.kind
+      }));
+      
+      // 4. 存储到缓存
+      await saveVideoSourceLanguageCache(videoId, availableSourceLanguages, null);
+      
+      console.log('[Popup] API获取源语言列表成功:', availableSourceLanguages);
+      return availableSourceLanguages;
+    }
+    
+    console.warn('[Popup] API返回数据无效:', response);
+    return [];
+    
+  } catch (error) {
+    console.error('[Popup] 获取源语言列表失败:', error);
+    return [];
+  }
+}
+
+/**
+ * 获取用户选择的源语言轨道
+ */
+async function getSelectedSourceTrack(videoId: string): Promise<SimplifiedCaptionTrack | null> {
+  try {
+    const result = await chrome.storage.local.get('video_source_language_cache');
+    const cache: VideoSourceLanguageCache = result.video_source_language_cache || { items: [], maxSize: 10 };
+    
+    console.log('[DEBUG] 读取源语言缓存:', { videoId, cacheItems: cache.items.length, cache: cache.items });
+    const cachedItem = cache.items.find(item => item.videoId === videoId);
+    const selectedTrack = cachedItem?.selectedSourceTrack || null;
+    console.log('[DEBUG] 找到的缓存项:', { cachedItem, selectedTrack });
+    return selectedTrack;
+  } catch (error) {
+    console.error('[Popup] 获取选中源语言失败:', error);
+    return null;
+  }
+}
+
+/**
+ * 保存源语言缓存（FIFO策略）
+ */
+async function saveVideoSourceLanguageCache(
+  videoId: string, 
+  availableSourceLanguages: SimplifiedCaptionTrack[], 
+  selectedSourceTrack: SimplifiedCaptionTrack | null
+): Promise<void> {
+  try {
+    const result = await chrome.storage.local.get('video_source_language_cache');
+    const cache: VideoSourceLanguageCache = result.video_source_language_cache || { items: [], maxSize: 10 };
+    
+    // 查找是否已存在该视频的缓存
+    const existingIndex = cache.items.findIndex(item => item.videoId === videoId);
+    
+    const newItem: VideoSourceLanguageItem = {
+      videoId,
+      availableSourceLanguages,
+      selectedSourceTrack
+    };
+    
+    if (existingIndex >= 0) {
+      // 更新现有记录
+      cache.items[existingIndex] = newItem;
+    } else {
+      // 添加新记录
+      cache.items.push(newItem);
+      
+      // FIFO策略：超过最大容量时删除最旧的记录
+      if (cache.items.length > cache.maxSize) {
+        cache.items.shift();
       }
     }
     
-    console.log('[Popup] 翻译服务配置已设置:', config);
+    await chrome.storage.local.set({ video_source_language_cache: cache });
+    console.log('[DEBUG] 源语言缓存保存成功:', { videoId, selectedTrack: selectedSourceTrack, cacheSize: cache.items.length });
+    
   } catch (error) {
-    console.error('[Popup] 设置翻译服务配置失败:', error);
+    console.error('[Popup] 保存源语言缓存失败:', error);
+  }
+}
+
+/**
+ * 保存用户选择的源语言轨道
+ */
+async function saveSelectedSourceTrack(videoId: string, selectedTrack: SimplifiedCaptionTrack): Promise<void> {
+  try {
+    // 获取当前缓存
+    const availableLanguages = await getAvailableSourceLanguages(videoId);
+    
+    // 更新选中的轨道
+    await saveVideoSourceLanguageCache(videoId, availableLanguages, selectedTrack);
+    
+    console.log('[Popup] 用户选择的源语言已保存:', selectedTrack);
+  } catch (error) {
+    console.error('[Popup] 保存用户选择失败:', error);
   }
 }
 
@@ -1789,6 +2107,50 @@ async function initializePopupUI(): Promise<void> {
   } catch (error) {
     console.error('[Popup] UI初始化失败:', error);
     throw error;
+  }
+}
+
+/**
+ * 处理测试API连接
+ */
+async function handleTestApiConnection(): Promise<void> {
+  const testResult = document.getElementById('test-result') as HTMLSpanElement;
+  if (!testResult) return;
+  
+  // 重置测试结果
+  testResult.textContent = '';
+  testResult.className = 'test-result';
+  
+  // 获取当前API配置
+  const apiType = translationApiSelect?.value || 'google-free';
+  const apiKey = apiKeyInput?.value || '';
+  
+  // 显示测试中状态
+  testResult.textContent = '正在测试API连接...';
+  testResult.className = 'test-result in-progress';
+  
+  try {
+    // 发送测试消息（使用新的消息格式）
+    const response = await chrome.runtime.sendMessage({
+      type: 'API_CONNECTION_TEST',
+      data: {
+        apiType: apiType,
+        apiKey: apiKey,
+        forceTest: !apiType.includes('-free') // 免费API强制测试
+      }
+    });
+    
+    if (response?.success) {
+      testResult.textContent = '连接测试成功！';
+      testResult.className = 'test-result success';
+    } else {
+      testResult.textContent = `测试失败: ${response?.message || '未知错误'}`;
+      testResult.className = 'test-result error';
+    }
+  } catch (error) {
+    console.error('[Popup] API连接测试失败:', error);
+    testResult.textContent = `测试失败: ${error instanceof Error ? error.message : '未知错误'}`;
+    testResult.className = 'test-result error';
   }
 }
 
