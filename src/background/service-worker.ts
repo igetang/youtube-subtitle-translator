@@ -96,7 +96,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
     const url = new URL(tab.url);
     
     if (YOUTUBE_ORIGINS.includes(url.origin)) {
-      // YouTube页面：正常图标
+      // YouTube页面：设置正常图标和popup
       await chrome.action.setIcon({
         tabId,
         path: {
@@ -105,9 +105,15 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
         }
       });
       
-      console.log(`[background] ✅ YouTube页面图标已设置 (标签页: ${tabId})`);
+      // 🔥 关键修复：为YouTube页面设置popup路径
+      await chrome.action.setPopup({
+        tabId,
+        popup: 'src/popup/popup.html'
+      });
+      
+      console.log(`[background] ✅ YouTube页面图标和Popup已设置 (标签页: ${tabId})`);
     } else {
-      // 其他网站：保持正常图标（popup内部会处理页面检测）
+      // 其他网站：设置图标但禁用popup
       await chrome.action.setIcon({
         tabId,
         path: {
@@ -116,10 +122,16 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
         }
       });
       
-      console.log(`[background] ✅ 非YouTube页面图标已设置 (标签页: ${tabId})`);
+      // 🔥 非YouTube页面：禁用popup
+      await chrome.action.setPopup({
+        tabId,
+        popup: ''  // 空字符串表示禁用popup
+      });
+      
+      console.log(`[background] ✅ 非YouTube页面图标已设置，Popup已禁用 (标签页: ${tabId})`);
     }
   } catch (error) {
-    console.error(`[background] 更新图标状态失败 (标签页: ${tabId}):`, error);
+    console.error(`[background] 更新图标和Popup状态失败 (标签页: ${tabId}):`, error);
   }
 });
 
@@ -275,13 +287,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
       } else {
         // 当前关闭 → 打开
-        // 🔥 优势：Popup不需要用户手势上下文限制
-        chrome.action.openPopup().then(() => {
-          console.log(`[background] ✅ Popup已打开 (翻译按钮)`);
-          sendResponse({ success: true, status: 'opened', newState: true });
-        }).catch(error => {
-          console.error(`[background] 打开Popup失败:`, error);
-          sendResponse({ success: false, error: error.message });
+        // 🔥 关键修复：先确保popup路径已设置，再打开
+        chrome.action.setPopup({
+          tabId: tabId,
+          popup: 'src/popup/popup.html'
+        }, () => {
+          if (chrome.runtime.lastError) {
+            console.error(`[background] 设置Popup路径失败:`, chrome.runtime.lastError);
+            sendResponse({ success: false, error: chrome.runtime.lastError.message });
+            return;
+          }
+          
+          // 路径设置成功后，打开popup
+          chrome.action.openPopup().then(() => {
+            console.log(`[background] ✅ Popup已打开 (翻译按钮)`);
+            sendResponse({ success: true, status: 'opened', newState: true });
+          }).catch(error => {
+            console.error(`[background] 打开Popup失败:`, error);
+            // 如果openPopup失败（可能是Chrome版本问题），尝试备用方案
+            const popupUrl = chrome.runtime.getURL('src/popup/popup.html');
+            chrome.windows.create({
+              url: popupUrl,
+              type: 'popup',
+              width: 450,
+              height: 600
+            }, () => {
+              if (chrome.runtime.lastError) {
+                sendResponse({ success: false, error: chrome.runtime.lastError.message });
+              } else {
+                console.log(`[background] ✅ Popup已通过windows.create打开（备用方案）`);
+                sendResponse({ success: true, status: 'opened_window', newState: true });
+              }
+            });
+          });
         });
       }
     }).catch(error => {
