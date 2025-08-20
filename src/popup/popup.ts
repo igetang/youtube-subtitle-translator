@@ -34,6 +34,16 @@ interface VideoSourceLanguageCache {
 
 console.log('[Popup] 初始化开始...');
 
+// 通知Service Worker popup已打开
+chrome.runtime.sendMessage({ 
+  type: 'popupOpened',
+  timestamp: Date.now()
+}).then(() => {
+  console.log('[Popup] 已通知Service Worker popup打开');
+}).catch(error => {
+  console.error('[Popup] 通知Service Worker失败:', error);
+});
+
 // === 语言族互斥检测工具函数 ===
 
 /**

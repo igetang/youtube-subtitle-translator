@@ -5,6 +5,9 @@
  */
 console.log('[Main World] 脚本开始加载');
 
+// 字幕拦截器初始化标志
+let subtitleInterceptorInitialized = false;
+
 // 🔧 简化后的消息转发器 - 使用标准消息机制
 class MainWorldMessenger {
   private static instance: MainWorldMessenger;
@@ -94,6 +97,214 @@ const MessageTypesConst: MessageTypesInterface = {
   UI_INJECTION_FAILED: 'ui.injectionFailed'
 };
 
+// 字幕拦截器类
+class SubtitleInterceptor {
+  private static instance: SubtitleInterceptor;
+  private capturedSubtitles: any[] = [];
+  private capturedUrl: string | null = null;
+
+  static getInstance(): SubtitleInterceptor {
+    if (!SubtitleInterceptor.instance) {
+      SubtitleInterceptor.instance = new SubtitleInterceptor();
+    }
+    return SubtitleInterceptor.instance;
+  }
+
+  initialize(): void {
+    if (subtitleInterceptorInitialized) {
+      console.log('[SubtitleInterceptor] 已经初始化，跳过');
+      return;
+    }
+
+    console.log('[SubtitleInterceptor] 🎯 开始初始化字幕拦截器');
+
+    // 劫持fetch
+    const originalFetch = window.fetch;
+    window.fetch = async (...args) => {
+      const url = typeof args[0] === 'string' ? args[0] : args[0]?.url;
+      
+      if (url && url.includes('timedtext')) {
+        console.log('[SubtitleInterceptor] 🎯 捕获到字幕URL (Fetch):', url);
+        this.capturedUrl = url;
+        
+        const response = await originalFetch(...args);
+        const clone = response.clone();
+        
+        // 异步处理字幕数据
+        this.processSubtitleResponse(clone, url);
+        
+        return response;
+      }
+      
+      return originalFetch(...args);
+    };
+
+    // 劫持XMLHttpRequest
+    const originalOpen = XMLHttpRequest.prototype.open;
+    const self = this;
+    XMLHttpRequest.prototype.open = function(method: string, url: string, ...rest: any[]) {
+      if (url && url.includes('timedtext')) {
+        console.log('[SubtitleInterceptor] 🎯 捕获到字幕URL (XHR):', url);
+        self.capturedUrl = url;
+        
+        this.addEventListener('load', function() {
+          self.processXHRResponse(this.responseText, url);
+        });
+      }
+      return originalOpen.apply(this, [method, url, ...rest]);
+    };
+
+    subtitleInterceptorInitialized = true;
+    console.log('[SubtitleInterceptor] ✅ 字幕拦截器初始化完成');
+  }
+
+  private async processSubtitleResponse(response: Response, url: string): Promise<void> {
+    try {
+      const text = await response.text();
+      console.log('[SubtitleInterceptor] 正在处理字幕响应，长度:', text.length);
+      
+      // 尝试解析为JSON
+      try {
+        const data = JSON.parse(text);
+        if (data.events) {
+          // JSON3格式
+          const subtitles = this.parseJson3Subtitles(data);
+          this.saveAndNotify(subtitles);
+          console.log('[SubtitleInterceptor] ✅ JSON3格式字幕解析成功，共', subtitles.length, '条');
+        }
+      } catch (e) {
+        // 可能是XML格式
+        const subtitles = this.parseXmlSubtitles(text);
+        if (subtitles.length > 0) {
+          this.saveAndNotify(subtitles);
+          console.log('[SubtitleInterceptor] ✅ XML格式字幕解析成功，共', subtitles.length, '条');
+        }
+      }
+    } catch (error) {
+      console.error('[SubtitleInterceptor] 处理字幕响应失败:', error);
+    }
+  }
+
+  private processXHRResponse(responseText: string, url: string): void {
+    try {
+      console.log('[SubtitleInterceptor] 正在处理XHR字幕响应，长度:', responseText.length);
+      
+      // 尝试解析为JSON
+      try {
+        const data = JSON.parse(responseText);
+        if (data.events) {
+          // JSON3格式
+          const subtitles = this.parseJson3Subtitles(data);
+          this.saveAndNotify(subtitles);
+          console.log('[SubtitleInterceptor] ✅ XHR JSON3格式字幕解析成功，共', subtitles.length, '条');
+        }
+      } catch (e) {
+        // 可能是XML格式
+        const subtitles = this.parseXmlSubtitles(responseText);
+        if (subtitles.length > 0) {
+          this.saveAndNotify(subtitles);
+          console.log('[SubtitleInterceptor] ✅ XHR XML格式字幕解析成功，共', subtitles.length, '条');
+        }
+      }
+    } catch (error) {
+      console.error('[SubtitleInterceptor] 处理XHR字幕响应失败:', error);
+    }
+  }
+
+  private parseJson3Subtitles(data: any): any[] {
+    const subtitles: any[] = [];
+    if (data.events) {
+      data.events.forEach((event: any) => {
+        if (event.segs) {
+          const text = event.segs.map((seg: any) => seg.utf8).join('');
+          if (text.trim()) {
+            subtitles.push({
+              start: (event.tStartMs || 0) / 1000,
+              duration: (event.dDurationMs || 0) / 1000,
+              end: ((event.tStartMs || 0) + (event.dDurationMs || 0)) / 1000,
+              text: text.trim()
+            });
+          }
+        }
+      });
+    }
+    return subtitles;
+  }
+
+  private parseXmlSubtitles(xmlText: string): any[] {
+    const subtitles: any[] = [];
+    try {
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+      const texts = xmlDoc.getElementsByTagName('text');
+      
+      for (let i = 0; i < texts.length; i++) {
+        const text = texts[i];
+        const start = parseFloat(text.getAttribute('start') || '0');
+        const dur = parseFloat(text.getAttribute('dur') || '0');
+        subtitles.push({
+          start: start,
+          duration: dur,
+          end: start + dur,
+          text: text.textContent || ''
+        });
+      }
+    } catch (error) {
+      console.error('[SubtitleInterceptor] XML解析失败:', error);
+    }
+    return subtitles;
+  }
+
+  private saveAndNotify(subtitles: any[]): void {
+    if (subtitles.length === 0) return;
+    
+    // 保存到全局变量
+    this.capturedSubtitles = subtitles;
+    (window as any).__capturedSubtitles = subtitles;
+    
+    // 通知content-script
+    window.postMessage({
+      source: 'main-world',
+      type: 'SUBTITLE_CAPTURED',
+      payload: {
+        subtitles: subtitles,
+        url: this.capturedUrl,
+        count: subtitles.length
+      }
+    }, '*');
+    
+    console.log('[SubtitleInterceptor] 📝 字幕已保存并通知，共', subtitles.length, '条');
+    console.log('[SubtitleInterceptor] 📝 前3条示例:', subtitles.slice(0, 3));
+  }
+
+  triggerSubtitleButton(): void {
+    console.log('[SubtitleInterceptor] 尝试自动触发字幕按钮...');
+    
+    setTimeout(() => {
+      const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
+      if (subtitleBtn) {
+        const isPressed = subtitleBtn.getAttribute('aria-pressed') === 'true';
+        console.log('[SubtitleInterceptor] 字幕按钮当前状态:', isPressed ? '开启' : '关闭');
+        
+        if (!isPressed) {
+          // 如果字幕关闭，先打开
+          subtitleBtn.click();
+          console.log('[SubtitleInterceptor] 已打开字幕');
+        } else {
+          // 如果字幕已开启，先关闭再打开以触发请求
+          subtitleBtn.click(); // 关闭
+          setTimeout(() => {
+            subtitleBtn.click(); // 打开
+            console.log('[SubtitleInterceptor] 已切换字幕以触发请求');
+          }, 500);
+        }
+      } else {
+        console.warn('[SubtitleInterceptor] 未找到字幕按钮');
+      }
+    }, 1000);
+  }
+}
+
 // 创建并初始化MainWorldMessenger实例
 const messengerInstance = MainWorldMessenger.getInstance();
 
@@ -157,6 +368,14 @@ window.addEventListener('message', (event: MessageEvent) => {
   // 仅处理来自content-script的消息
   if (data.source === 'content-script') {
     // 🔥 架构重构：移除就绪状态请求处理，不再需要ready消息机制
+    
+    // 处理字幕捕获请求
+    if (data.type === 'REQUEST_SUBTITLE_CAPTURE') {
+      console.log('[Main World] 收到字幕捕获请求，初始化拦截器...');
+      const interceptor = SubtitleInterceptor.getInstance();
+      interceptor.initialize();
+      interceptor.triggerSubtitleButton();
+    }
     
     // 处理轨道请求
     if (data.type === 'REQUEST_CAPTION_TRACKS') {

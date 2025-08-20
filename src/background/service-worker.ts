@@ -71,14 +71,34 @@ function extractVideoIdFromUrl(url: string): string | null {
 
 /**
  * 🎯 Popup状态检测函数
- * 替代原有的SidePanel状态检测逻辑
+ * 优先使用运行时状态，兼容chrome.runtime.getContexts API
  */
 async function getPopupState(): Promise<boolean> {
   try {
-    const contexts = await chrome.runtime.getContexts({
-      contextTypes: [chrome.runtime.ContextType.POPUP]
-    });
-    return contexts.length > 0;
+    // 优先使用运行时状态管理器（使用已初始化的全局实例）
+    const settingPanelOpen = await runtimeStateManager.getSettingPanelState();
+    
+    // 如果有明确的状态，直接返回
+    if (typeof settingPanelOpen === 'boolean') {
+      console.log('[状态检测] 使用运行时状态:', settingPanelOpen);
+      return settingPanelOpen;
+    }
+    
+    // 降级到chrome.runtime.getContexts（Chrome 125+）
+    if (chrome.runtime.getContexts) {
+      const contexts = await chrome.runtime.getContexts({
+        contextTypes: [chrome.runtime.ContextType.POPUP]
+      });
+      const isOpen = contexts.length > 0;
+      
+      // 同步状态到运行时管理器
+      await runtimeStateManager.setSettingPanelState(isOpen);
+      
+      return isOpen;
+    }
+    
+    // 如果都不支持，返回false
+    return false;
   } catch (error) {
     console.error('[状态检测] 获取Popup状态失败:', error);
     return false;
@@ -418,11 +438,18 @@ async function routeMessage(
     case 'togglePopup':
       return await handleTogglePopup(sender, data);
     
+    // 🎯 直接打开Popup - 新增简化逻辑
+    case 'openPopup':
+      return await handleOpenPopup(sender, data);
+    
     // 🎯 Popup初始化数据请求 - 新架构核心消息
     case 'getPopupInitData':
       return await handleGetPopupInitData(message, sender);
     
     // 🎯 Popup生命周期消息
+    case 'popupOpened':
+      return await handlePopupOpened(sender);
+      
     case 'popupClosed':
       return await handlePopupClosed(sender);
     
@@ -563,6 +590,10 @@ async function routeMessage(
     case 'getSidePanelStatus':
       return await handleGetSidePanelStatus(sender);
     
+    // === 字幕数据处理 ===
+    case 'SUBTITLE_DATA':
+      return await handleSubtitleData(data);
+    
     default:
       console.warn(`[background] 未知消息类型: ${type}`);
       return {
@@ -573,6 +604,62 @@ async function routeMessage(
 }
 
 // === 消息处理器实现 ===
+
+/**
+ * 🎯 直接打开Popup - 简化逻辑
+ * 只负责打开，不处理关闭（让Chrome自动处理）
+ */
+async function handleOpenPopup(sender: chrome.runtime.MessageSender, data?: any): Promise<any> {
+  if (!sender.tab || !sender.tab.id) {
+    console.warn('[background] openPopup 缺少有效的标签页信息');
+    return {
+      success: false,
+      error: 'Invalid sender for opening popup'
+    };
+  }
+
+  const tabId = sender.tab.id;
+  const tabUrl = sender.tab.url;
+  
+  console.log(`[background] 收到打开Popup请求，标签页: ${tabId}`);
+  
+  // 检查是否为YouTube页面
+  if (!tabUrl || !isYoutubeUrl(tabUrl)) {
+    console.warn(`[background] 非YouTube页面不能打开Popup: ${tabUrl}`);
+    return {
+      success: false,
+      error: '只有YouTube页面才能打开翻译设置面板'
+    };
+  }
+  
+  try {
+    // 设置popup路径
+    await chrome.action.setPopup({
+      tabId: tabId,
+      popup: 'src/popup/popup.html'
+    });
+    
+    // 打开popup
+    await chrome.action.openPopup();
+    
+    // 更新运行时状态（使用全局实例）
+    await runtimeStateManager.setSettingPanelState(true);
+    
+    console.log(`[background] ✅ Popup已打开`);
+    
+    return {
+      success: true,
+      status: 'opened'
+    };
+    
+  } catch (error) {
+    console.error('[background] 打开Popup失败:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to open popup'
+    };
+  }
+}
 
 /**
  * 🎯 处理Popup切换请求 - 替代原有的SidePanel逻辑
@@ -763,13 +850,40 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
 }
 
 /**
+ * 🎯 处理Popup打开事件
+ */
+async function handlePopupOpened(sender: chrome.runtime.MessageSender): Promise<any> {
+  try {
+    console.log(`[background] 处理popupOpened事件`);
+    
+    // 更新运行时状态（使用全局实例）
+    await runtimeStateManager.setSettingPanelState(true);
+    
+    // 广播状态变化
+    await broadcastSidePanelStateChange(true);
+    
+    return {
+      success: true,
+      message: 'Popup打开事件已处理'
+    };
+    
+  } catch (error) {
+    console.error(`[background] 处理popupOpened失败:`, error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : '处理Popup打开事件失败'
+    };
+  }
+}
+
+/**
  * 🎯 处理Popup关闭事件
  */
 async function handlePopupClosed(sender: chrome.runtime.MessageSender): Promise<any> {
   try {
     console.log(`[background] 处理popupClosed事件`);
     
-    // 更新运行时状态
+    // 更新运行时状态（使用全局实例）
     await runtimeStateManager.setSettingPanelState(false);
     
     // 广播状态变化
@@ -1625,6 +1739,56 @@ async function handleSaveTrackCache(data: any): Promise<any> {
 async function handleGetTrackCache(data: any): Promise<any> {
   console.warn('[background] handleGetTrackCache 尚未实现');
   return { success: false, error: 'Function not implemented yet' };
+}
+
+/**
+ * 处理从 ContentScript 发送的字幕数据
+ */
+async function handleSubtitleData(data: any): Promise<any> {
+  try {
+    console.log('[background] 收到字幕数据:', {
+      videoId: data.videoId,
+      count: data.count,
+      url: data.url
+    });
+    
+    // 验证数据
+    if (!data.videoId || !data.subtitles || !Array.isArray(data.subtitles)) {
+      console.error('[background] 字幕数据格式无效');
+      return { success: false, error: '字幕数据格式无效' };
+    }
+    
+    // 存储到内存缓存（MemoryCache）
+    // 注意：这里使用简单的全局变量存储，实际项目中应该使用更完善的缓存管理
+    if (!global.subtitleCache) {
+      global.subtitleCache = new Map();
+    }
+    
+    global.subtitleCache.set(data.videoId, {
+      subtitles: data.subtitles,
+      url: data.url,
+      timestamp: Date.now()
+    });
+    
+    console.log('[background] ✅ 字幕数据已缓存，视频ID:', data.videoId);
+    
+    // TODO: 根据当前翻译设置，触发翻译流程
+    // 这里可以调用 handleTranslateSubtitles 或其他翻译相关函数
+    
+    return {
+      success: true,
+      message: '字幕数据已接收并缓存',
+      videoId: data.videoId,
+      count: data.count
+    };
+    
+  } catch (error) {
+    console.error('[background] 处理字幕数据失败:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : '处理字幕数据失败'
+    };
+  }
 }
 
 async function handleApiConnectionTest(data: any): Promise<any> {

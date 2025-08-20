@@ -19,3 +19,4 @@ echo "=== 设置默认版本 ==="
 nvm alias default node
 
 echo "=== 完成！==="
+

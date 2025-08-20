@@ -46,3 +46,4 @@ echo "source ~/.proxy_config"
 echo ""
 echo "或者将以下行添加到 ~/.bashrc 中自动加载："
 echo "[ -f ~/.proxy_config ] && source ~/.proxy_config"
+

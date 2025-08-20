@@ -15,6 +15,7 @@ export class ContentScriptCoordinator {
   private uiRenderer: any = null;      // UIRenderer实例
   private stateManager: any = null;    // StateManager实例
   private initialized = false;
+  private lastPopupCloseTime: number = 0;  // 记录上次popup关闭的时间
   
   // DOM观察器和控件监测相关属性
   private observerSetup = false;
@@ -158,6 +159,20 @@ export class ContentScriptCoordinator {
     if (this.stateManager) {
       this.stateManager.setCoordinator(this);
     }
+    
+    // 添加监听来自main-world的字幕数据
+    window.addEventListener('message', (event: MessageEvent) => {
+      if (event.source !== window || !event.data) return;
+      
+      const { source, type, payload } = event.data;
+      
+      // 处理来自main-world的字幕数据
+      if (source === 'main-world' && type === 'SUBTITLE_CAPTURED') {
+        console.log('[ContentScriptCoordinator] 收到字幕数据:', payload.count, '条');
+        this.handleSubtitleCaptured(payload);
+      }
+    });
+    
     console.log('[ContentScriptCoordinator] 组件间通信设置完成');
   }
 
@@ -208,34 +223,114 @@ export class ContentScriptCoordinator {
       // 切换翻译状态
       const newState = !data.currentState;
       this.stateManager.updateState('translateActive', newState);
+      
+      // 新增：如果开启翻译，请求获取字幕
+      if (newState) {
+        console.log('[ContentScriptCoordinator] 翻译已开启，请求获取字幕...');
+        this.requestSubtitleCapture();
+      }
     } else if (data.buttonType === 'settings') {
-      // 使用toggle逻辑，让backend实时检测状态
+      // 切换popup状态
       this.togglePopup();
     }
   }
 
   /**
-   * 切换Popup状态 - 替代原有的SidePanel逻辑
-   * 🎯 发送Popup切换请求到background
+   * 请求获取字幕数据
    */
-  private togglePopup(): void {
-    // 发送Popup切换请求到background
+  private requestSubtitleCapture(): void {
+    console.log('[ContentScriptCoordinator] 发送字幕捕获请求到main-world...');
+    
+    // 向main-world脚本发送消息
+    window.postMessage({
+      source: 'content-script',
+      type: 'REQUEST_SUBTITLE_CAPTURE'
+    }, '*');
+  }
+
+  /**
+   * 处理捕获到的字幕数据
+   */
+  private handleSubtitleCaptured(payload: any): void {
+    console.log('[ContentScriptCoordinator] 处理字幕数据，共', payload.count, '条');
+    
+    // 获取当前视频ID
+    const urlParams = new URLSearchParams(window.location.search);
+    const videoId = urlParams.get('v');
+    
+    if (!videoId) {
+      console.warn('[ContentScriptCoordinator] 无法获取视频ID');
+      return;
+    }
+    
+    // 发送字幕数据到Service Worker
     chrome.runtime.sendMessage({
-      type: 'togglePopup',
-      data: { source: 'translation-button' },
-      timestamp: Date.now()
+      type: 'SUBTITLE_DATA',
+      data: {
+        videoId: videoId,
+        subtitles: payload.subtitles,
+        url: payload.url,
+        count: payload.count
+      }
     }, (response) => {
       if (chrome.runtime.lastError) {
-        console.error('[ContentScriptCoordinator] ❌ Popup切换失败:', chrome.runtime.lastError);
+        console.error('[ContentScriptCoordinator] 发送字幕数据失败:', chrome.runtime.lastError);
         return;
       }
       
       if (response && response.success) {
-        console.log('[ContentScriptCoordinator] ✅ Popup切换成功:', response.status);
-      } else {
-        console.error('[ContentScriptCoordinator] ❌ Popup切换失败:', response?.error);
+        console.log('[ContentScriptCoordinator] ✅ 字幕数据已发送到Service Worker');
+        // TODO: 触发翻译流程
       }
     });
+  }
+
+  /**
+   * 切换Popup状态 - 使用简单的时间防抖机制
+   */
+  private async togglePopup(): Promise<void> {
+    try {
+      // 获取当前popup状态
+      const stateResponse = await chrome.runtime.sendMessage({
+        type: 'getPopupState'
+      });
+      
+      const currentState = stateResponse.isOpen;
+      console.log('[ContentScriptCoordinator] 当前Popup状态:', currentState ? '已打开' : '关闭');
+      
+      if (currentState) {
+        // Popup已打开，让Chrome自动关闭即可
+        console.log('[ContentScriptCoordinator] Popup已打开，将由Chrome自动关闭');
+        return;
+      }
+      
+      // Popup未打开，检查是否刚刚关闭（防抖）
+      const timeSinceClose = Date.now() - this.lastPopupCloseTime;
+      console.log(`[ContentScriptCoordinator] 距离上次关闭时间: ${timeSinceClose}ms`);
+      
+      if (timeSinceClose < 300) {
+        // 300ms内的点击视为Chrome自动关闭导致的，不执行打开
+        console.log('[ContentScriptCoordinator] 刚刚关闭popup（300ms内），不执行打开操作');
+        return;
+      }
+      
+      // 执行打开操作
+      console.log('[ContentScriptCoordinator] 执行打开Popup操作');
+      const openResponse = await chrome.runtime.sendMessage({
+        type: 'openPopup',
+        data: { source: 'settings-button' },
+        timestamp: Date.now()
+      });
+      
+      if (openResponse && openResponse.success) {
+        console.log('[ContentScriptCoordinator] ✅ Popup打开成功');
+      } else {
+        console.error('[ContentScriptCoordinator] ❌ Popup打开失败:', openResponse?.error);
+      }
+      
+    } catch (error) {
+      console.error('[ContentScriptCoordinator] ❌ 处理Popup切换失败:', error);
+    }
   }
   
   /**
@@ -361,6 +456,11 @@ export class ContentScriptCoordinator {
       case 'UPDATE_BUTTON_STATE':
         // 🎯 SAD.md设计：标准的UI状态更新消息
         if (message.isOpen !== undefined && this.uiRenderer) {
+          // 记录popup关闭时间
+          if (!message.isOpen) {
+            this.lastPopupCloseTime = Date.now();
+            console.log(`[ContentScriptCoordinator] 记录popup关闭时间: ${this.lastPopupCloseTime}`);
+          }
           this.uiRenderer.update({ settingPanelOpen: message.isOpen });
           console.log(`[ContentScriptCoordinator] 按钮状态更新: ${message.isOpen ? '已打开' : '已关闭'} (${message.source})`);
         }
