@@ -1825,7 +1825,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     
     // 更新运行时状态
     if (!newState) {
-      // 关闭翻译
+      // 关闭翻译 - 直接设置为INACTIVE（不经过PENDING）
       await runtimeStateManager.setTranslateState('inactive');
       return { 
         success: true, 
@@ -1934,9 +1934,14 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     // Step 4: 需要获取字幕
     console.log('[background] Step 4: 缓存和内存中都没有数据，需要获取字幕');
     console.log('[background] ⚠️ 需要从YouTube获取字幕数据');
+    
+    // 设置为INTENT_ONLY状态（用户想翻译但无字幕）
+    await runtimeStateManager.setTranslateState('intent_only');
+    
     return {
-      success: false,
+      success: true,  // 操作成功，只是没有字幕
       action: 'needFetch',
+      message: '等待字幕加载',
       config: preferences
     };
     

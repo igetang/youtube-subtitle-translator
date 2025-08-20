@@ -234,11 +234,33 @@ export class ContentScriptCoordinator {
   }
   
   /**
-   * 处理翻译开关切换 - 缓存优先策略
+   * 处理翻译开关切换 - 缓存优先策略（基于4状态系统）
    */
-  private async handleTranslateToggle(currentState: boolean): Promise<void> {
+  private async handleTranslateToggle(currentState: string): Promise<void> {
     console.log('[ContentScriptCoordinator] ===== 开始处理翻译切换 =====');
-    const newState = !currentState;
+    
+    // 根据当前状态决定是开启还是关闭
+    // INACTIVE -> 开启翻译
+    // ACTIVE/INTENT_ONLY -> 关闭翻译
+    // PENDING -> 忽略（不应该发生，因为按钮已禁用）
+    let isEnabling = false;
+    
+    switch (currentState) {
+      case 'inactive':
+        isEnabling = true;
+        break;
+      case 'active':
+      case 'intent_only':
+        isEnabling = false;
+        break;
+      case 'pending':
+        console.log('[ContentScriptCoordinator] 忽略PENDING状态的点击');
+        return;
+      default:
+        // 默认当作INACTIVE处理
+        isEnabling = true;
+    }
+    
     const videoId = this.getVideoId();
     
     if (!videoId) {
@@ -248,7 +270,7 @@ export class ContentScriptCoordinator {
     
     console.log('[ContentScriptCoordinator] 切换翻译状态:', { 
       currentState, 
-      newState, 
+      isEnabling, 
       videoId 
     });
     
@@ -259,7 +281,7 @@ export class ContentScriptCoordinator {
         type: 'TOGGLE_TRANSLATE',
         data: {
           videoId: videoId,
-          newState: newState
+          newState: isEnabling  // 仍然传递布尔值给Service Worker
         }
       });
       
@@ -301,13 +323,13 @@ export class ContentScriptCoordinator {
           console.warn('[ContentScriptCoordinator] 未知响应动作:', response.action);
       }
       
-      // 更新本地状态
-      this.stateManager.updateState('translateActive', newState);
+      // 更新本地状态（Service Worker会设置正确的最终状态）
+      // 这里不需要手动更新，因为状态会通过消息系统同步
       
     } catch (error) {
       console.error('[ContentScriptCoordinator] 翻译切换失败:', error);
-      // 恢复状态
-      this.stateManager.updateState('translateActive', currentState);
+      // 错误时恢复到INACTIVE状态
+      this.stateManager.updateState('translateActive', 'inactive');
     }
   }
   
@@ -325,18 +347,12 @@ export class ContentScriptCoordinator {
   private displayTranslatedSubtitles(data: any): void {
     console.log('[ContentScriptCoordinator] 准备显示翻译字幕:', data);
     
-    // 初始化字幕显示层（如果还没有初始化）
-    if (!subtitleOverlay) {
-      console.error('[ContentScriptCoordinator] 字幕显示层未初始化');
-      return;
-    }
-    
     // 显示翻译字幕
     subtitleOverlay.show(data);
     
-    // 更新UI状态
+    // 更新UI状态 - 使用 updateState 方法设置 translateActive 为 'active'
     if (this.stateManager) {
-      this.stateManager.updateTranslateState(true);
+      this.stateManager.updateState('translateActive', 'active');
     }
   }
   
@@ -347,13 +363,11 @@ export class ContentScriptCoordinator {
     console.log('[ContentScriptCoordinator] 隐藏翻译字幕');
     
     // 隐藏字幕显示层
-    if (subtitleOverlay) {
-      subtitleOverlay.hide();
-    }
+    subtitleOverlay.hide();
     
-    // 更新UI状态
+    // 更新UI状态 - 使用 updateState 方法设置 translateActive 为 'inactive'
     if (this.stateManager) {
-      this.stateManager.updateTranslateState(false);
+      this.stateManager.updateState('translateActive', 'inactive');
     }
   }
 

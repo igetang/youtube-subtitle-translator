@@ -169,8 +169,16 @@ export class StateManager {
    * 检查翻译是否激活
    */
   isTranslateActive(): boolean {
-    return this.runtimeState.translateActive === true ||
-           this.runtimeState.translateActive === 'active';
+    // 只检查枚举值，不再兼容布尔值
+    return this.runtimeState.translateActive === 'active';
+  }
+  
+  /**
+   * 获取当前翻译状态
+   */
+  getTranslateState(): string {
+    // 返回当前的翻译状态枚举值
+    return this.runtimeState.translateActive || 'inactive';
   }
 
   /**

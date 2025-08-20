@@ -139,13 +139,31 @@ export class UIRenderer {
       () => this.onButtonClick('settings')
     );
     
-    // 2. 创建翻译按钮
-    const isActive = this.runtimeState.translateActive === true || 
-                     this.runtimeState.translateActive === 'active';
+    // 2. 创建翻译按钮（基于4状态系统）
+    const translateState = this.runtimeState.translateActive || 'inactive';
+    const isActive = translateState === 'active';
+    const isPending = translateState === 'pending';
+    const isIntentOnly = translateState === 'intent_only';
+    
+    // 根据状态决定图标和提示文本
+    let buttonIcon = this.OFF_ICON_URL;  // 默认关闭图标
+    let buttonTooltip = '点击开启翻译';  // 默认提示
+    
+    if (isActive) {
+      buttonIcon = this.ON_ICON_URL;
+      buttonTooltip = '翻译已开启';
+    } else if (isPending) {
+      buttonIcon = this.OFF_ICON_URL;  // PENDING时暂时显示关闭图标，后续添加动画
+      buttonTooltip = '处理中...';
+    } else if (isIntentOnly) {
+      buttonIcon = this.OFF_ICON_URL;  // INTENT_ONLY显示为关闭状态
+      buttonTooltip = '无字幕';
+    }
+    
     const { button: translateButton, icon: toggleIcon } = this.createControlButton(
       'vid-translate-toggle-button',
-      isActive ? '关闭翻译' : '开启翻译',
-      isActive ? this.ON_ICON_URL : this.OFF_ICON_URL,
+      buttonTooltip,
+      buttonIcon,
       () => this.onButtonClick('translate')
     );
     
@@ -285,16 +303,15 @@ export class UIRenderer {
   // 新的注入逻辑提供了更好的等待机制、错误处理和状态管理
 
   /**
-   * 更新按钮状态 - 基于传入的状态
+   * 更新按钮状态 - 基于传入的状态（4状态系统）
    */
   private updateButtonStates(runtimeState: any): void {
     if (!runtimeState) return;
 
-    const isTranslateActive = runtimeState.translateActive === true || 
-                             runtimeState.translateActive === 'active';
+    const translateState = runtimeState.translateActive || 'inactive';
     
     if (this.translateButton) {
-      this.updateTranslateButton(isTranslateActive);
+      this.updateTranslateButtonWithState(translateState);
     }
 
     const isSettingPanelOpen = runtimeState.settingPanelOpen === true;
@@ -330,22 +347,56 @@ export class UIRenderer {
   }
 
   /**
-   * 更新翻译按钮状态
+   * 更新翻译按钮状态（基于4状态系统）
    */
-  private updateTranslateButton(isActive: boolean): void {
-    if (this.translateToggleButtonIcon) {
-      // 更新图标
-      this.translateToggleButtonIcon.src = isActive ? this.ON_ICON_URL : this.OFF_ICON_URL;
+  private updateTranslateButtonWithState(state: string): void {
+    if (!this.translateButton || !this.translateToggleButtonIcon) return;
+
+    // 根据状态更新图标和提示
+    let buttonIcon = this.OFF_ICON_URL;
+    let buttonTooltip = '点击开启翻译';
+    let isClickable = true;
+    
+    switch (state) {
+      case 'active':
+        buttonIcon = this.ON_ICON_URL;
+        buttonTooltip = '翻译已开启';
+        break;
+      case 'pending':
+        buttonIcon = this.OFF_ICON_URL;  // 后续可以添加加载动画
+        buttonTooltip = '处理中...';
+        isClickable = false;  // PENDING状态不可点击
+        break;
+      case 'intent_only':
+        buttonIcon = this.OFF_ICON_URL;
+        buttonTooltip = '无字幕';
+        break;
+      case 'inactive':
+      default:
+        buttonIcon = this.OFF_ICON_URL;
+        buttonTooltip = '点击开启翻译';
+        break;
     }
     
-    if (this.translateButton) {
-      // 更新标题和属性
-      const tooltipText = isActive ? '关闭翻译' : '开启翻译';
-      this.translateButton.title = tooltipText;
-      this.translateButton.setAttribute('aria-label', tooltipText);
-      
-      console.log(`[UIRenderer] 翻译按钮状态更新: ${isActive ? '激活' : '未激活'}`);
-    }
+    // 更新图标
+    this.translateToggleButtonIcon.src = buttonIcon;
+    // 更新提示文本
+    this.translateButton.title = buttonTooltip;
+    this.translateButton.setAttribute('aria-label', buttonTooltip);
+    // 更新可点击状态
+    this.translateButton.style.pointerEvents = isClickable ? 'auto' : 'none';
+    this.translateButton.style.opacity = isClickable ? '1' : '0.5';
+    
+    console.log(`[UIRenderer] 翻译按钮状态更新: ${state}`);
+  }
+  
+  /**
+   * 更新翻译按钮状态（兼容旧调用）
+   */
+  private updateTranslateButton(isActive: boolean): void {
+    // 将布尔值转换为状态枚举
+    const state = isActive ? 'active' : 'inactive';
+    this.updateTranslateButtonWithState(state);
   }
 
   /**
@@ -383,8 +434,9 @@ export class UIRenderer {
    * 不处理业务逻辑，只上报事件
    */
   private onButtonClick(buttonType: string): void {
+    // 获取当前状态（翻译使用枚举值，设置面板仍用布尔值）
     const currentState = buttonType === 'translate' ? 
-      (this.runtimeState.translateActive || false) : 
+      (this.runtimeState.translateActive || 'inactive') :  // 传递枚举状态
       (this.runtimeState.settingPanelOpen || false);
     
     console.log(`[UIRenderer] ${buttonType}按钮被点击，当前状态:`, currentState);

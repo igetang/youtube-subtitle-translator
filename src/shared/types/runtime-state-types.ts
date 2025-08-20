@@ -5,12 +5,13 @@
  */
 
 /**
- * 翻译状态枚举 - 支持PENDING状态的三态逻辑
+ * 翻译状态枚举 - 支持4状态逻辑
  */
 export enum TranslateActiveState {
-  INACTIVE = 'inactive',  // 翻译关闭
-  ACTIVE = 'active',      // 翻译激活
-  PENDING = 'pending'     // 翻译执行中（异步状态）
+  INACTIVE = 'inactive',      // 翻译关闭
+  PENDING = 'pending',         // 翻译执行中（过渡状态）
+  ACTIVE = 'active',           // 翻译激活（有字幕并显示翻译）
+  INTENT_ONLY = 'intent_only'  // 仅有意图（用户想翻译但无字幕）
 }
 
 /**
@@ -65,14 +66,19 @@ export class TranslateStateHelper {
       return true;
     }
     
-    // 定义状态转换规则
+    // 定义状态转换规则（4状态系统）
     const transitions: Record<TranslateActiveState, TranslateActiveState[]> = {
-      [TranslateActiveState.INACTIVE]: [TranslateActiveState.PENDING, TranslateActiveState.ACTIVE],
-      [TranslateActiveState.PENDING]: [TranslateActiveState.ACTIVE, TranslateActiveState.INACTIVE],
-      [TranslateActiveState.ACTIVE]: [TranslateActiveState.INACTIVE, TranslateActiveState.PENDING]
+      // 从INACTIVE只能进入PENDING（开启翻译）
+      [TranslateActiveState.INACTIVE]: [TranslateActiveState.PENDING],
+      // 从PENDING可以进入ACTIVE（有字幕）、INTENT_ONLY（无字幕）或INACTIVE（出错）
+      [TranslateActiveState.PENDING]: [TranslateActiveState.ACTIVE, TranslateActiveState.INTENT_ONLY, TranslateActiveState.INACTIVE],
+      // 从ACTIVE直接回到INACTIVE（关闭翻译）
+      [TranslateActiveState.ACTIVE]: [TranslateActiveState.INACTIVE],
+      // 从INTENT_ONLY直接回到INACTIVE（关闭翻译）
+      [TranslateActiveState.INTENT_ONLY]: [TranslateActiveState.INACTIVE]
     };
     
-    return transitions[from].includes(to);
+    return transitions[from]?.includes(to) || false;
   }
   
   /**
@@ -83,8 +89,9 @@ export class TranslateStateHelper {
   static getDisplayName(state: TranslateActiveState): string {
     const names: Record<TranslateActiveState, string> = {
       [TranslateActiveState.INACTIVE]: '翻译关闭',
-      [TranslateActiveState.ACTIVE]: '翻译激活',
-      [TranslateActiveState.PENDING]: '翻译中...'
+      [TranslateActiveState.PENDING]: '处理中...',
+      [TranslateActiveState.ACTIVE]: '翻译已开启',
+      [TranslateActiveState.INTENT_ONLY]: '无字幕'
     };
     
     return names[state];
@@ -96,7 +103,20 @@ export class TranslateStateHelper {
    * @returns 是否可用
    */
   static isTranslationAvailable(state: TranslateActiveState): boolean {
+    // ACTIVE表示正在显示翻译，PENDING表示正在处理
     return state === TranslateActiveState.ACTIVE || state === TranslateActiveState.PENDING;
+  }
+  
+  /**
+   * 判断用户是否有翻译意图
+   * @param state 翻译状态
+   * @returns 是否有翻译意图
+   */
+  static hasTranslationIntent(state: TranslateActiveState): boolean {
+    // ACTIVE、PENDING和INTENT_ONLY都表示用户想要翻译
+    return state === TranslateActiveState.ACTIVE || 
+           state === TranslateActiveState.PENDING || 
+           state === TranslateActiveState.INTENT_ONLY;
   }
   
   /**
