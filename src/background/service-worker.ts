@@ -1856,22 +1856,19 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     if (subtitleData) {
       console.log('[background] ✅ 找到内存中的字幕数据，准备翻译');
       
-      // TODO: 执行翻译（将在Step 3中实现）
-      // const translatedResult = await executeTranslation(subtitleData, preferences);
-      // await cacheManager.setCache(cacheKey, translatedResult);
-      // await runtimeStateManager.setTranslateActive('active');
-      // return {
-      //   success: true,
-      //   action: 'translated',
-      //   data: translatedResult
-      // };
+      // 执行翻译
+      const translatedResult = await executeTranslation(subtitleData, preferences);
       
-      // 暂时返回需要翻译的提示
+      // 保存到缓存
+      await cacheManager.setCache(cacheKey, translatedResult);
+      
+      // 更新状态为ACTIVE
+      await runtimeStateManager.setTranslateActive('active');
+      
       return {
         success: true,
-        action: 'needTranslation',
-        data: subtitleData,
-        config: preferences
+        action: 'translated',
+        data: translatedResult
       };
     }
     
@@ -1891,6 +1888,198 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
       error: error instanceof Error ? error.message : '处理翻译切换失败'
     };
   }
+}
+
+/**
+ * 执行字幕翻译
+ */
+async function executeTranslation(subtitleData: any, preferences: any): Promise<any> {
+  try {
+    const { subtitles, videoId } = subtitleData;
+    const { targetLang, sourceLang, translationService } = preferences;
+    
+    console.log('[background] 开始执行翻译:', {
+      subtitleCount: subtitles.length,
+      sourceLang,
+      targetLang,
+      service: translationService
+    });
+    
+    // 提取需要翻译的文本
+    const textsToTranslate = subtitles.map((s: any) => s.text);
+    
+    // 批量翻译（每批50条，避免请求过大）
+    const batchSize = 50;
+    const translatedTexts: string[] = [];
+    
+    for (let i = 0; i < textsToTranslate.length; i += batchSize) {
+      const batch = textsToTranslate.slice(i, i + batchSize);
+      console.log(`[background] 翻译批次 ${Math.floor(i/batchSize) + 1}/${Math.ceil(textsToTranslate.length/batchSize)}`);
+      
+      // 调用翻译API
+      const translatedBatch = await translateBatch(
+        batch,
+        sourceLang || 'auto',
+        targetLang,
+        translationService
+      );
+      
+      translatedTexts.push(...translatedBatch);
+    }
+    
+    // 组装翻译结果
+    const translatedSubtitles = subtitles.map((subtitle: any, index: number) => ({
+      ...subtitle,
+      originalText: subtitle.text,
+      translatedText: translatedTexts[index] || subtitle.text
+    }));
+    
+    const result = {
+      videoId,
+      subtitles: translatedSubtitles,
+      sourceLang: sourceLang || 'auto',
+      targetLang,
+      timestamp: Date.now(),
+      translations: {} as any
+    };
+    
+    // 构建translations映射（用于缓存）
+    translatedSubtitles.forEach((sub: any, index: number) => {
+      result.translations[`subtitle_${index}`] = sub.translatedText;
+    });
+    
+    console.log('[background] ✅ 翻译完成，共翻译', translatedSubtitles.length, '条字幕');
+    
+    return result;
+    
+  } catch (error) {
+    console.error('[background] 翻译执行失败:', error);
+    throw error;
+  }
+}
+
+/**
+ * 批量翻译文本
+ */
+async function translateBatch(
+  texts: string[], 
+  sourceLang: string, 
+  targetLang: string,
+  service: string
+): Promise<string[]> {
+  try {
+    // 根据翻译服务类型调用不同的API
+    switch (service) {
+      case 'google':
+      case 'google-free':
+        return await translateWithGoogle(texts, sourceLang, targetLang);
+        
+      case 'microsoft':
+      case 'microsoft-free':
+        return await translateWithMicrosoft(texts, sourceLang, targetLang);
+        
+      case 'openai':
+        return await translateWithOpenAI(texts, sourceLang, targetLang);
+        
+      default:
+        console.warn('[background] 不支持的翻译服务:', service);
+        // 返回原文
+        return texts;
+    }
+  } catch (error) {
+    console.error('[background] 批量翻译失败:', error);
+    // 失败时返回原文
+    return texts;
+  }
+}
+
+/**
+ * 使用Google翻译API
+ */
+async function translateWithGoogle(
+  texts: string[], 
+  sourceLang: string, 
+  targetLang: string
+): Promise<string[]> {
+  try {
+    // 使用Google Translate免费API
+    const apiUrl = 'https://translate.googleapis.com/translate_a/single';
+    
+    // 将多个文本合并，用特殊分隔符分隔
+    const separator = '\n---SEPARATOR---\n';
+    const combinedText = texts.join(separator);
+    
+    const params = new URLSearchParams({
+      client: 'gtx',
+      sl: sourceLang === 'auto' ? 'auto' : sourceLang,
+      tl: targetLang,
+      dt: 't',
+      q: combinedText
+    });
+    
+    const response = await fetch(`${apiUrl}?${params}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Google翻译API错误: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // 解析翻译结果
+    let translatedText = '';
+    if (data && data[0]) {
+      data[0].forEach((item: any) => {
+        if (item[0]) {
+          translatedText += item[0];
+        }
+      });
+    }
+    
+    // 分割翻译后的文本
+    const translatedTexts = translatedText.split(separator);
+    
+    // 确保返回数组长度一致
+    while (translatedTexts.length < texts.length) {
+      translatedTexts.push(texts[translatedTexts.length]);
+    }
+    
+    return translatedTexts;
+    
+  } catch (error) {
+    console.error('[background] Google翻译失败:', error);
+    return texts; // 失败返回原文
+  }
+}
+
+/**
+ * 使用Microsoft翻译API（暂时返回原文）
+ */
+async function translateWithMicrosoft(
+  texts: string[], 
+  sourceLang: string, 
+  targetLang: string
+): Promise<string[]> {
+  console.log('[background] Microsoft翻译API尚未实现，返回原文');
+  // TODO: 实现Microsoft翻译API
+  return texts;
+}
+
+/**
+ * 使用OpenAI翻译API（暂时返回原文）
+ */
+async function translateWithOpenAI(
+  texts: string[], 
+  sourceLang: string, 
+  targetLang: string
+): Promise<string[]> {
+  console.log('[background] OpenAI翻译API尚未实现，返回原文');
+  // TODO: 实现OpenAI翻译API
+  return texts;
 }
 
 async function handleApiConnectionTest(data: any): Promise<any> {
