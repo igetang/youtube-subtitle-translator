@@ -56,9 +56,9 @@ export class ContentScriptCoordinator {
       const uiState = this.getDefaultState('ui');
 
       console.log('[ContentScriptCoordinator] ✅ 状态获取完成:', {
-        runtimeState: !!runtimeState,
-        userPreferences: !!userPreferences,
-        uiState: !!uiState
+        runtimeState: runtimeState,
+        userPreferences: userPreferences,
+        uiState: uiState
       });
 
       // 2. 初始化各个单一职责组件
@@ -121,7 +121,7 @@ export class ContentScriptCoordinator {
    */
   private getDefaultState(type: string): any {
     const defaults = {
-      runtime: { translateActive: false },
+      runtime: { translateActive: 'inactive' },  // 使用枚举值，不是布尔值
       preferences: { targetLang: 'zh-CN', sourceLang: 'en' },
       ui: { controlsInjected: false }
     };

@@ -65,12 +65,19 @@ export class RuntimeStateManager {
           const stateKey = this.extractStateKey(key);
           if (stateKey) {
             const change = changes[key];
+            let newValue = change.newValue;
+            
+            // 🔧 数据迁移：如果是translateActive且值是布尔值，转换为枚举值
+            if (stateKey === 'translateActive' && typeof newValue === 'boolean') {
+              console.warn('[runtime-state-manager] 存储监听器检测到布尔值，进行转换:', newValue);
+              newValue = newValue ? TranslateActiveState.ACTIVE : TranslateActiveState.INACTIVE;
+            }
             
             // 更新内存缓存
-            (this.stateMemoryCache as any)[stateKey] = change.newValue;
+            (this.stateMemoryCache as any)[stateKey] = newValue;
             
             // 触发变更事件
-            this.triggerChangeEvent(stateKey, change.newValue, change.oldValue);
+            this.triggerChangeEvent(stateKey, newValue, change.oldValue);
           }
         }
       });
@@ -158,6 +165,9 @@ export class RuntimeStateManager {
     try {
       console.log('[runtime-state-manager] 初始化运行时状态管理器...');
       
+      // 🔧 数据迁移：清理存储中的布尔值
+      await this.cleanupBooleanValues();
+      
       // 尝试从存储加载状态
       const loadResult = await this.loadFromStorage();
       
@@ -179,6 +189,26 @@ export class RuntimeStateManager {
       // 出错时使用默认状态
       await this.useDefaultState();
       this.initialized = true;
+    }
+  }
+
+  /**
+   * 清理存储中的布尔值，迁移到枚举值
+   * 🔧 数据迁移：确保存储中的translateActive始终是枚举值
+   */
+  private async cleanupBooleanValues(): Promise<void> {
+    try {
+      const storageKey = RUNTIME_STATE_STORAGE_KEYS.TRANSLATE_ACTIVE;
+      const currentValue = await this.storageManager.get(storageKey, RUNTIME_STATE_CONFIG.STORAGE_AREA);
+      
+      if (typeof currentValue === 'boolean') {
+        console.warn('[runtime-state-manager] 发现存储中的布尔值，进行数据迁移:', currentValue);
+        const enumValue = currentValue ? TranslateActiveState.ACTIVE : TranslateActiveState.INACTIVE;
+        await this.storageManager.set(storageKey, enumValue, RUNTIME_STATE_CONFIG.STORAGE_AREA);
+        console.log('[runtime-state-manager] 数据迁移完成，新值:', enumValue);
+      }
+    } catch (error) {
+      console.error('[runtime-state-manager] 清理布尔值失败:', error);
     }
   }
 
@@ -232,9 +262,16 @@ export class RuntimeStateManager {
         };
       }
       
+      // 🔧 数据迁移：将布尔值转换为枚举值
+      let translateActiveValue = storageData[RUNTIME_STATE_STORAGE_KEYS.TRANSLATE_ACTIVE];
+      if (typeof translateActiveValue === 'boolean') {
+        console.warn('[runtime-state-manager] 检测到旧版布尔值，进行数据迁移:', translateActiveValue);
+        translateActiveValue = translateActiveValue ? TranslateActiveState.ACTIVE : TranslateActiveState.INACTIVE;
+      }
+      
       // 重构运行时状态对象
       const loadedState: RuntimeState = {
-        translateActive: storageData[RUNTIME_STATE_STORAGE_KEYS.TRANSLATE_ACTIVE] || DEFAULT_RUNTIME_STATE.translateActive,
+        translateActive: translateActiveValue || DEFAULT_RUNTIME_STATE.translateActive,
         settingPanelOpen: storageData[RUNTIME_STATE_STORAGE_KEYS.SETTING_PANEL_OPEN] || DEFAULT_RUNTIME_STATE.settingPanelOpen
       };
       
@@ -283,8 +320,14 @@ export class RuntimeStateManager {
       await this.initialize();
     }
     
-    // 确保内存缓存是完整的
-    return { ...DEFAULT_RUNTIME_STATE, ...this.stateMemoryCache } as RuntimeState;
+    // 🔧 数据清理：确保translateActive始终是枚举值
+    const state = { ...DEFAULT_RUNTIME_STATE, ...this.stateMemoryCache } as RuntimeState;
+    if (typeof state.translateActive === 'boolean') {
+      console.warn('[runtime-state-manager] getAllState检测到布尔值，进行转换:', state.translateActive);
+      state.translateActive = (state.translateActive as any) ? TranslateActiveState.ACTIVE : TranslateActiveState.INACTIVE;
+    }
+    
+    return state;
   }
 
   /**
@@ -295,7 +338,15 @@ export class RuntimeStateManager {
       await this.initialize();
     }
     
-    return (this.stateMemoryCache.translateActive || DEFAULT_RUNTIME_STATE.translateActive) as TranslateActiveState;
+    let translateState = this.stateMemoryCache.translateActive || DEFAULT_RUNTIME_STATE.translateActive;
+    
+    // 🔧 数据清理：确保返回的始终是枚举值
+    if (typeof translateState === 'boolean') {
+      console.warn('[runtime-state-manager] getTranslateState检测到布尔值，进行转换:', translateState);
+      translateState = (translateState as any) ? TranslateActiveState.ACTIVE : TranslateActiveState.INACTIVE;
+    }
+    
+    return translateState;
   }
 
   /**
