@@ -4,6 +4,8 @@
  * 核心职责：统一初始化入口，消除重复状态调用，实现单一职责原则
  */
 
+import { subtitleOverlay } from './subtitle-overlay';
+
 /**
  * ContentScript协调器
  * 职责：
@@ -74,6 +76,9 @@ export class ContentScriptCoordinator {
       
       // 5. 🎯 初始化时获取Popup状态
       await this.initializePopupState();
+      
+      // 6. 初始化字幕显示层
+      subtitleOverlay.initialize();
 
       this.initialized = true;
       console.log('[ContentScriptCoordinator] ✅ 统一初始化完成');
@@ -232,6 +237,7 @@ export class ContentScriptCoordinator {
    * 处理翻译开关切换 - 缓存优先策略
    */
   private async handleTranslateToggle(currentState: boolean): Promise<void> {
+    console.log('[ContentScriptCoordinator] ===== 开始处理翻译切换 =====');
     const newState = !currentState;
     const videoId = this.getVideoId();
     
@@ -247,11 +253,14 @@ export class ContentScriptCoordinator {
     });
     
     try {
+      console.log('[ContentScriptCoordinator] 准备发送 TOGGLE_TRANSLATE 消息到 Service Worker...');
       // 发送翻译切换请求到Service Worker（缓存优先）
       const response = await chrome.runtime.sendMessage({
         type: 'TOGGLE_TRANSLATE',
-        videoId: videoId,
-        newState: newState
+        data: {
+          videoId: videoId,
+          newState: newState
+        }
       });
       
       console.log('[ContentScriptCoordinator] 翻译切换响应:', response);
@@ -311,11 +320,24 @@ export class ContentScriptCoordinator {
   }
   
   /**
-   * 显示翻译后的字幕（将在Step 4详细实现）
+   * 显示翻译后的字幕
    */
   private displayTranslatedSubtitles(data: any): void {
     console.log('[ContentScriptCoordinator] 准备显示翻译字幕:', data);
-    // TODO: Step 4 将实现字幕显示层
+    
+    // 初始化字幕显示层（如果还没有初始化）
+    if (!subtitleOverlay) {
+      console.error('[ContentScriptCoordinator] 字幕显示层未初始化');
+      return;
+    }
+    
+    // 显示翻译字幕
+    subtitleOverlay.show(data);
+    
+    // 更新UI状态
+    if (this.stateManager) {
+      this.stateManager.updateTranslateState(true);
+    }
   }
   
   /**
@@ -323,7 +345,16 @@ export class ContentScriptCoordinator {
    */
   private hideTranslatedSubtitles(): void {
     console.log('[ContentScriptCoordinator] 隐藏翻译字幕');
-    // TODO: Step 4 将实现字幕隐藏
+    
+    // 隐藏字幕显示层
+    if (subtitleOverlay) {
+      subtitleOverlay.hide();
+    }
+    
+    // 更新UI状态
+    if (this.stateManager) {
+      this.stateManager.updateTranslateState(false);
+    }
   }
 
   /**

@@ -5,6 +5,15 @@
  * @version 5.24.6
  */
 
+// 声明 globalThis 的扩展类型
+declare global {
+  var subtitleCache: Map<string, {
+    subtitles: any[];
+    url: string;
+    timestamp: number;
+  }> | undefined;
+}
+
 console.log('[background] >>>>>> Service Worker 已加载 (完整版) <<<<<<');
 
 // === 核心模块导入 ===
@@ -272,6 +281,10 @@ self.addEventListener('activate', (event: any) => {
  * 基于 architecture.md 3.4 按钮交互完整流程设计
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  console.log('[background] ===== 收到消息 =====');
+  console.log('[background] 消息内容:', message);
+  console.log('[background] 消息类型:', message.type || message.action);
+  
   // 🎯 同步处理层：Popup操作处理
   // 替代原有的SidePanel逻辑，改为Popup实现
   if (message.type === 'togglePopup') {
@@ -427,6 +440,9 @@ async function routeMessage(
   sender: chrome.runtime.MessageSender
 ): Promise<any> {
   const { type, data } = message;
+  
+  console.log('[background] routeMessage 处理消息类型:', type);
+  console.log('[background] routeMessage 消息数据:', data);
   
   switch (type) {
     // === Popup 相关消息 ===
@@ -597,6 +613,8 @@ async function routeMessage(
     
     // === 翻译控制 ===
     case 'TOGGLE_TRANSLATE':
+      console.log('[background] 进入 TOGGLE_TRANSLATE case 分支');
+      console.log('[background] 准备调用 handleToggleTranslate，参数:', { sender, data });
       return await handleToggleTranslate(sender, data);
     
     default:
@@ -1765,11 +1783,11 @@ async function handleSubtitleData(data: any): Promise<any> {
     
     // 存储到内存缓存（MemoryCache）
     // 注意：这里使用简单的全局变量存储，实际项目中应该使用更完善的缓存管理
-    if (!global.subtitleCache) {
-      global.subtitleCache = new Map();
+    if (!globalThis.subtitleCache) {
+      globalThis.subtitleCache = new Map();
     }
     
-    global.subtitleCache.set(data.videoId, {
+    globalThis.subtitleCache.set(data.videoId, {
       subtitles: data.subtitles,
       url: data.url,
       timestamp: Date.now()
@@ -1801,13 +1819,14 @@ async function handleSubtitleData(data: any): Promise<any> {
  */
 async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data: any): Promise<any> {
   try {
+    console.log('[background] ===== 开始处理翻译切换 =====');
     const { videoId, newState } = data;
-    console.log('[background] 处理翻译切换:', { videoId, newState });
+    console.log('[background] 处理翻译切换参数:', { videoId, newState });
     
     // 更新运行时状态
     if (!newState) {
       // 关闭翻译
-      await runtimeStateManager.setTranslateActive('inactive');
+      await runtimeStateManager.setTranslateState('inactive');
       return { 
         success: true, 
         action: 'stopped',
@@ -1816,34 +1835,72 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     }
     
     // 开启翻译 - 设置为PENDING状态
-    await runtimeStateManager.setTranslateActive('pending');
+    await runtimeStateManager.setTranslateState('pending');
     
     // Step 1: 获取用户偏好配置
-    const preferences = await userPreferencesManager.getPreferences();
-    console.log('[background] 用户偏好配置:', {
+    console.log('[background] Step 1: 开始获取用户偏好配置...');
+    let preferences;
+    try {
+      preferences = await userPreferencesManager.getUserPreferences();
+      console.log('[background] getUserPreferences 返回的数据:', {
+        hasPreferences: !!preferences,
+        preferencesType: typeof preferences,
+        hasTranslationService: preferences ? !!preferences.translationService : false,
+        translationServiceType: preferences?.translationService ? typeof preferences.translationService : 'N/A',
+        translationServiceValue: preferences?.translationService,
+        fullPreferences: preferences
+      });
+    } catch (error) {
+      console.error('[background] getUserPreferences 抛出异常:', error);
+      throw error;
+    }
+    
+    // 添加防御性检查
+    if (!preferences || !preferences.translationService) {
+      console.error('[background] ❌ preferences 或 translationService 为空:', {
+        preferences,
+        translationService: preferences?.translationService
+      });
+      throw new Error('用户偏好配置不完整：缺少 translationService');
+    }
+    
+    console.log('[background] 用户偏好配置获取完成:', {
       targetLang: preferences.targetLang,
-      sourceLang: preferences.sourceLang,
-      translationService: preferences.translationService
+      translationService: preferences.translationService,
+      translationServiceType: preferences.translationService?.type
     });
     
     // Step 2: 构建缓存键并检查翻译结果缓存
+    console.log('[background] Step 2: 开始检查翻译结果缓存...');
     const cacheManager = TranslationCacheManager.getInstance();
+    // 注意：sourceLang 需要从字幕数据中获取，这里暂时使用 'en' 作为默认值
+    const sourceLang = 'en'; // TODO: 从字幕数据中获取实际的源语言
     const cacheKey = {
       videoId,
-      sourceLang: preferences.sourceLang,
+      sourceLang: sourceLang,
       targetLang: preferences.targetLang,
       translationService: {
-        type: preferences.translationService,
-        model: preferences.openAiConfig?.model || '',
-        temperature: preferences.openAiConfig?.temperature || 0.3
+        type: preferences.translationService.type,
+        model: preferences.translationService.model || '',
+        temperature: preferences.translationService.temperature || 0.3
       }
     };
     
     // 检查是否有缓存的翻译结果
-    const cachedResult = await cacheManager.getCache(cacheKey);
+    console.log('[background] 正在检查缓存，缓存键:', cacheKey);
+    const cachedResult = await cacheManager.get(
+      videoId,
+      sourceLang,
+      preferences.targetLang,
+      {
+        type: preferences.translationService.type,
+        model: preferences.translationService.model || '',
+        temperature: preferences.translationService.temperature || 0.3
+      }
+    );
     if (cachedResult) {
-      console.log('[background] ✅ 找到缓存的翻译结果');
-      await runtimeStateManager.setTranslateActive('active');
+      console.log('[background] ✅ 找到缓存的翻译结果，直接返回');
+      await runtimeStateManager.setTranslateState('active');
       return {
         success: true,
         action: 'cached',
@@ -1852,7 +1909,9 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     }
     
     // Step 3: 检查内存中的字幕数据
-    const subtitleData = global.subtitleCache?.get(videoId);
+    console.log('[background] Step 3: 检查内存中的字幕数据...');
+    console.log('[background] 缓存中没有翻译结果，检查是否有原始字幕数据');
+    const subtitleData = globalThis.subtitleCache?.get(videoId);
     if (subtitleData) {
       console.log('[background] ✅ 找到内存中的字幕数据，准备翻译');
       
@@ -1860,10 +1919,10 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
       const translatedResult = await executeTranslation(subtitleData, preferences);
       
       // 保存到缓存
-      await cacheManager.setCache(cacheKey, translatedResult);
+      await cacheManager.set(translatedResult);
       
       // 更新状态为ACTIVE
-      await runtimeStateManager.setTranslateActive('active');
+      await runtimeStateManager.setTranslateState('active');
       
       return {
         success: true,
@@ -1873,7 +1932,8 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     }
     
     // Step 4: 需要获取字幕
-    console.log('[background] 需要获取字幕数据');
+    console.log('[background] Step 4: 缓存和内存中都没有数据，需要获取字幕');
+    console.log('[background] ⚠️ 需要从YouTube获取字幕数据');
     return {
       success: false,
       action: 'needFetch',
@@ -1882,7 +1942,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     
   } catch (error) {
     console.error('[background] 处理翻译切换失败:', error);
-    await runtimeStateManager.setTranslateActive('inactive');
+    await runtimeStateManager.setTranslateState('inactive');
     return {
       success: false,
       error: error instanceof Error ? error.message : '处理翻译切换失败'
@@ -1895,14 +1955,18 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
  */
 async function executeTranslation(subtitleData: any, preferences: any): Promise<any> {
   try {
-    const { subtitles, videoId } = subtitleData;
-    const { targetLang, sourceLang, translationService } = preferences;
+    const { subtitles, videoId, url } = subtitleData;
+    const { targetLang, translationService, subtitleMode } = preferences;
+    
+    // 从字幕数据中检测源语言（默认为英语）
+    const sourceLang = detectSourceLanguage(subtitles) || 'en';
     
     console.log('[background] 开始执行翻译:', {
       subtitleCount: subtitles.length,
       sourceLang,
       targetLang,
-      service: translationService
+      service: translationService.type,
+      mode: subtitleMode
     });
     
     // 提取需要翻译的文本
@@ -1927,26 +1991,33 @@ async function executeTranslation(subtitleData: any, preferences: any): Promise<
       translatedTexts.push(...translatedBatch);
     }
     
-    // 组装翻译结果
+    // 组装翻译结果（符合 TranslationCacheData 格式）
     const translatedSubtitles = subtitles.map((subtitle: any, index: number) => ({
-      ...subtitle,
-      originalText: subtitle.text,
-      translatedText: translatedTexts[index] || subtitle.text
+      start: subtitle.start || subtitle.startTime || 0,
+      duration: subtitle.duration || subtitle.dur || 0,
+      text: subtitle.text,
+      translation: translatedTexts[index] || subtitle.text
     }));
     
+    // 构建符合 TranslationCacheData 接口的结果
     const result = {
       videoId,
-      subtitles: translatedSubtitles,
-      sourceLang: sourceLang || 'auto',
+      videoUrl: url,
+      sourceLang: sourceLang || 'en',
       targetLang,
-      timestamp: Date.now(),
-      translations: {} as any
+      subtitleMode: subtitleMode || 'bilingual',
+      translationService: {
+        type: translationService.type,
+        name: translationService.name,
+        model: translationService.model,
+        temperature: translationService.temperature,
+        rpm: translationService.rpm,
+        tpm: translationService.tpm
+      },
+      translatedSubtitles: translatedSubtitles,
+      lastUsed: Date.now(),
+      dataHash: ''  // 将由 TranslationCacheManager 计算
     };
-    
-    // 构建translations映射（用于缓存）
-    translatedSubtitles.forEach((sub: any, index: number) => {
-      result.translations[`subtitle_${index}`] = sub.translatedText;
-    });
     
     console.log('[background] ✅ 翻译完成，共翻译', translatedSubtitles.length, '条字幕');
     
@@ -1959,17 +2030,51 @@ async function executeTranslation(subtitleData: any, preferences: any): Promise<
 }
 
 /**
+ * 检测字幕的源语言
+ */
+function detectSourceLanguage(subtitles: any[]): string {
+  // 简单的语言检测逻辑
+  // 可以根据字幕文本的字符特征判断语言
+  if (!subtitles || subtitles.length === 0) {
+    return 'en'; // 默认英语
+  }
+  
+  // 取前几条字幕进行检测
+  const sampleTexts = subtitles.slice(0, 5).map(s => s.text).join(' ');
+  
+  // 检测是否包含中文字符
+  if (/[\u4e00-\u9fa5]/.test(sampleTexts)) {
+    return 'zh';
+  }
+  
+  // 检测是否包含日文字符
+  if (/[\u3040-\u309f\u30a0-\u30ff]/.test(sampleTexts)) {
+    return 'ja';
+  }
+  
+  // 检测是否包含韩文字符
+  if (/[\uac00-\ud7af]/.test(sampleTexts)) {
+    return 'ko';
+  }
+  
+  // 默认返回英语
+  return 'en';
+}
+
+/**
  * 批量翻译文本
  */
 async function translateBatch(
   texts: string[], 
   sourceLang: string, 
   targetLang: string,
-  service: string
+  service: any
 ): Promise<string[]> {
   try {
     // 根据翻译服务类型调用不同的API
-    switch (service) {
+    const serviceType = service.type || service;
+    
+    switch (serviceType) {
       case 'google':
       case 'google-free':
         return await translateWithGoogle(texts, sourceLang, targetLang);
@@ -1979,10 +2084,14 @@ async function translateBatch(
         return await translateWithMicrosoft(texts, sourceLang, targetLang);
         
       case 'openai':
-        return await translateWithOpenAI(texts, sourceLang, targetLang);
+        return await translateWithOpenAI(texts, sourceLang, targetLang, service);
+        
+      case 'dummy':
+        // 测试模式：返回简单的翻译标记
+        return texts.map(text => `[译] ${text}`);
         
       default:
-        console.warn('[background] 不支持的翻译服务:', service);
+        console.warn('[background] 不支持的翻译服务:', serviceType);
         // 返回原文
         return texts;
     }
@@ -2075,10 +2184,12 @@ async function translateWithMicrosoft(
 async function translateWithOpenAI(
   texts: string[], 
   sourceLang: string, 
-  targetLang: string
+  targetLang: string,
+  service: any
 ): Promise<string[]> {
   console.log('[background] OpenAI翻译API尚未实现，返回原文');
   // TODO: 实现OpenAI翻译API
+  // 将使用 service.apiKey, service.model, service.temperature 等参数
   return texts;
 }
 

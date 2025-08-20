@@ -14,6 +14,14 @@ import {
   TRANSLATION_SERVICE_TEMPLATES,
   SubtitleMode
 } from '../types/user-preferences-types';
+
+// 立即验证导入的默认值
+console.log('[user-preferences-manager] 模块加载时 DEFAULT_USER_PREFERENCES:', {
+  hasDefaultImported: !!DEFAULT_USER_PREFERENCES,
+  hasTranslationService: !!DEFAULT_USER_PREFERENCES?.translationService,
+  translationServiceType: DEFAULT_USER_PREFERENCES?.translationService?.type,
+  fullDefault: DEFAULT_USER_PREFERENCES
+});
 import { findMatchingTargetLanguage } from '../utils/language-processing';
 import { checkMigrationNeeded, convertUserSettingsToUserPreferences } from '../utils/settings-migration';
 
@@ -276,20 +284,44 @@ export class UserPreferencesManager {
    * 获取完整的用户偏好设置
    */
   public async getUserPreferences(): Promise<UserPreferences> {
+    console.log('[user-preferences-manager] ===== getUserPreferences 开始 =====');
+    
     // 如果有缓存，直接返回
     if (this.preferencesMemoryCache) {
+      console.log('[user-preferences-manager] 返回内存缓存的数据:', {
+        hasTranslationService: !!this.preferencesMemoryCache.translationService,
+        translationServiceType: this.preferencesMemoryCache.translationService?.type,
+        fullCache: this.preferencesMemoryCache
+      });
       return this.preferencesMemoryCache;
     }
 
     try {
       const storageKey = `${StorageKeys.USER_PREFERENCES_PREFIX}main`;
+      console.log('[user-preferences-manager] 从存储读取数据，key:', storageKey);
       const data = await this.storageManager.get<UserPreferences | null>(storageKey, null);
+      
+      console.log('[user-preferences-manager] 从存储读取的原始数据:', {
+        hasData: !!data,
+        dataType: typeof data,
+        hasTranslationService: data ? !!data.translationService : false,
+        translationServiceType: data?.translationService ? typeof data.translationService : 'N/A',
+        translationServiceValue: data?.translationService,
+        fullData: data
+      });
 
       if (data) {
         // 验证数据完整性
         const validation = this.validateUserPreferences(data);
+        console.log('[user-preferences-manager] 数据验证结果:', {
+          isValid: validation.isValid,
+          errors: validation.errors,
+          warnings: validation.warnings
+        });
+        
         if (validation.isValid) {
           this.preferencesMemoryCache = data;
+          console.log('[user-preferences-manager] 验证通过，返回存储的数据');
           return data;
         } else {
           console.warn('[user-preferences-manager] 存储的偏好设置数据无效:', validation.errors);
@@ -298,6 +330,12 @@ export class UserPreferencesManager {
 
       // 如果没有找到有效数据，返回默认设置
       console.log('[user-preferences-manager] 使用默认偏好设置');
+      console.log('[user-preferences-manager] DEFAULT_USER_PREFERENCES 内容:', {
+        hasTranslationService: !!DEFAULT_USER_PREFERENCES.translationService,
+        translationServiceType: DEFAULT_USER_PREFERENCES.translationService?.type,
+        fullDefault: DEFAULT_USER_PREFERENCES
+      });
+      
       this.preferencesMemoryCache = DEFAULT_USER_PREFERENCES;
       return DEFAULT_USER_PREFERENCES;
 
