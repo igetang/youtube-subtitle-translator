@@ -11,6 +11,7 @@ console.log('[background] >>>>>> Service Worker 已加载 (完整版) <<<<<<');
 import { UserPreferencesManager } from '../shared/storage/user-preferences-manager';
 import { RuntimeStateManager } from '../shared/storage/runtime-state-manager';
 import { StorageManager } from '../shared/storage/storage-manager';
+import { TranslationCacheManager } from '../shared/storage/translation-cache-manager';
 import { 
   TranslateActiveState, 
   RuntimeStateChangeEvent,
@@ -593,6 +594,10 @@ async function routeMessage(
     // === 字幕数据处理 ===
     case 'SUBTITLE_DATA':
       return await handleSubtitleData(data);
+    
+    // === 翻译控制 ===
+    case 'TOGGLE_TRANSLATE':
+      return await handleToggleTranslate(sender, data);
     
     default:
       console.warn(`[background] 未知消息类型: ${type}`);
@@ -1787,6 +1792,103 @@ async function handleSubtitleData(data: any): Promise<any> {
     return {
       success: false,
       error: error instanceof Error ? error.message : '处理字幕数据失败'
+    };
+  }
+}
+
+/**
+ * 处理翻译开关切换 - 实现缓存优先策略
+ */
+async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data: any): Promise<any> {
+  try {
+    const { videoId, newState } = data;
+    console.log('[background] 处理翻译切换:', { videoId, newState });
+    
+    // 更新运行时状态
+    if (!newState) {
+      // 关闭翻译
+      await runtimeStateManager.setTranslateActive('inactive');
+      return { 
+        success: true, 
+        action: 'stopped',
+        message: '翻译已关闭'
+      };
+    }
+    
+    // 开启翻译 - 设置为PENDING状态
+    await runtimeStateManager.setTranslateActive('pending');
+    
+    // Step 1: 获取用户偏好配置
+    const preferences = await userPreferencesManager.getPreferences();
+    console.log('[background] 用户偏好配置:', {
+      targetLang: preferences.targetLang,
+      sourceLang: preferences.sourceLang,
+      translationService: preferences.translationService
+    });
+    
+    // Step 2: 构建缓存键并检查翻译结果缓存
+    const cacheManager = TranslationCacheManager.getInstance();
+    const cacheKey = {
+      videoId,
+      sourceLang: preferences.sourceLang,
+      targetLang: preferences.targetLang,
+      translationService: {
+        type: preferences.translationService,
+        model: preferences.openAiConfig?.model || '',
+        temperature: preferences.openAiConfig?.temperature || 0.3
+      }
+    };
+    
+    // 检查是否有缓存的翻译结果
+    const cachedResult = await cacheManager.getCache(cacheKey);
+    if (cachedResult) {
+      console.log('[background] ✅ 找到缓存的翻译结果');
+      await runtimeStateManager.setTranslateActive('active');
+      return {
+        success: true,
+        action: 'cached',
+        data: cachedResult
+      };
+    }
+    
+    // Step 3: 检查内存中的字幕数据
+    const subtitleData = global.subtitleCache?.get(videoId);
+    if (subtitleData) {
+      console.log('[background] ✅ 找到内存中的字幕数据，准备翻译');
+      
+      // TODO: 执行翻译（将在Step 3中实现）
+      // const translatedResult = await executeTranslation(subtitleData, preferences);
+      // await cacheManager.setCache(cacheKey, translatedResult);
+      // await runtimeStateManager.setTranslateActive('active');
+      // return {
+      //   success: true,
+      //   action: 'translated',
+      //   data: translatedResult
+      // };
+      
+      // 暂时返回需要翻译的提示
+      return {
+        success: true,
+        action: 'needTranslation',
+        data: subtitleData,
+        config: preferences
+      };
+    }
+    
+    // Step 4: 需要获取字幕
+    console.log('[background] 需要获取字幕数据');
+    return {
+      success: false,
+      action: 'needFetch',
+      config: preferences
+    };
+    
+  } catch (error) {
+    console.error('[background] 处理翻译切换失败:', error);
+    await runtimeStateManager.setTranslateActive('inactive');
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : '处理翻译切换失败'
     };
   }
 }

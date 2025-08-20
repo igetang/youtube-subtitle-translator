@@ -211,7 +211,7 @@ export class ContentScriptCoordinator {
   /**
    * 处理按钮点击
    */
-  private handleButtonClick(data: any): void {
+  private async handleButtonClick(data: any): Promise<void> {
     // 🔥 简化日志：上层已经记录了按钮点击，这里只处理逻辑
     
     if (!this.stateManager) {
@@ -220,19 +220,110 @@ export class ContentScriptCoordinator {
     }
 
     if (data.buttonType === 'translate') {
-      // 切换翻译状态
-      const newState = !data.currentState;
-      this.stateManager.updateState('translateActive', newState);
-      
-      // 新增：如果开启翻译，请求获取字幕
-      if (newState) {
-        console.log('[ContentScriptCoordinator] 翻译已开启，请求获取字幕...');
-        this.requestSubtitleCapture();
-      }
+      // 使用缓存优先的翻译处理流程
+      await this.handleTranslateToggle(data.currentState);
     } else if (data.buttonType === 'settings') {
       // 切换popup状态
       this.togglePopup();
     }
+  }
+  
+  /**
+   * 处理翻译开关切换 - 缓存优先策略
+   */
+  private async handleTranslateToggle(currentState: boolean): Promise<void> {
+    const newState = !currentState;
+    const videoId = this.getVideoId();
+    
+    if (!videoId) {
+      console.error('[ContentScriptCoordinator] 无法获取视频ID');
+      return;
+    }
+    
+    console.log('[ContentScriptCoordinator] 切换翻译状态:', { 
+      currentState, 
+      newState, 
+      videoId 
+    });
+    
+    try {
+      // 发送翻译切换请求到Service Worker（缓存优先）
+      const response = await chrome.runtime.sendMessage({
+        type: 'TOGGLE_TRANSLATE',
+        videoId: videoId,
+        newState: newState
+      });
+      
+      console.log('[ContentScriptCoordinator] 翻译切换响应:', response);
+      
+      // 根据响应处理不同场景
+      switch (response.action) {
+        case 'cached':
+          // 使用缓存的翻译结果
+          console.log('[ContentScriptCoordinator] ✅ 使用缓存的翻译结果');
+          this.displayTranslatedSubtitles(response.data);
+          break;
+          
+        case 'translated':
+          // 显示新翻译的结果
+          console.log('[ContentScriptCoordinator] ✅ 显示新翻译结果');
+          this.displayTranslatedSubtitles(response.data);
+          break;
+          
+        case 'needTranslation':
+          // 有字幕数据但需要翻译（临时处理，将在Step 3实现翻译）
+          console.log('[ContentScriptCoordinator] 有字幕数据，等待翻译实现');
+          // TODO: 显示加载状态
+          break;
+          
+        case 'needFetch':
+          // 需要获取字幕
+          console.log('[ContentScriptCoordinator] 需要获取字幕数据');
+          this.requestSubtitleCapture();
+          break;
+          
+        case 'stopped':
+          // 翻译已停止
+          console.log('[ContentScriptCoordinator] 翻译已停止');
+          this.hideTranslatedSubtitles();
+          break;
+          
+        default:
+          console.warn('[ContentScriptCoordinator] 未知响应动作:', response.action);
+      }
+      
+      // 更新本地状态
+      this.stateManager.updateState('translateActive', newState);
+      
+    } catch (error) {
+      console.error('[ContentScriptCoordinator] 翻译切换失败:', error);
+      // 恢复状态
+      this.stateManager.updateState('translateActive', currentState);
+    }
+  }
+  
+  /**
+   * 获取当前视频ID
+   */
+  private getVideoId(): string | null {
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get('v');
+  }
+  
+  /**
+   * 显示翻译后的字幕（将在Step 4详细实现）
+   */
+  private displayTranslatedSubtitles(data: any): void {
+    console.log('[ContentScriptCoordinator] 准备显示翻译字幕:', data);
+    // TODO: Step 4 将实现字幕显示层
+  }
+  
+  /**
+   * 隐藏翻译字幕
+   */
+  private hideTranslatedSubtitles(): void {
+    console.log('[ContentScriptCoordinator] 隐藏翻译字幕');
+    // TODO: Step 4 将实现字幕隐藏
   }
 
   /**
