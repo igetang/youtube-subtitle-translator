@@ -30,7 +30,7 @@ import { TranslateActiveState } from '@shared/types/runtime-state-types';
  */
 
 // 🎯 立即输出日志确认脚本开始执行
-console.log('[content-script] 🚀 Content Script开始初始化...', { 
+console.log('[content-script] 初始化开始...', { 
   url: window.location.href, 
   readyState: document.readyState 
 });
@@ -62,15 +62,15 @@ function initializeContentScriptMessages() {
 
 // ✅ MessageBus回调处理函数实现
 function handleTranslationResponse(data: any) {
-  console.log('[content-script] 收到翻译响应:', data);
+  console.log('[content-script] <- translation response:', data);
   // 处理翻译响应逻辑
   if (data.translatedText) {
-    console.log('[content-script] 翻译成功:', data.translatedText);
+    console.log('[content-script] ✓ 翻译成功:', data.translatedText);
   }
 }
 
 function handleUIStateUpdate(data: any) {
-  console.log('[content-script] 🔄 处理UI状态更新:', data);
+  console.log('[content-script] <- UI state update:', data);
   
   // ✅ 迁移原UI_EVENT逻辑
   if (data.type === 'button_click' && data.payload?.buttonType === 'translate') {
@@ -80,17 +80,17 @@ function handleUIStateUpdate(data: any) {
   // ✅ 收到main-world ready消息时，初始化UI相关组件（仅一次）
   if (data.messageType === 'main-world:ready' || data.type === 'MAIN_WORLD_READY') {
     if (!isUIInitialized) {
-      console.log('[content-script] 🚀 启动UI组件初始化流程');
+      console.log('[content-script] 启动UI组件初始化流程');
       initializeUIComponents();
       isUIInitialized = true;
     } else {
-      console.log('[content-script] ⚠️ UI已初始化，跳过重复初始化');
+      console.log('[content-script] UI已初始化，跳过重复初始化');
     }
   }
   
   // ✅ 迁移翻译开始/停止请求逻辑
   if (data.type === 'translation:start_requested') {
-    console.log('[content-script] 收到翻译开始请求');
+    console.log('[content-script] <- translation start request');
     // 🚀 使用部分状态同步更新翻译状态
     partialStateSync('translate').then(() => {
       handleTranslationStartRequest(data.message || data);
@@ -98,7 +98,7 @@ function handleUIStateUpdate(data: any) {
   }
   
   if (data.type === 'translation:stop_requested') {
-    console.log('[content-script] 收到翻译停止请求');
+    console.log('[content-script] <- translation stop request');
     // 🚀 使用部分状态同步更新翻译状态
     partialStateSync('translate').then(() => {
       handleTranslationStopRequest(data.message || data);
@@ -713,7 +713,7 @@ async function fullStateSync(): Promise<void> {
       chrome.runtime.sendMessage({ type: 'getUserPreferences' })
     ]);
     
-    console.log('[content-script] ✅ 状态获取完成:', {
+    console.log('[content-script] ✓ 状态获取完成:', {
       runtimeState: runtimeStateResponse,
       userPrefs: userPrefsResponse
     });
@@ -734,10 +734,10 @@ async function fullStateSync(): Promise<void> {
       }
     });
     
-    console.log('[content-script] ✅ 全状态同步完成');
+    console.log('[content-script] ✓ 全状态同步完成');
     
   } catch (error) {
-    console.error('[content-script] ❌ 全状态同步失败:', error);
+    console.error('[content-script] ✗ 全状态同步失败:', error);
     // 降级到传统初始化方式
     await fallbackInitialization();
   }
@@ -790,7 +790,7 @@ async function partialStateSync(stateType: 'translate' | 'settings' | 'ui'): Pro
         break;
     }
     
-    console.log(`[content-script] ✅ 部分状态同步完成: ${stateType}`);
+    console.log(`[content-script] ✓ 部分状态同步完成: ${stateType}`);
     
   } catch (error) {
     console.error(`[content-script] ❌ 部分状态同步失败 (${stateType}):`, error);

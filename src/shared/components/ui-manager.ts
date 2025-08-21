@@ -136,7 +136,7 @@ export class UIManager {
       // 4️⃣ 初始状态加载（异步执行，不阻塞构造函数）
       this.loadInitialStates();
       
-      console.log('[ui-manager] ✅ 统一初始化流程设置完成');
+      console.log('[ui-manager] ✓ 统一初始化完成');
     } catch (error) {
       console.error('[ui-manager] 初始化失败:', error);
     }
@@ -174,7 +174,7 @@ export class UIManager {
     try {
       // 🚀 使用统一状态刷新，避免重复调用
       await this.refreshAllStates();
-      console.log('[ui-manager] ✅ 初始状态加载完成');
+      console.log('[ui-manager] ✓ 初始状态加载完成');
     } catch (error) {
       console.error('[ui-manager] 初始状态加载失败:', error);
       // 设置默认状态
@@ -219,7 +219,7 @@ export class UIManager {
       // 🔧 优化：仅在状态可能变化时重新加载翻译状态
       await this.refreshTranslateActiveState();
       
-      console.log('[ui-manager] ✅ 标签页状态刷新完成');
+      console.log('[ui-manager] ✓ 标签页状态刷新完成');
     } catch (error) {
       console.error('[ui-manager] 标签页状态刷新失败:', error);
     }
@@ -251,7 +251,7 @@ export class UIManager {
           const translateState = fullState.translateActive as TranslateActiveState;
           this.state.translateActive = translateState;
           this.updateTranslateButtonState(this.isActiveState(translateState));
-          console.log(`[ui-manager] ✅ 翻译状态已刷新: ${translateState}`);
+          console.log(`[ui-manager] ✓ 翻译状态已刷新: ${translateState}`);
         }
         
         // 更新设置面板状态
@@ -259,10 +259,10 @@ export class UIManager {
           const settingOpen = !!fullState.settingPanelOpen;
           this.state.settingPanelOpen = settingOpen;
           this.updateSettingsButtonState(settingOpen);
-          console.log(`[ui-manager] ✅ 设置面板状态已刷新: ${settingOpen}`);
+          console.log(`[ui-manager] ✓ 设置面板状态已刷新: ${settingOpen}`);
         }
         
-        console.log('[ui-manager] ✅ 所有状态已统一刷新');
+        console.log('[ui-manager] ✓ 所有状态已统一刷新');
       }
     } catch (error) {
       console.error('[ui-manager] 统一刷新状态失败:', error);
@@ -371,7 +371,7 @@ export class UIManager {
         const state = response.state as TranslateActiveState;
         this.state.translateActive = state;
         this.updateTranslateButtonState(this.isActiveState(state));
-        console.log(`[ui-manager] ✅ 翻译状态已加载: ${state}`);
+        console.log(`[ui-manager] ✓ loadTranslateActiveState: ${state}`);
       } else {
         console.error(`[ui-manager] 获取翻译状态响应异常: ${response?.error || '未知错误'}`);
         this.state.translateActive = TranslateActiveState.INACTIVE;
@@ -431,7 +431,7 @@ export class UIManager {
         const open = !!response.state;
         this.state.settingPanelOpen = open;
         this.updateSettingsButtonState(open);
-        console.log(`[ui-manager] ✅ 设置面板状态已加载: ${open}`);
+        console.log(`[ui-manager] ✓ loadSettingPanelOpenState: ${open}`);
       } else {
         console.error(`[ui-manager] 获取设置面板状态响应异常: ${response?.error || '未知错误'}`);
         this.state.settingPanelOpen = false;
@@ -503,7 +503,7 @@ export class UIManager {
         // 🚀 使用统一状态刷新机制，一次获取所有状态
         await this.refreshAllStates();
         
-        console.log(`[ui-manager] ✅ 导航状态刷新完成: isVideoPage=${this.state.isVideoPage}, translateActive=${this.state.translateActive}, settingPanelOpen=${this.state.settingPanelOpen}`);
+        console.log(`[ui-manager] ✓ 导航状态刷新完成: isVideoPage=${this.state.isVideoPage}, translateActive=${this.state.translateActive}, settingPanelOpen=${this.state.settingPanelOpen}`);
       } catch (error) {
         console.error('[ui-manager] 页面导航状态刷新失败:', error);
         // 设置默认状态
@@ -1379,7 +1379,7 @@ export class UIManager {
         );
         
       } else {
-        console.warn('[ui-manager] ❌ SidePanel toggle 失败，尝试降级处理');
+        console.warn('[ui-manager] ✗ SidePanel toggle 失败，尝试降级处理');
         
         // 🎯 保留降级处理机制
         const responseAny = response as any;

@@ -96,8 +96,8 @@ You are an expert Chrome extension developer, proficient in JavaScript/TypeScrip
 ### 消息日志
 ```javascript
 // 接收消息
-console.log(`[service-worker] <- ${message.type} (Tab:${sender.tab?.id || '扩展'})`);
-// 输出: [service-worker] <- getRuntimeState (Tab:699429904)
+console.log(`[service-worker] 收到消息: ${message.type} (来自${sender.tab?.id ? `标签页:${sender.tab.id}` : '扩展内部'})`);
+// 输出: [service-worker] 收到消息: getRuntimeState (来自标签页:699429904)
 
 // 处理成功
 console.log(`[service-worker] ✓ ${message.type}:`, result);
@@ -128,7 +128,9 @@ console.log(`[translation-cache-manager] 缓存命中: 42条字幕`);
 
 ### 日志原则
 - **避免重复：** 同一个消息只记录一次，避免在多个处理层重复输出
-- **使用符号：** `<-` 表示接收，`→` 表示发送，`✓` 表示成功，`✗` 表示失败
+- **使用中文说明：** 用"收到消息"代替符号，增强可读性
+- **使用符号：** `→` 表示发送，`✓` 表示成功，`✗` 表示失败
 - **包含关键信息：** 消息类型、来源、关键参数值
 - **简洁清晰：** 信息完整但不冗余，便于grep搜索和分析
 - **敏感信息：** 不记录API密钥、用户隐私数据等敏感信息
+- **性能优化：** 对于可能重复触发的事件（如tabs.onUpdated），添加适当的条件判断避免重复执行

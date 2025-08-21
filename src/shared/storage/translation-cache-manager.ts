@@ -17,8 +17,8 @@ export class TranslationCacheManager {
   private static instance: TranslationCacheManager;
 
   private constructor() {
-    // logger.log('[TranslationCacheManager] Initialized');
-    console.log('[TranslationCacheManager] Initialized');
+    // logger.log('[translation-cache-manager] Initialized');
+    console.log('[translation-cache-manager] Initialized');
   }
 
   /**
@@ -69,13 +69,13 @@ export class TranslationCacheManager {
    */
   private _validateData(data: TranslationCacheData): boolean {
     if (!data.dataHash) {
-      console.warn('[TranslationCacheManager] Cache item has no hash, validation skipped.', data);
+      console.warn('[translation-cache-manager] Cache item has no hash, validation skipped.', data);
       return true; // For backward compatibility with items that have no hash
     }
     const expectedHash = this._calculateDataHash(data);
     const isValid = expectedHash === data.dataHash;
     if (!isValid) {
-      console.warn('[TranslationCacheManager] Cache data integrity check failed.', {
+      console.warn('[translation-cache-manager] Cache data integrity check failed.', {
         data,
         expectedHash,
       });
@@ -121,11 +121,11 @@ export class TranslationCacheManager {
     try {
       const result = await chrome.storage.local.get(key);
       if (result[key]) {
-        console.log(`[TranslationCacheManager] Cache hit for key: ${key}`);
+        console.log(`[translation-cache-manager] ✓ get: cache hit`);
         const data = result[key] as TranslationCacheData;
 
         if (!this._validateData(data)) {
-          console.log(`[TranslationCacheManager] Invalid cache data for key: ${key}. Deleting.`);
+          console.log(`[translation-cache-manager] ✗ get: invalid cache data, deleting`);
           // Don't await, just fire and forget
           chrome.storage.local.remove(key);
           return null;
@@ -135,12 +135,12 @@ export class TranslationCacheManager {
         this._updateLastUsed(key, data);
         return data;
       }
-      // logger.log(`[TranslationCacheManager] Cache miss for key: ${key}`);
-      console.log(`[TranslationCacheManager] Cache miss for key: ${key}`);
+      // logger.log(`[translation-cache-manager] Cache miss for key: ${key}`);
+      console.log(`[translation-cache-manager] get: cache miss`);
       return null;
     } catch (error) {
-      // logger.error('[TranslationCacheManager] Error getting cache item:', error);
-      console.error('[TranslationCacheManager] Error getting cache item:', error);
+      // logger.error('[translation-cache-manager] Error getting cache item:', error);
+      console.error('[translation-cache-manager] ✗ get:', error);
       return null;
     }
   }
@@ -156,8 +156,8 @@ export class TranslationCacheManager {
     try {
       await chrome.storage.local.set({ [key]: updatedData });
     } catch (error) {
-      // logger.error(`[TranslationCacheManager] Failed to update lastUsed for key ${key}:`, error);
-      console.error(`[TranslationCacheManager] Failed to update lastUsed for key ${key}:`, error);
+      // logger.error(`[translation-cache-manager] Failed to update lastUsed for key ${key}:`, error);
+      console.error(`[translation-cache-manager] ✗ _updateLastUsed:`, error);
     }
   }
 
@@ -186,10 +186,10 @@ export class TranslationCacheManager {
     try {
       await this._enforceLruPolicy();
       await chrome.storage.local.set({ [key]: dataToStore });
-      console.log(`[TranslationCacheManager] Cached item with key: ${key}`);
+      console.log(`[translation-cache-manager] ✓ set: cached`);
     } catch (error) {
-      // logger.error('[TranslationCacheManager] Error setting cache item:', error);
-      console.error('[TranslationCacheManager] Error setting cache item:', error);
+      // logger.error('[translation-cache-manager] Error setting cache item:', error);
+      console.error('[translation-cache-manager] ✗ set:', error);
     }
   }
 
@@ -206,22 +206,22 @@ export class TranslationCacheManager {
         .map(([key, value]) => ({ key, lastUsed: (value as TranslationCacheData).lastUsed || 0 }));
 
       if (cacheEntries.length >= MAX_CACHE_ENTRIES) {
-        // logger.log('[TranslationCacheManager] Cache limit reached, enforcing LRU policy.');
-        console.log('[TranslationCacheManager] Cache limit reached, enforcing LRU policy.');
+        // logger.log('[translation-cache-manager] Cache limit reached, enforcing LRU policy.');
+        console.log('[translation-cache-manager] 缓存限制，执行LRU策略');
         cacheEntries.sort((a, b) => a.lastUsed - b.lastUsed);
         
         const itemsToRemoveCount = cacheEntries.length - MAX_CACHE_ENTRIES + 1;
         const keysToRemove = cacheEntries.slice(0, itemsToRemoveCount).map(entry => entry.key);
 
         if (keysToRemove.length > 0) {
-          // logger.log('[TranslationCacheManager] Removing keys:', keysToRemove);
-          console.log('[TranslationCacheManager] Removing keys:', keysToRemove);
+          // logger.log('[translation-cache-manager] Removing keys:', keysToRemove);
+          console.log('[translation-cache-manager] 移除过期缓存:', keysToRemove.length);
           await chrome.storage.local.remove(keysToRemove);
         }
       }
     } catch (error) {
-      // logger.error('[TranslationCacheManager] Error enforcing LRU policy:', error);
-      console.error('[TranslationCacheManager] Error enforcing LRU policy:', error);
+      // logger.error('[translation-cache-manager] Error enforcing LRU policy:', error);
+      console.error('[translation-cache-manager] ✗ _enforceLruPolicy:', error);
     }
   }
 
@@ -236,15 +236,15 @@ export class TranslationCacheManager {
       
       if (keysToRemove.length > 0) {
         await chrome.storage.local.remove(keysToRemove);
-        // logger.log(`[TranslationCacheManager] Cleared ${keysToRemove.length} cache items.`);
-        console.log(`[TranslationCacheManager] Cleared ${keysToRemove.length} cache items.`);
+        // logger.log(`[translation-cache-manager] Cleared ${keysToRemove.length} cache items.`);
+        console.log(`[translation-cache-manager] ✓ clear: 清理${keysToRemove.length}个缓存`);
       } else {
-        // logger.log('[TranslationCacheManager] Cache is already empty.');
-        console.log('[TranslationCacheManager] Cache is already empty.');
+        // logger.log('[translation-cache-manager] Cache is already empty.');
+        console.log('[translation-cache-manager] clear: 缓存已为空');
       }
     } catch (error) {
-      // logger.error('[TranslationCacheManager] Error clearing cache:', error);
-      console.error('[TranslationCacheManager] Error clearing cache:', error);
+      // logger.error('[translation-cache-manager] Error clearing cache:', error);
+      console.error('[translation-cache-manager] ✗ clear:', error);
     }
   }
 } 

@@ -2435,7 +2435,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     // 1. 建立生命周期监控连接
     const port = chrome.runtime.connect({ name: 'sidepanel-lifecycle' });
-    console.log('[sidepanel] ✅ Port连接已建立');
+    console.log('[sidepanel] ✓ Port连接已建立');
     
     // 2. 获取当前标签页信息
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -2444,7 +2444,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     
     currentTabId = tab.id;
-    console.log(`[sidepanel] ✅ 当前标签页ID: ${currentTabId}`);
+    console.log(`[sidepanel] ✓ 当前标签页ID: ${currentTabId}`);
     
     // 3. 验证YouTube页面
     if (!tab.url || !isYoutubeUrl(tab.url)) {
@@ -2461,12 +2461,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     await initializeSidePanelUI();
     
     // 6. 🔧 优化：不再发送额外消息，Port连接已经足以通知Background
-    console.log('[sidepanel] ✅ SidePanel初始化完成，状态同步由Port连接处理');
+    console.log('[sidepanel] ✓ SidePanel初始化完成，状态同步由Port连接处理');
     
     console.log('[sidepanel] 🎉 SidePanel初始化完成');
     
   } catch (error) {
-    console.error('[sidepanel] ❌ SidePanel初始化失败:', error);
+    console.error('[sidepanel] ✗ SidePanel初始化失败:', error);
     sidePanelInitialized = false; // 重置标志，允许重试
     handleInitializationError(error);
   }

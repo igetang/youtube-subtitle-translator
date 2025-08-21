@@ -131,7 +131,7 @@ export class UserPreferencesManager {
           try {
             handler(newValue, oldValue, event);
           } catch (error) {
-            console.error(`[user-preferences-manager] 偏好设置变更处理函数执行错误 (事件: ${event}):`, error);
+            console.error(`[user-preferences-manager] ✗ 事件处理器执行错误 (${event}):`, error);
           }
         });
       }
@@ -233,13 +233,13 @@ export class UserPreferencesManager {
   public async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    console.log('[user-preferences-manager] 初始化用户偏好设置管理器');
+    console.log('[user-preferences-manager] 初始化开始...');
 
     try {
       // 检查并执行从UserSettings到UserPreferences的迁移
       const migrationNeeded = await checkMigrationNeeded();
       if (migrationNeeded) {
-        console.log('[user-preferences-manager] 需要进行数据迁移。正在从 UserSettings 转换...');
+        console.log('[user-preferences-manager] 需要进行数据迁移...');
         // const legacySettings = await LegacySettingsManager.getAllSettings(); // 🔴 废弃的调用
         // const migratedPreferences = convertUserSettingsToUserPreferences(legacySettings);
         
@@ -249,17 +249,17 @@ export class UserPreferencesManager {
         console.warn('[user-preferences-manager] LegacySettingsManager 已移除，暂时跳过旧数据迁移。');
 
       } else {
-        console.log('[user-preferences-manager] 无需进行数据迁移。');
+        console.log('[user-preferences-manager] 无需数据迁移');
       }
 
       // 确保默认偏好设置存在
       await this.ensureDefaultPreferences();
 
       this.initialized = true;
-      console.log('[user-preferences-manager] ✅ 初始化完成');
+      console.log('[user-preferences-manager] ✓ 初始化完成');
 
     } catch (error) {
-      console.error('[user-preferences-manager] ❌ 初始化失败:', error);
+      console.error('[user-preferences-manager] ✗ 初始化失败:', error);
       throw error;
     }
   }
@@ -375,10 +375,10 @@ export class UserPreferencesManager {
       // 更新缓存
       this.preferencesMemoryCache = finalPreferences;
 
-      console.log('[user-preferences-manager] ✅ 偏好设置已保存');
+      console.log('[user-preferences-manager] ✓ setUserPreferences: 成功');
 
     } catch (error) {
-      console.error('[user-preferences-manager] ❌ 保存偏好设置失败:', error);
+      console.error('[user-preferences-manager] ✗ setUserPreferences:', error);
       throw error;
     }
   }
@@ -398,7 +398,7 @@ export class UserPreferencesManager {
       await this.setUserPreferences(updated);
 
     } catch (error) {
-      console.error('[user-preferences-manager] ❌ 更新偏好设置失败:', error);
+      console.error('[user-preferences-manager] ✗ updateUserPreferences:', error);
       throw error;
     }
   }
@@ -411,7 +411,7 @@ export class UserPreferencesManager {
       console.log('[user-preferences-manager] 重置偏好设置为默认值');
       await this.setUserPreferences(DEFAULT_USER_PREFERENCES);
     } catch (error) {
-      console.error('[user-preferences-manager] ❌ 重置偏好设置失败:', error);
+      console.error('[user-preferences-manager] ✗ resetUserPreferences:', error);
       throw error;
     }
   }
@@ -435,7 +435,7 @@ export class UserPreferencesManager {
       return JSON.stringify(exportData, null, 2);
 
     } catch (error) {
-      console.error('[user-preferences-manager] ❌ 导出偏好设置失败:', error);
+      console.error('[user-preferences-manager] ✗ exportUserPreferences:', error);
       throw error;
     }
   }
@@ -465,11 +465,11 @@ export class UserPreferencesManager {
       };
 
       await this.setUserPreferences(imported);
-      console.log('[user-preferences-manager] ✅ 偏好设置导入成功');
+      console.log('[user-preferences-manager] ✓ importUserPreferences: 成功');
       return true;
 
     } catch (error) {
-      console.error('[user-preferences-manager] ❌ 导入偏好设置失败:', error);
+      console.error('[user-preferences-manager] ✗ importUserPreferences:', error);
       return false;
     }
   }
@@ -503,14 +503,14 @@ export class UserPreferencesManager {
       const videoData = await this.storageManager.get<VideoSettings | null>(storageKey, null, 'local');
       
       if (videoData) {
-        console.log(`[UserPreferencesManager] 找到视频 ${videoId} 的特定数据`);
+        console.log(`[user-preferences-manager] ✓ getVideoSettings: ${videoId}`);
         return videoData;
       } else {
-        console.log(`[UserPreferencesManager] 未找到视频 ${videoId} 的特定数据`);
+        console.log(`[user-preferences-manager] getVideoSettings: ${videoId} 未找到`);
         return null;
       }
     } catch (error) {
-      console.error('[UserPreferencesManager] 获取视频特定数据失败:', error);
+      console.error('[user-preferences-manager] 获取视频特定数据失败:', error);
       return null;
     }
   }
@@ -521,7 +521,7 @@ export class UserPreferencesManager {
    */
   public async saveVideoSettings(videoData: VideoSettings): Promise<void> {
     if (!videoData || !videoData.videoId) {
-      console.warn('[UserPreferencesManager] 无效的视频数据，跳过保存');
+      console.warn('[user-preferences-manager] 无效的视频数据，跳过保存');
       return;
     }
 
@@ -560,10 +560,10 @@ export class UserPreferencesManager {
       }
 
       const writeReason = hasChanges ? '数据变更' : '仅时间戳更新';
-      console.log(`[UserPreferencesManager] 保存视频数据 ${videoData.videoId} (${writeReason}): ${changeDetails.length > 0 ? changeDetails.join(', ') : '无实质变更'}`);
+      console.log(`[user-preferences-manager] 保存视频数据 ${videoData.videoId} (${writeReason}): ${changeDetails.length > 0 ? changeDetails.join(', ') : '无实质变更'}`);
 
       await this.storageManager.set(storageKey, dataToSave, 'local');
-      console.log(`[UserPreferencesManager] ✅ 视频 ${videoData.videoId} 数据已保存`);
+      console.log(`[user-preferences-manager] ✓ saveVideoSettings: ${videoData.videoId}`);
 
       // 更新最近使用的视频列表
       await this.updateLastUsedVideos(videoData.videoId);
@@ -571,7 +571,7 @@ export class UserPreferencesManager {
       // 管理缓存大小
       await this.manageCacheSize();
     } catch (error) {
-      console.error('[UserPreferencesManager] 保存视频特定数据失败:', error);
+      console.error('[user-preferences-manager] 保存视频特定数据失败:', error);
     }
   }
 
@@ -591,7 +591,7 @@ export class UserPreferencesManager {
       
       await this.storageManager.set(StorageKeys.LOCAL.LAST_USED_VIDEOS, newList, 'local');
     } catch (error) {
-      console.error('[UserPreferencesManager] 更新最近使用视频列表失败:', error);
+      console.error('[user-preferences-manager] 更新最近使用视频列表失败:', error);
     }
   }
 
@@ -607,7 +607,7 @@ export class UserPreferencesManager {
         .filter(key => key.startsWith(StorageKeys.LOCAL.VIDEO_SETTINGS_PREFIX));
       
       if (videoSettingsKeys.length > MAX_CACHED_VIDEOS) {
-        console.log(`[UserPreferencesManager] 视频缓存数量(${videoSettingsKeys.length})超出限制(${MAX_CACHED_VIDEOS})，开始清理`);
+        console.log(`[user-preferences-manager] 视频缓存数量(${videoSettingsKeys.length})超出限制(${MAX_CACHED_VIDEOS})，开始清理`);
         
         const sortedEntries = videoSettingsKeys
           .map(key => ({
@@ -622,10 +622,10 @@ export class UserPreferencesManager {
           .map(entry => entry.key);
         
         await this.storageManager.remove(keysToRemove, 'local');
-        console.log(`[UserPreferencesManager] 已清理 ${removeCount} 个最老的视频数据`);
+        console.log(`[user-preferences-manager] 已清理 ${removeCount} 个最老的视频数据`);
       }
     } catch (error) {
-      console.error('[UserPreferencesManager] 管理缓存大小失败:', error);
+      console.error('[user-preferences-manager] 管理缓存大小失败:', error);
     }
   }
 } 

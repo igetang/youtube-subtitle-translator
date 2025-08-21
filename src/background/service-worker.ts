@@ -14,7 +14,7 @@ declare global {
   }> | undefined;
 }
 
-console.log('[background] >>>>>> Service Worker 已加载 (完整版) <<<<<<');
+console.log('[service-worker] Service Worker 已加载');
 
 // === 核心模块导入 ===
 import { UserPreferencesManager } from '../shared/storage/user-preferences-manager';
@@ -58,7 +58,7 @@ function isYoutubeUrl(url: string): boolean {
     const urlObj = new URL(url);
     return YOUTUBE_ORIGINS.includes(urlObj.origin);
   } catch (error) {
-    console.warn('[background] URL解析失败:', url, error);
+    console.warn(`[service-worker] ⚠️ URL解析失败: ${url}`, error);
     return false;
   }
 }
@@ -74,7 +74,7 @@ function extractVideoIdFromUrl(url: string): string | null {
     }
     return null;
   } catch (error) {
-    console.warn('[background] 提取视频ID失败:', url, error);
+    console.warn(`[service-worker] ⚠️ 提取视频ID失败: ${url}`, error);
     return null;
   }
 }
@@ -90,7 +90,7 @@ async function getPopupState(): Promise<boolean> {
     
     // 如果有明确的状态，直接返回
     if (typeof settingPanelOpen === 'boolean') {
-      console.log('[状态检测] 使用运行时状态:', settingPanelOpen);
+      console.log(`[service-worker] 状态检测: settingPanelOpen [${settingPanelOpen}]`);
       return settingPanelOpen;
     }
     
@@ -110,7 +110,7 @@ async function getPopupState(): Promise<boolean> {
     // 如果都不支持，返回false
     return false;
   } catch (error) {
-    console.error('[状态检测] 获取Popup状态失败:', error);
+    console.error(`[service-worker] ✗ 获取Popup状态: ${error instanceof Error ? error.message : String(error)}`);
     return false;
   }
 }
@@ -120,6 +120,8 @@ async function getPopupState(): Promise<boolean> {
  * Popup Fallback方案：popup在manifest中配置为全局可用，这里只管理图标状态
  */
 chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
+  // 只在URL改变且页面加载完成时执行，避免重复执行
+  if (!info.url || info.status !== 'complete') return;
   if (!tab.url) return;
   
   try {
@@ -141,7 +143,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
         popup: 'src/popup/popup.html'
       });
       
-      console.log(`[background] ✅ YouTube页面图标和Popup已设置 (标签页: ${tabId})`);
+      console.log(`[service-worker] ✓ YouTube页面图标和Popup已设置 (Tab:${tabId})`);
     } else {
       // 其他网站：设置图标但禁用popup
       await chrome.action.setIcon({
@@ -158,10 +160,10 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
         popup: ''  // 空字符串表示禁用popup
       });
       
-      console.log(`[background] ✅ 非YouTube页面图标已设置，Popup已禁用 (标签页: ${tabId})`);
+      console.log(`[service-worker] ✓ 非YouTube页面图标已设置，Popup已禁用 (Tab:${tabId})`);
     }
   } catch (error) {
-    console.error(`[background] 更新图标和Popup状态失败 (标签页: ${tabId}):`, error);
+    console.error(`[service-worker] ✗ 更新图标和Popup状态 (Tab:${tabId}): ${error instanceof Error ? error.message : String(error)}`);
   }
 });
 
@@ -177,20 +179,20 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
 function setupPortListener(): void {
   chrome.runtime.onConnect.addListener(async (port) => {
     if (port.name === 'popup-lifecycle') {
-      console.log('[background] 🔥 Popup Port连接建立 - 确认Popup已实际打开');
+      console.log('[service-worker] Popup Port连接建立');
       
       try {
         // 🔧 统一状态管理：Port连接 = Popup真正打开
         await runtimeStateManager.setSettingPanelState(true);
         broadcastSidePanelStateChange(true);
-        console.log('[background] ✅ Popup状态已更新为打开');
+        console.log('[service-worker] ✓ popupOpened: 状态已更新');
         
       } catch (error) {
-        console.error('[background] 处理Popup打开事件失败:', error);
+        console.error(`[service-worker] ✗ popupOpened: ${error instanceof Error ? error.message : String(error)}`);
       }
       
       port.onDisconnect.addListener(async () => {
-        console.log('[background] 🔥 检测到Popup关闭（Port断开）');
+        console.log('[service-worker] popup关闭检测');
         
         try {
           // 🔧 统一状态管理：Port断开 = Popup真正关闭
@@ -200,10 +202,10 @@ function setupPortListener(): void {
           // 移除重复的直接消息发送，由broadcastSidePanelStateChange统一处理
           
           broadcastSidePanelStateChange(false);
-          console.log('[background] ✅ Popup状态已更新为关闭，所有标签页已同步');
+          console.log('[service-worker] ✓ popupClosed: 状态已同步');
           
         } catch (error) {
-          console.error('[background] 处理Popup关闭事件失败:', error);
+          console.error(`[service-worker] ✗ popupClosed: ${error instanceof Error ? error.message : String(error)}`);
         }
       });
     }
@@ -219,23 +221,23 @@ setupPortListener();
  * 扩展安装或更新事件
  */
 chrome.runtime.onInstalled.addListener(async (details) => {
-  console.log('[background] onInstalled event:', details);
+  console.log(`[service-worker] <- onInstalled (${details.reason})`);
   
   try {
     await initializeManagers();
     
     switch (details.reason) {
       case 'install':
-        console.log('[background] 扩展首次安装，初始化默认设置');
+        console.log('[service-worker] 扩展首次安装，初始化默认设置');
         await setupDefaultSettings();
         break;
       case 'update':
-        console.log('[background] 扩展更新，检查数据迁移');
+        console.log('[service-worker] 扩展更新，检查数据迁移');
         await handleUpdate(details.previousVersion);
         break;
     }
   } catch (error) {
-    console.error('[background] onInstalled 初始化失败:', error);
+    console.error(`[service-worker] ✗ onInstalled: ${error instanceof Error ? error.message : String(error)}`);
   }
 });
 
@@ -243,7 +245,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
  * Chrome 浏览器启动事件
  */
 chrome.runtime.onStartup.addListener(async () => {
-  console.log('[background] onStartup event');
+  console.log('[service-worker] <- onStartup');
   
   try {
     await initializeManagers();
@@ -257,9 +259,9 @@ chrome.runtime.onStartup.addListener(async () => {
         48: 'icons/icon48-disabled.png'
       }
     });
-    console.log('[background] ✅ 启动时Popup状态已设置为禁用');
+    console.log('[service-worker] ✓ onStartup: Popup状态已禁用');
   } catch (error) {
-    console.error('[background] onStartup 初始化失败:', error);
+    console.error(`[service-worker] ✗ onStartup: ${error instanceof Error ? error.message : String(error)}`);
   }
 });
 
@@ -267,7 +269,7 @@ chrome.runtime.onStartup.addListener(async () => {
  * Service Worker 激活事件
  */
 self.addEventListener('activate', (event: any) => {
-  console.log('[background] Service Worker activated');
+  console.log('[service-worker] <- activate');
   // 不重复初始化，onInstalled和onStartup已处理
 });
 
@@ -281,17 +283,11 @@ self.addEventListener('activate', (event: any) => {
  * 基于 architecture.md 3.4 按钮交互完整流程设计
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('[background] ===== 收到消息 =====');
-  console.log('[background] 消息内容:', message);
-  console.log('[background] 消息类型:', message.type || message.action);
+  console.log(`[service-worker] 收到消息: ${message.type || message.action} (来自${sender.tab?.id ? `标签页:${sender.tab.id}` : '扩展内部'})`);
   
   // 🎯 同步处理层：Popup操作处理
   // 替代原有的SidePanel逻辑，改为Popup实现
   if (message.type === 'togglePopup') {
-    console.log(`[background] 🚀 直接处理togglePopup, 来自: ${
-      sender.tab ? `标签页ID ${sender.tab.id}` : '扩展内部'
-    }`);
-    
     const tabId = sender.tab?.id;
     const tabUrl = sender.tab?.url;
     
@@ -305,7 +301,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     
     // 检测当前Popup状态并执行相反操作
     getPopupState().then(isCurrentlyOpen => {
-      console.log(`[background] 翻译按钮，当前Popup状态: ${isCurrentlyOpen ? '已打开' : '未打开'}`);
+      console.log(`[service-worker] 状态变更: popupOpen [${isCurrentlyOpen}]`);
       
       if (isCurrentlyOpen) {
         // 当前打开 → 关闭
@@ -313,11 +309,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         chrome.runtime.sendMessage({
           type: 'closePopup'
         }).then(() => {
-          console.log(`[background] ❌ Popup已关闭 (翻译按钮)`);
+          console.log(`[service-worker] ✓ closePopup`);
           sendResponse({ success: true, status: 'closed', newState: false });
         }).catch(error => {
-          console.error(`[background] 关闭Popup失败:`, error);
-          sendResponse({ success: false, error: error.message });
+          console.error(`[service-worker] ✗ closePopup: ${error instanceof Error ? error.message : String(error)}`);
+          sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) });
         });
       } else {
         // 当前关闭 → 打开
@@ -327,17 +323,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           popup: 'src/popup/popup.html'
         }, () => {
           if (chrome.runtime.lastError) {
-            console.error(`[background] 设置Popup路径失败:`, chrome.runtime.lastError);
+            console.error(`[service-worker] ✗ setPopup: ${chrome.runtime.lastError?.message}`);
             sendResponse({ success: false, error: chrome.runtime.lastError.message });
             return;
           }
           
           // 路径设置成功后，打开popup
           chrome.action.openPopup().then(() => {
-            console.log(`[background] ✅ Popup已打开 (翻译按钮)`);
+            console.log(`[service-worker] ✓ openPopup`);
             sendResponse({ success: true, status: 'opened', newState: true });
           }).catch(error => {
-            console.error(`[background] 打开Popup失败:`, error);
+            console.error(`[service-worker] ✗ openPopup: ${error instanceof Error ? error.message : String(error)}`);
             // 如果openPopup失败（可能是Chrome版本问题），尝试备用方案
             const popupUrl = chrome.runtime.getURL('src/popup/popup.html');
             chrome.windows.create({
@@ -349,7 +345,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               if (chrome.runtime.lastError) {
                 sendResponse({ success: false, error: chrome.runtime.lastError.message });
               } else {
-                console.log(`[background] ✅ Popup已通过windows.create打开（备用方案）`);
+                console.log(`[service-worker] ✓ openPopup (备用方案)`);
                 sendResponse({ success: true, status: 'opened_window', newState: true });
               }
             });
@@ -357,8 +353,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
       }
     }).catch(error => {
-      console.error(`[background] 获取Popup状态失败:`, error);
-      sendResponse({ success: false, error: error.message });
+      console.error(`[service-worker] ✗ getPopupState: ${error instanceof Error ? error.message : String(error)}`);
+      sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) });
     });
     
     return true; // 异步响应
@@ -384,13 +380,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   // 📦 其他消息使用异步处理（业务逻辑消息）
-  const skipGeneralLog = ['sidePanelActuallyOpened', 'sidePanelActuallyClosed'];
-  if (!skipGeneralLog.includes(message.type)) {
-    console.log(`[background] 收到异步消息: type='${message.type}', 来自: ${
-      sender.tab ? `标签页ID ${sender.tab.id} (${sender.tab.url})` : '扩展内部'
-    }`, message);
-  }
-
   handleAsyncMessage(message, sender, sendResponse);
   return true; // 异步响应
 });
@@ -403,7 +392,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  * 🔧 监听标签页关闭
  */
 chrome.tabs.onRemoved.addListener((tabId) => {
-  console.log(`[background] 标签页 ${tabId} 已关闭`);
+  console.log(`[service-worker] 标签页 ${tabId} 已关闭`);
 });
 
 
@@ -422,7 +411,7 @@ async function handleAsyncMessage(
     const response = await routeMessage(message, sender);
     sendResponse(response);
   } catch (error) {
-    console.error(`[background] 处理异步消息失败 (${message.type}):`, error);
+    console.error(`[service-worker] ✗ ${message.type}: ${error instanceof Error ? error.message : String(error)}`);
     sendResponse({
       success: false,
       error: error instanceof Error ? error.message : '消息处理失败'
@@ -441,8 +430,6 @@ async function routeMessage(
 ): Promise<any> {
   const { type, data } = message;
   
-  console.log('[background] routeMessage 处理消息类型:', type);
-  console.log('[background] routeMessage 消息数据:', data);
   
   switch (type) {
     // === Popup 相关消息 ===
@@ -480,7 +467,7 @@ async function routeMessage(
     
     // 🔧 向后兼容：保留closeSidePanel处理器
     case 'closeSidePanel':
-      console.warn('[background] closeSidePanel 已废弃，建议使用 toggleSidePanel');
+      console.warn('[service-worker] ⚠️ closeSidePanel 已废弃');
       return await handleCloseSidePanel(sender);
     
     case 'openPopupFallback':
@@ -503,14 +490,14 @@ async function routeMessage(
       const setStateValue = data?.value;
       
       if (!setStateKey) {
-        console.error('[background] setRuntimeState: 缺少stateKey或key参数');
+        console.error('[service-worker] setRuntimeState: 缺少stateKey或key参数');
         return {
           success: false,
           error: 'Missing stateKey or key parameter'
         };
       }
       
-      console.log(`[background] setRuntimeState: ${setStateKey}=${setStateValue}`);
+      console.log(`[service-worker] setRuntimeState: ${setStateKey}=${setStateValue}`);
       return await handleRuntimeStateSet({ stateKey: setStateKey, value: setStateValue });
     
     case 'RUNTIME_STATE_GET_ALL':
@@ -578,7 +565,7 @@ async function routeMessage(
     
     // === UI状态更新消息 ===
     case 'ui_state_update':
-      console.log('[background] 收到UI状态更新消息:', data);
+      console.log('[service-worker] <- UI_STATE_UPDATE');
       return {
         success: true,
         message: 'UI state update received'
@@ -594,7 +581,7 @@ async function routeMessage(
     // === 新增：处理SidePanel打开通知 ===
     case 'sidePanelOpened':
       // SidePanel通知已打开，我们可以在这里处理相关逻辑
-      console.log('[background] 收到SidePanel打开通知');
+      console.log('[service-worker] <- SIDEPANEL_OPENED');
       return {
         success: true,
         message: 'SidePanel opened notification received'
@@ -613,12 +600,12 @@ async function routeMessage(
     
     // === 翻译控制 ===
     case 'TOGGLE_TRANSLATE':
-      console.log('[background] 进入 TOGGLE_TRANSLATE case 分支');
-      console.log('[background] 准备调用 handleToggleTranslate，参数:', { sender, data });
+      console.log('[service-worker] 进入 TOGGLE_TRANSLATE case 分支');
+      console.log('[service-worker] 准备调用 handleToggleTranslate，参数:', { sender, data });
       return await handleToggleTranslate(sender, data);
     
     default:
-      console.warn(`[background] 未知消息类型: ${type}`);
+      console.warn(`[service-worker] 未知消息类型: ${type}`);
       return {
         success: false,
         error: `未知消息类型: ${type}`
@@ -634,7 +621,7 @@ async function routeMessage(
  */
 async function handleOpenPopup(sender: chrome.runtime.MessageSender, data?: any): Promise<any> {
   if (!sender.tab || !sender.tab.id) {
-    console.warn('[background] openPopup 缺少有效的标签页信息');
+    console.warn('[service-worker] ⚠️ openPopup: 缺少有效的标签页信息');
     return {
       success: false,
       error: 'Invalid sender for opening popup'
@@ -644,11 +631,9 @@ async function handleOpenPopup(sender: chrome.runtime.MessageSender, data?: any)
   const tabId = sender.tab.id;
   const tabUrl = sender.tab.url;
   
-  console.log(`[background] 收到打开Popup请求，标签页: ${tabId}`);
-  
   // 检查是否为YouTube页面
   if (!tabUrl || !isYoutubeUrl(tabUrl)) {
-    console.warn(`[background] 非YouTube页面不能打开Popup: ${tabUrl}`);
+    console.warn(`[service-worker] ⚠️ 非YouTube页面: ${tabUrl}`);
     return {
       success: false,
       error: '只有YouTube页面才能打开翻译设置面板'
@@ -668,7 +653,7 @@ async function handleOpenPopup(sender: chrome.runtime.MessageSender, data?: any)
     // 更新运行时状态（使用全局实例）
     await runtimeStateManager.setSettingPanelState(true);
     
-    console.log(`[background] ✅ Popup已打开`);
+    console.log(`[service-worker] ✓ Popup已打开`);
     
     return {
       success: true,
@@ -676,7 +661,7 @@ async function handleOpenPopup(sender: chrome.runtime.MessageSender, data?: any)
     };
     
   } catch (error) {
-    console.error('[background] 打开Popup失败:', error);
+    console.error('[service-worker] 打开Popup失败:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to open popup'
@@ -690,7 +675,7 @@ async function handleOpenPopup(sender: chrome.runtime.MessageSender, data?: any)
  */
 async function handleTogglePopup(sender: chrome.runtime.MessageSender, data?: any): Promise<any> {
   if (!sender.tab || !sender.tab.id) {
-    console.warn('[background] togglePopup 缺少有效的标签页信息');
+    console.warn('[service-worker] ⚠️ togglePopup: 缺少有效的标签页信息');
     return {
       success: false,
       error: 'Invalid sender for toggling popup'
@@ -701,11 +686,9 @@ async function handleTogglePopup(sender: chrome.runtime.MessageSender, data?: an
   const tabUrl = sender.tab.url;
   const source = data?.source || 'translation-button';
   
-  console.log(`[background] 收到切换 Popup 请求，标签页: ${tabId}，来源: ${source}`);
-  
   // 检查是否为YouTube页面
   if (!tabUrl || !isYoutubeUrl(tabUrl)) {
-    console.warn(`[background] 非YouTube页面不能操作Popup: ${tabUrl}`);
+    console.warn(`[service-worker] ⚠️ 非YouTube页面: ${tabUrl}`);
     return {
       success: false,
       error: '只有YouTube页面才能打开翻译设置面板',
@@ -717,11 +700,11 @@ async function handleTogglePopup(sender: chrome.runtime.MessageSender, data?: an
     // 🔥 关键修复：检测Popup真实状态
     const isCurrentlyOpen = await getPopupState();
     
-    console.log(`[background] 当前Popup状态: ${isCurrentlyOpen ? '已打开' : '已关闭'}`);
+    console.log(`[service-worker] 当前Popup状态: ${isCurrentlyOpen ? '已打开' : '已关闭'}`);
     
     if (isCurrentlyOpen) {
       // 当前已打开，无法直接关闭Popup，返回提示
-      console.log(`[background] ⚠️ Popup已打开，无法通过API关闭 (标签页: ${tabId})`);
+      console.log(`[service-worker] ⚠️ Popup已打开，无法通过API关闭 (标签页: ${tabId})`);
       
       return {
         success: true,
@@ -731,7 +714,7 @@ async function handleTogglePopup(sender: chrome.runtime.MessageSender, data?: an
       };
     } else {
       // 当前未打开，执行打开操作
-      console.log(`[background] 🚀 准备打开Popup (标签页: ${tabId})`);
+      console.log(`[service-worker] 准备打开Popup (Tab:${tabId})`);
       
       // 确保popup路径设置正确
       await chrome.action.setPopup({
@@ -741,7 +724,7 @@ async function handleTogglePopup(sender: chrome.runtime.MessageSender, data?: an
       
       // 🔥 用户手势上下文：直接调用openPopup()
       await chrome.action.openPopup();
-      console.log(`[background] ✅ Popup已打开 (标签页: ${tabId})`);
+      console.log(`[service-worker] ✓ Popup已打开 (Tab:${tabId})`);
       
       return {
         success: true,
@@ -752,14 +735,14 @@ async function handleTogglePopup(sender: chrome.runtime.MessageSender, data?: an
     }
     
   } catch (error) {
-    console.error(`[background] 切换 Popup 失败，标签页: ${tabId}:`, error);
+    console.error(`[service-worker] 切换 Popup 失败，标签页: ${tabId}:`, error);
     
     // 分析具体错误类型
     const errorMessage = error instanceof Error ? error.message : '未知错误';
     
     // 🔥 用户手势上下文错误处理
     if (errorMessage.includes('user gesture') || errorMessage.includes('user activation')) {
-      console.error('[background] ❌ 用户手势上下文不足，无法打开Popup');
+      console.error('[service-worker] ✗ 用户手势上下文不足');
       return {
         success: false,
         error: '需要用户手势上下文才能打开Popup',
@@ -785,12 +768,10 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
   const { tabId } = message;
   
   try {
-    console.log(`[background] 处理getPopupInitData请求，标签页ID: ${tabId}`);
-    
     // 1. 获取标签页信息
     const tab = await chrome.tabs.get(tabId);
     if (!tab || !tab.url) {
-      console.warn(`[background] 无法获取标签页信息: ${tabId}`);
+      console.warn(`[service-worker] ⚠️ 无法获取标签页信息: ${tabId}`);
       return {
         type: 'popupInitDataResponse',
         popupContext: null
@@ -800,7 +781,7 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
     // 2. 检查是否为YouTube页面
     const isYoutube = isYoutubeUrl(tab.url);
     if (!isYoutube) {
-      console.log(`[background] 非YouTube页面: ${tab.url}`);
+      console.log(`[service-worker] 非YouTube页面: ${tab.url}`);
       return {
         type: 'popupInitDataResponse',
         popupContext: null
@@ -810,7 +791,7 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
     // 3. 提取视频ID
     const videoId = extractVideoIdFromUrl(tab.url);
     if (!videoId) {
-      console.warn(`[background] 无法提取视频ID: ${tab.url}`);
+      console.warn(`[service-worker] ⚠️ 无法提取视频ID: ${tab.url}`);
       return {
         type: 'popupInitDataResponse',
         popupContext: null
@@ -826,7 +807,7 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
     let detectedSourceLang = 'auto';
     
     try {
-      console.log(`[background] 向Content Script请求字幕轨道数据...`);
+      console.log(`[service-worker] 请求Content Script字幕轨道数据`);
       const trackResponse = await chrome.tabs.sendMessage(tabId, {
         type: 'getVideoTrackData',
         videoId
@@ -834,12 +815,12 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
       
       if (trackResponse && trackResponse.success && trackResponse.trackData) {
         availableSourceLanguages = trackResponse.trackData;
-        console.log(`[background] 获取到${availableSourceLanguages.length}个字幕轨道`);
+        console.log(`[service-worker] 获取到${availableSourceLanguages.length}个字幕轨道`);
       } else {
-        console.warn(`[background] 获取字幕轨道数据失败:`, trackResponse);
+        console.warn(`[service-worker] ⚠️ 获取字幕轨道数据失败`, trackResponse);
       }
     } catch (error) {
-      console.error(`[background] 请求字幕轨道数据失败:`, error);
+      console.error(`[service-worker] ✗ 请求字幕轨道数据: ${error instanceof Error ? error.message : String(error)}`);
     }
     
     // 6. 构建PopupContext
@@ -855,7 +836,7 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
       availableSourceLanguages
     };
     
-    console.log(`[background] PopupContext已构建:`, popupContext);
+    console.log(`[service-worker] PopupContext已构建:`, popupContext);
     
     return {
       type: 'popupInitDataResponse',
@@ -863,7 +844,7 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
     };
     
   } catch (error) {
-    console.error(`[background] 处理getPopupInitData失败:`, error);
+    console.error(`[service-worker] ✗ getPopupInitData: ${error instanceof Error ? error.message : String(error)}`);
     return {
       type: 'popupInitDataResponse',
       popupContext: null,
@@ -877,7 +858,7 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
  */
 async function handlePopupOpened(sender: chrome.runtime.MessageSender): Promise<any> {
   try {
-    console.log(`[background] 处理popupOpened事件`);
+    console.log(`[service-worker] <- popupOpened`);
     
     // 更新运行时状态（使用全局实例）
     await runtimeStateManager.setSettingPanelState(true);
@@ -891,7 +872,7 @@ async function handlePopupOpened(sender: chrome.runtime.MessageSender): Promise<
     };
     
   } catch (error) {
-    console.error(`[background] 处理popupOpened失败:`, error);
+    console.error(`[service-worker] ✗ popupOpened: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
       error: error instanceof Error ? error.message : '处理Popup打开事件失败'
@@ -904,7 +885,7 @@ async function handlePopupOpened(sender: chrome.runtime.MessageSender): Promise<
  */
 async function handlePopupClosed(sender: chrome.runtime.MessageSender): Promise<any> {
   try {
-    console.log(`[background] 处理popupClosed事件`);
+    console.log(`[service-worker] <- popupClosed`);
     
     // 更新运行时状态（使用全局实例）
     await runtimeStateManager.setSettingPanelState(false);
@@ -918,7 +899,7 @@ async function handlePopupClosed(sender: chrome.runtime.MessageSender): Promise<
     };
     
   } catch (error) {
-    console.error(`[background] 处理popupClosed失败:`, error);
+    console.error(`[service-worker] ✗ popupClosed: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
       error: error instanceof Error ? error.message : '处理Popup关闭事件失败'
@@ -931,7 +912,7 @@ async function handlePopupClosed(sender: chrome.runtime.MessageSender): Promise<
  */
 async function handlePopupBlurred(sender: chrome.runtime.MessageSender): Promise<any> {
   try {
-    console.log(`[background] 处理popupBlurred事件`);
+    console.log(`[service-worker] <- popupBlurred`);
     
     // 对于失去焦点事件，我们只记录日志，不改变状态
     // 因为用户可能只是临时点击了其他地方，popup仍然可能是打开的
@@ -942,7 +923,7 @@ async function handlePopupBlurred(sender: chrome.runtime.MessageSender): Promise
     };
     
   } catch (error) {
-    console.error(`[background] 处理popupBlurred失败:`, error);
+    console.error(`[service-worker] ✗ popupBlurred: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
       error: error instanceof Error ? error.message : '处理Popup失去焦点事件失败'
@@ -957,7 +938,7 @@ async function handlePopupBlurred(sender: chrome.runtime.MessageSender): Promise
  */
 async function handleToggleSidePanel(sender: chrome.runtime.MessageSender, data?: any): Promise<any> {
   if (!sender.tab || !sender.tab.id) {
-    console.warn('[background] toggleSidePanel 缺少有效的标签页信息');
+    console.warn('[service-worker] ⚠️ toggleSidePanel: 缺少有效的标签页信息');
     return {
       success: false,
       error: 'Invalid sender for toggling side panel'
@@ -968,11 +949,9 @@ async function handleToggleSidePanel(sender: chrome.runtime.MessageSender, data?
   const tabUrl = sender.tab.url;
   const source = data?.source || 'translation-button';
   
-  console.log(`[background] 收到切换 SidePanel 请求，标签页: ${tabId}，来源: ${source}`);
-  
   // 检查是否为YouTube页面
   if (!tabUrl || !isYoutubeUrl(tabUrl)) {
-    console.warn(`[background] 非YouTube页面不能操作SidePanel: ${tabUrl}`);
+    console.warn(`[service-worker] ⚠️ toggleSidePanel: 非YouTube页面 ${tabUrl}`);
     return {
       success: false,
       error: '只有YouTube页面才能打开翻译设置面板',
@@ -985,12 +964,12 @@ async function handleToggleSidePanel(sender: chrome.runtime.MessageSender, data?
     // 1. 首先从存储获取当前状态
     const isCurrentlyEnabled = await runtimeStateManager.getSettingPanelState();
     
-    console.log(`[background] 当前SidePanel存储状态: enabled=${isCurrentlyEnabled}`);
+    console.log(`[service-worker] SidePanel状态: enabled=${isCurrentlyEnabled}`);
     
     if (isCurrentlyEnabled) {
       // 当前已启用，执行关闭操作
       await chrome.sidePanel.setOptions({ tabId, enabled: false });
-      console.log(`[background] ❌ SidePanel已关闭 (标签页: ${tabId})`);
+      console.log(`[service-worker] ✓ SidePanel已关闭 (Tab:${tabId})`);
       
       // 🔧 移除状态更新：统一由Port断开监听器处理
       // 职责分离：toggleSidePanel只负责Chrome API调用
@@ -1011,7 +990,7 @@ async function handleToggleSidePanel(sender: chrome.runtime.MessageSender, data?
       
       // 直接调用open()，保持在用户手势上下文中
       await chrome.sidePanel.open({ tabId });
-      console.log(`[background] ✅ SidePanel已打开 (标签页: ${tabId})`);
+      console.log(`[service-worker] ✓ SidePanel已打开 (Tab:${tabId})`);
       
       // 🔧 移除状态更新：统一由Port连接监听器处理
       // 职责分离：toggleSidePanel只负责Chrome API调用
@@ -1025,11 +1004,11 @@ async function handleToggleSidePanel(sender: chrome.runtime.MessageSender, data?
     }
     
   } catch (error) {
-    console.error(`[background] 切换 SidePanel 失败，标签页: ${tabId}:`, error);
+    console.error(`[service-worker] ✗ toggleSidePanel (Tab:${tabId}): ${error instanceof Error ? error.message : String(error)}`);
     
     // 分析具体错误类型
     const errorMessage = error instanceof Error ? error.message : '未知错误';
-    console.warn(`[background] 错误详情: ${errorMessage}`);
+    console.warn(`[service-worker] ⚠️ 错误详情: ${errorMessage}`);
     
     return {
       success: false,
@@ -1047,27 +1026,27 @@ async function handleToggleSidePanel(sender: chrome.runtime.MessageSender, data?
  * 直接打开popup，如果失败给出提示
  */
 async function fallbackToPopup(reason: string): Promise<void> {
-  console.log(`[background] 🔄 降级到Popup，原因: ${reason}`);
+  console.log(`[service-worker] 🔄 降级到Popup，原因: ${reason}`);
   
   try {
     // 设置popup路径并立即打开
     chrome.action.setPopup({ popup: 'src/popup/popup.html' }, async () => {
       if (chrome.runtime.lastError) {
-        console.error('[background] ❌ 设置popup路径失败:', chrome.runtime.lastError);
+        console.error(`[service-worker] ✗ 设置popup路径: ${chrome.runtime.lastError?.message}`);
         return;
       }
       
       // 立即打开popup
       try {
         await chrome.action.openPopup();
-        console.log('[background] ✅ Popup已打开');
+        console.log('[service-worker] ✓ Popup已打开');
       } catch (error) {
-        console.error('[background] ❌ 打开popup失败:', error);
-        console.log('[background] ⚠️ 请再次点击扩展图标打开设置');
+        console.error(`[service-worker] ✗ 打开popup: ${error instanceof Error ? error.message : String(error)}`);
+        console.log('[service-worker] ⚠️ 请再次点击扩展图标打开设置');
       }
     });
   } catch (error) {
-    console.error('[background] ❌ Popup降级处理失败:', error);
+    console.error(`[service-worker] ✗ Popup降级处理: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -1092,16 +1071,16 @@ async function getSidePanelState(): Promise<boolean> {
  */
 async function testSidePanelStateWithGetContexts(tabId: number): Promise<void> {
   try {
-    console.log(`[background] 🧪 测试getContexts检测SidePanel状态，标签页: ${tabId}`);
+    console.log(`[service-worker] 测试getContexts检测 (Tab:${tabId})`);
     
     // 方法1：检测所有SidePanel上下文
     const allSidePanelContexts = await chrome.runtime.getContexts({
       contextTypes: [chrome.runtime.ContextType.SIDE_PANEL],
     });
     
-    console.log(`[background] 🧪 所有SidePanel上下文数量: ${allSidePanelContexts.length}`);
+    console.log(`[service-worker] SidePanel上下文数量: ${allSidePanelContexts.length}`);
     allSidePanelContexts.forEach((context, index) => {
-      console.log(`[background] 🧪 SidePanel上下文 ${index}:`, {
+      console.log(`[service-worker] SidePanel上下文 ${index}:`, {
         contextId: context.contextId,
         contextType: context.contextType,
         tabId: context.tabId,
@@ -1116,27 +1095,27 @@ async function testSidePanelStateWithGetContexts(tabId: number): Promise<void> {
       tabIds: [tabId]
     });
     
-    console.log(`[background] 🧪 标签页${tabId}的SidePanel上下文数量: ${tabSpecificContexts.length}`);
+    console.log(`[service-worker] 标签页${tabId}SidePanel上下文数量: ${tabSpecificContexts.length}`);
     
     // 方法3：对比getOptions结果
     const options = await chrome.sidePanel.getOptions({ tabId });
-    console.log(`[background] 🧪 getOptions结果:`, {
+    console.log(`[service-worker] getOptions结果:`, {
       enabled: options.enabled,
       path: options.path
     });
     
     // 方法4：对比统一状态管理器
     const managerState = runtimeStateManager.getSettingPanelStateSync();
-    console.log(`[background] 🧪 状态管理器状态: ${managerState}`);
+    console.log(`[service-worker] 状态管理器状态: ${managerState}`);
     
     // 方法5：使用新的权威状态检测
     const authoritative = await getSidePanelState();
-    console.log(`[background] 🧪 权威状态检测结果: ${authoritative}`);
+    console.log(`[service-worker] 权威状态检测: ${authoritative}`);
     
     // 总结对比
     const isOpenByGetContexts = tabSpecificContexts.length > 0;
     const isEnabledByGetOptions = options.enabled ?? false;
-    console.log(`[background] 🧪 状态对比总结:`, {
+    console.log(`[service-worker] 状态对比总结:`, {
       'getContexts检测结果': isOpenByGetContexts ? '已打开' : '未打开',
       'getOptions检测结果': isEnabledByGetOptions ? '已启用' : '未启用',
       '状态管理器状态': managerState ? '已打开' : '未打开',
@@ -1145,7 +1124,7 @@ async function testSidePanelStateWithGetContexts(tabId: number): Promise<void> {
     });
     
   } catch (error) {
-    console.error(`[background] 🧪 测试getContexts时出错:`, error);
+    console.error(`[service-worker] ✗ 测试getContexts: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -1160,11 +1139,9 @@ async function handleToggleSidePanelSync(sender: chrome.runtime.MessageSender, d
   const source = data?.source || 'translation-button';
   
   if (!tabId || !tabUrl || !isYoutubeUrl(tabUrl)) {
-    console.warn(`[background] toggleSidePanelSync: 无效请求，标签页: ${tabId}`);
+    console.warn(`[service-worker] ⚠️ toggleSidePanelSync: 无效请求 (Tab:${tabId})`);
     return { success: false, fallback: 'popup', error: '只有YouTube页面才能打开翻译设置面板' };
   }
-
-  console.log(`[background] 🚀 开始处理SidePanel切换（用户手势上下文保持），标签页: ${tabId}`);
 
   try {
     // 🎯 使用官方推荐的getContexts()方法检测SidePanel实际状态
@@ -1174,16 +1151,16 @@ async function handleToggleSidePanelSync(sender: chrome.runtime.MessageSender, d
     });
     
     const isActuallyOpen = sidePanelContexts.length > 0;
-    console.log(`[background] ✅ getContexts()检测结果: ${isActuallyOpen ? '已打开' : '未打开'} (上下文数量: ${sidePanelContexts.length})`);
+    console.log(`[service-worker] getContexts检测: ${isActuallyOpen ? '已打开' : '未打开'} (上下文: ${sidePanelContexts.length})`);
     
     // 🧪 保留测试函数进行对比
     testSidePanelStateWithGetContexts(tabId);
 
     if (isActuallyOpen) {
       // 当前打开 → 关闭
-      console.log(`[background] 🎯 执行关闭操作...`);
+      console.log(`[service-worker] 执行关闭操作`);
       await chrome.sidePanel.setOptions({ tabId, enabled: false });
-      console.log(`[background] ❌ SidePanel已关闭 (翻译按钮, 标签页: ${tabId})`);
+      console.log(`[service-worker] ✓ SidePanel已关闭 (Tab:${tabId})`);
       
       // 🔧 移除状态更新：统一由Port断开监听器处理
       // 原有的缓存清理已不需要（SidePanel已废弃）
@@ -1195,7 +1172,7 @@ async function handleToggleSidePanelSync(sender: chrome.runtime.MessageSender, d
       
     } else {
       // 当前关闭 → 打开
-      console.log(`[background] 🎯 执行打开操作（保持用户手势上下文）...`);
+      console.log(`[service-worker] 执行打开操作`);
       
       // 🔥 关键修复：在用户手势上下文中同步执行所有操作
       await chrome.sidePanel.setOptions({ 
@@ -1204,7 +1181,7 @@ async function handleToggleSidePanelSync(sender: chrome.runtime.MessageSender, d
         enabled: true 
       });
       await chrome.sidePanel.open({ tabId }); // 🔥 必须在用户手势上下文中同步调用
-      console.log(`[background] ✅ SidePanel已打开 (翻译按钮, 标签页: ${tabId})`);
+      console.log(`[service-worker] ✓ SidePanel已打开 (Tab:${tabId})`);
       
       // 🔧 移除状态更新：统一由Port连接监听器处理
       // 原有的缓存清理已不需要（SidePanel已废弃）
@@ -1216,7 +1193,7 @@ async function handleToggleSidePanelSync(sender: chrome.runtime.MessageSender, d
     }
     
   } catch (error) {
-    console.error(`[background] SidePanel操作失败:`, error);
+    console.error(`[service-worker] SidePanel操作失败:`, error);
     return { 
       success: false, 
       error: error instanceof Error ? error.message : 'Unknown error', 
@@ -1272,7 +1249,7 @@ function handleOpenSidePanelSync(sender: chrome.runtime.MessageSender, message?:
  */
 async function handleOpenSidePanel(sender: chrome.runtime.MessageSender, message?: any): Promise<any> {
   if (!sender.tab || !sender.tab.id || !sender.tab.url) {
-    console.warn('[background] openSidePanel 缺少有效的标签页信息');
+    console.warn('[service-worker] ⚠️ openSidePanel: 缺少有效的标签页信息');
     return {
       success: false,
       status: 'error',
@@ -1283,11 +1260,9 @@ async function handleOpenSidePanel(sender: chrome.runtime.MessageSender, message
   const tabId = sender.tab.id;
   const tabUrl = sender.tab.url;
   const source = message?.source || 'user-action';
-  console.log(`[background] 收到为标签页 ${tabId} (${tabUrl}) 打开 SidePanel 的请求，来源: ${source}`);
-
   // 检查是否为YouTube页面
   if (!isYoutubeUrl(tabUrl)) {
-    console.warn(`[background] 非YouTube页面不能打开SidePanel: ${tabUrl}`);
+    console.warn(`[service-worker] ⚠️ 非YouTube页面: ${tabUrl}`);
     return {
       success: false,
       status: 'error',
@@ -1298,23 +1273,23 @@ async function handleOpenSidePanel(sender: chrome.runtime.MessageSender, message
   }
 
   try {
-    console.log('[background] 设置sidepanel选项...');
+    console.log('[service-worker] 设置sidepanel选项');
     
     // 设置sidepanel选项（同步调用）- 官方推荐模式：只控制enabled状态
     await chrome.sidePanel.setOptions({
       tabId,
       enabled: true
     });
-    console.log(`[background] SidePanel已设置为启用 (标签页: ${tabId})`);
+    console.log(`[service-worker] SidePanel已设置为启用 (标签页: ${tabId})`);
     
     // 🔥 关键修复：只在真正的用户操作时才调用sidePanel.open()
     if (source === 'user-action') {
       // 添加短暂延迟确保setOptions生效，然后打开sidepanel
       try {
         await chrome.sidePanel.open({ tabId });
-        console.log(`[background] ✅ SidePanel 打开成功 (YouTube标签页: ${tabId})`);
+        console.log(`[service-worker] ✓ SidePanel打开成功 (Tab:${tabId})`);
       } catch (openError) {
-        console.error(`[background] ❌ SidePanel 打开失败:`, openError);
+        console.error(`[service-worker] ✗ SidePanel打开: ${openError instanceof Error ? openError.message : String(openError)}`);
         // 返回降级信息
         return {
           success: false,
@@ -1324,24 +1299,24 @@ async function handleOpenSidePanel(sender: chrome.runtime.MessageSender, message
         };
       }
     } else {
-      console.log(`[background] 跨标签页同步操作，只设置enabled状态，不强制打开 (${source})`);
+      console.log(`[service-worker] 跨标签页同步操作 (${source})`);
     }
     
     // 🔧 关键修复：只有非跨标签页同步时才更新全局状态，避免无限循环
     if (source !== 'cross-tab-sync') {
       // 🔧 优化：移除状态保存，由Port连接处理
-      console.log(`[background] 状态保存将由Port连接处理，跳过重复保存`);
+      console.log(`[service-worker] 状态保存由Port连接处理`);
       // runtimeStateManager.setSettingPanelState(true).then(() => {
-      //   console.log(`[background] ✅ session storage更新成功: settingPanelOpen=true`);
+      //   console.log(`[service-worker] ✅ session storage更新成功: settingPanelOpen=true`);
       // }).catch(error => {
-      //   console.warn('[background] ❌ 更新运行时状态失败:', error);
+      //   console.warn('[service-worker] ❌ 更新运行时状态失败:', error);
       // });
       
       // 🔧 移除重复广播：此函数已被handleToggleSidePanelSync替代
       // handleToggleSidePanelSync已在第650行执行广播，避免重复
       // broadcastSidePanelStateChange(true); // ❌ 已移除重复广播
     } else {
-      console.log('[background] 跨标签页同步操作，跳过全局状态更新');
+      console.log('[service-worker] 跨标签页同步操作');
     }
     
     return {
@@ -1351,7 +1326,7 @@ async function handleOpenSidePanel(sender: chrome.runtime.MessageSender, message
       opened: source === 'user-action' ? 'side_panel' : 'enabled_only'
     };
   } catch (error) {
-    console.error(`[background] 处理 SidePanel 请求失败:`, error);
+    console.error(`[service-worker] ✗ openSidePanel: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
       status: 'error',
@@ -1366,7 +1341,7 @@ async function handleOpenSidePanel(sender: chrome.runtime.MessageSender, message
  */
 async function handleCloseSidePanel(sender: chrome.runtime.MessageSender): Promise<any> {
   if (!sender.tab || !sender.tab.id) {
-    console.warn('[background] closeSidePanel 缺少有效的标签页ID');
+    console.warn('[service-worker] ⚠️ closeSidePanel: 缺少有效的标签页ID');
     return {
       success: false,
       error: 'Invalid sender for closing side panel'
@@ -1374,7 +1349,7 @@ async function handleCloseSidePanel(sender: chrome.runtime.MessageSender): Promi
   }
 
   const tabId = sender.tab.id;
-  console.log(`[background] 为标签页 ${tabId} 关闭 SidePanel`);
+  console.log(`[service-worker] 为标签页 ${tabId} 关闭 SidePanel`);
 
   try {
     // 方法1：设置为禁用状态
@@ -1382,7 +1357,7 @@ async function handleCloseSidePanel(sender: chrome.runtime.MessageSender): Promi
       tabId: tabId,
       enabled: false
     });
-    console.log(`[background] SidePanel 成功关闭 (标签页: ${tabId})`);
+    console.log(`[service-worker] SidePanel 成功关闭 (标签页: ${tabId})`);
     
     // 🔧 移除状态更新：统一由Port断开监听器处理
     // 职责分离：废弃处理器也不再负责状态管理
@@ -1393,7 +1368,7 @@ async function handleCloseSidePanel(sender: chrome.runtime.MessageSender): Promi
       message: 'SidePanel closed successfully'
     };
   } catch (error) {
-    console.error(`[background] 关闭 SidePanel 失败:`, error);
+    console.error(`[service-worker] 关闭 SidePanel 失败:`, error);
     return {
       success: false,
       status: 'error',
@@ -1408,7 +1383,7 @@ async function handleCloseSidePanel(sender: chrome.runtime.MessageSender): Promi
  */
 async function handleOpenPopupFallback(sender: chrome.runtime.MessageSender): Promise<any> {
   try {
-    console.log('[background] 执行popup降级策略...');
+    console.log('[service-worker] popup降级策略');
     
     // 使用统一的降级函数
     await fallbackToPopup('消息请求降级');
@@ -1423,7 +1398,7 @@ async function handleOpenPopupFallback(sender: chrome.runtime.MessageSender): Pr
     };
     
   } catch (error) {
-    console.error('[background] Popup降级处理异常:', error);
+    console.error(`[service-worker] ✗ Popup降级处理: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
       status: 'error',
@@ -1461,7 +1436,7 @@ async function handleSidePanelDataRequest(data: any): Promise<any> {
       }
     };
   } catch (error) {
-    console.error('[background] SidePanel 数据请求失败:', error);
+    console.error('[service-worker] SidePanel 数据请求失败:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to get SidePanel data'
@@ -1493,7 +1468,7 @@ async function handleRuntimeStateGet(data: any): Promise<any> {
       data: result
     };
   } catch (error) {
-    console.error('[background] 获取运行时状态失败:', error);
+    console.error('[service-worker] 获取运行时状态失败:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to get runtime state'
@@ -1524,7 +1499,7 @@ async function handleRuntimeStateSet(data: any): Promise<any> {
       message: `状态 ${stateKey} 已更新`
     };
   } catch (error) {
-    console.error('[background] 设置运行时状态失败:', error);
+    console.error('[service-worker] 设置运行时状态失败:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to set runtime state'
@@ -1543,7 +1518,7 @@ async function handleRuntimeStateGetAll(): Promise<any> {
       data: allState
     };
     } catch (error) {
-    console.error('[background] 获取所有运行时状态失败:', error);
+    console.error('[service-worker] 获取所有运行时状态失败:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to get all runtime state'
@@ -1575,7 +1550,7 @@ async function handleUserPreferencesGet(data: any): Promise<any> {
       };
     }
   } catch (error) {
-    console.error('[background] 获取用户偏好设置失败:', error);
+    console.error('[service-worker] 获取用户偏好设置失败:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to get user preferences'
@@ -1598,7 +1573,7 @@ async function handleUserPreferencesUpdate(data: any): Promise<any> {
       message: '用户偏好设置已更新'
     };
   } catch (error) {
-    console.error('[background] 更新用户偏好设置失败:', error);
+    console.error('[service-worker] 更新用户偏好设置失败:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to update user preferences'
@@ -1617,12 +1592,12 @@ let isInitialized = false;
  */
 async function initializeManagers(): Promise<void> {
   if (isInitialized) {
-    console.log('[background] ⚠️ 管理器已初始化，跳过重复初始化');
+    console.log('[service-worker] ⚠️ 管理器已初始化');
     return;
   }
 
   try {
-    console.log('[background] 开始初始化管理器...');
+    console.log('[service-worker] 初始化管理器');
     
     // 按顺序初始化
     // StorageManager 不需要初始化，它在构造时自动设置
@@ -1635,9 +1610,9 @@ async function initializeManagers(): Promise<void> {
     // 标记为已初始化
     isInitialized = true;
     
-    console.log('[background] ✅ 所有管理器初始化完成');
+    console.log('[service-worker] ✓ 所有管理器初始化完成');
   } catch (error) {
-    console.error('[background] ❌ 管理器初始化失败:', error);
+    console.error(`[service-worker] ✗ 管理器初始化: ${error instanceof Error ? error.message : String(error)}`);
     // 初始化失败时重置标志，允许重试
     isInitialized = false;
     throw error;
@@ -1651,12 +1626,12 @@ async function setupDefaultSettings(): Promise<void> {
   try {
     // 设置默认用户偏好 - 使用 ensureDefaultPreferences 内部方法
     // UserPreferencesManager 会自动检查并设置默认偏好，无需手动设置
-    console.log('[background] 默认用户偏好将由 UserPreferencesManager 自动处理');
+    console.log('[service-worker] 默认用户偏好由UserPreferencesManager处理');
     
     // 🔧 修复：不要重复设置默认运行时状态
     // RuntimeStateManager 在初始化时已经处理了默认状态设置
     // 避免重复调用导致的状态转换冲突
-    console.log('[background] 默认运行时状态将由 RuntimeStateManager 自动处理');
+    console.log('[service-worker] 默认运行时状态由RuntimeStateManager处理');
     
     // 🎯 新增：设置默认Popup禁用状态
     // 确保扩展安装时所有页面的popup都是禁用的，只有YouTube页面才会启用
@@ -1667,11 +1642,11 @@ async function setupDefaultSettings(): Promise<void> {
         48: 'icons/icon48-disabled.png'
       }
     });
-    console.log('[background] ✅ 默认Popup状态已设置为禁用');
+    console.log('[service-worker] ✓ 默认Popup状态已禁用');
     
-    console.log('[background] ✅ 默认设置已初始化');
+    console.log('[service-worker] ✓ 默认设置已初始化');
   } catch (error) {
-    console.error('[background] ❌ 设置默认设置失败:', error);
+    console.error(`[service-worker] ✗ 设置默认设置: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -1680,14 +1655,14 @@ async function setupDefaultSettings(): Promise<void> {
  */
 async function handleUpdate(previousVersion?: string): Promise<void> {
   try {
-    console.log(`[background] 从版本 ${previousVersion} 更新到当前版本`);
+    console.log(`[service-worker] 从版本 ${previousVersion} 更新到当前版本`);
     
     // 这里可以添加数据迁移逻辑
     // 例如：旧版本设置格式转换、清理过期缓存等
     
-    console.log('[background] ✅ 更新处理完成');
+    console.log('[service-worker] ✓ 更新处理完成');
   } catch (error) {
-    console.error('[background] ❌ 更新处理失败:', error);
+    console.error(`[service-worker] ✗ 更新处理: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -1699,7 +1674,7 @@ function setupStateChangeListeners(): void {
   runtimeStateManager.addChangeListener(
     RuntimeStateChangeEvent.TRANSLATE_ACTIVE_CHANGED,
     (newValue, oldValue) => {
-      console.log(`[background] 翻译状态变更: ${oldValue} -> ${newValue}`);
+      console.log(`[service-worker] 状态变更: translateState [${oldValue} → ${newValue}]`);
       // 可以在这里添加状态变更后的处理逻辑
     }
   );
@@ -1708,7 +1683,7 @@ function setupStateChangeListeners(): void {
   runtimeStateManager.addChangeListener(
     RuntimeStateChangeEvent.SETTING_PANEL_CHANGED,
     (newValue, oldValue) => {
-      console.log(`[background] 设置面板状态变更: ${oldValue} -> ${newValue}`);
+      console.log(`[service-worker] 状态变更: settingPanelOpen [${oldValue} → ${newValue}]`);
     }
   );
 }
@@ -1726,7 +1701,7 @@ async function getVideoSpecificData(videoId: string): Promise<any> {
       translations: {} // 从缓存获取
     };
   } catch (error) {
-    console.error(`[background] 获取视频数据失败 (${videoId}):`, error);
+    console.error(`[service-worker] ✗ 获取视频数据 (${videoId}): ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }
@@ -1735,32 +1710,32 @@ async function getVideoSpecificData(videoId: string): Promise<any> {
 // 这些将在后续版本中实现
 
 async function handleGetTranslationConfig(data: any): Promise<any> {
-  console.warn('[background] handleGetTranslationConfig 尚未实现');
+  console.warn('[service-worker] ⚠️ handleGetTranslationConfig 尚未实现');
   return { success: false, error: 'Function not implemented yet' };
 }
 
 async function handleCheckTranslationCache(data: any): Promise<any> {
-  console.warn('[background] handleCheckTranslationCache 尚未实现');
+  console.warn('[service-worker] ⚠️ handleCheckTranslationCache 尚未实现');
   return { success: false, error: 'Function not implemented yet' };
 }
 
 async function handleTranslateSubtitles(data: any): Promise<any> {
-  console.warn('[background] handleTranslateSubtitles 尚未实现');
+  console.warn('[service-worker] ⚠️ handleTranslateSubtitles 尚未实现');
   return { success: false, error: 'Function not implemented yet' };
 }
 
 async function handleSaveTranslationResult(data: any): Promise<any> {
-  console.warn('[background] handleSaveTranslationResult 尚未实现');
+  console.warn('[service-worker] ⚠️ handleSaveTranslationResult 尚未实现');
   return { success: false, error: 'Function not implemented yet' };
 }
 
 async function handleSaveTrackCache(data: any): Promise<any> {
-  console.warn('[background] handleSaveTrackCache 尚未实现');
+  console.warn('[service-worker] ⚠️ handleSaveTrackCache 尚未实现');
   return { success: false, error: 'Function not implemented yet' };
 }
 
 async function handleGetTrackCache(data: any): Promise<any> {
-  console.warn('[background] handleGetTrackCache 尚未实现');
+  console.warn('[service-worker] ⚠️ handleGetTrackCache 尚未实现');
   return { success: false, error: 'Function not implemented yet' };
 }
 
@@ -1769,7 +1744,7 @@ async function handleGetTrackCache(data: any): Promise<any> {
  */
 async function handleSubtitleData(data: any): Promise<any> {
   try {
-    console.log('[background] 收到字幕数据:', {
+    console.log('[service-worker] <- saveSubtitlesData:', {
       videoId: data.videoId,
       count: data.count,
       url: data.url
@@ -1777,7 +1752,7 @@ async function handleSubtitleData(data: any): Promise<any> {
     
     // 验证数据
     if (!data.videoId || !data.subtitles || !Array.isArray(data.subtitles)) {
-      console.error('[background] 字幕数据格式无效');
+      console.error('[service-worker] ✗ 字幕数据格式无效');
       return { success: false, error: '字幕数据格式无效' };
     }
     
@@ -1793,7 +1768,7 @@ async function handleSubtitleData(data: any): Promise<any> {
       timestamp: Date.now()
     });
     
-    console.log('[background] ✅ 字幕数据已缓存，视频ID:', data.videoId);
+    console.log(`[service-worker] ✓ 字幕数据已缓存: ${data.videoId}`);
     
     // TODO: 根据当前翻译设置，触发翻译流程
     // 这里可以调用 handleTranslateSubtitles 或其他翻译相关函数
@@ -1806,7 +1781,7 @@ async function handleSubtitleData(data: any): Promise<any> {
     };
     
   } catch (error) {
-    console.error('[background] 处理字幕数据失败:', error);
+    console.error(`[service-worker] ✗ saveSubtitlesData: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
       error: error instanceof Error ? error.message : '处理字幕数据失败'
@@ -1819,14 +1794,14 @@ async function handleSubtitleData(data: any): Promise<any> {
  */
 async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data: any): Promise<any> {
   try {
-    console.log('[background] ===== 开始处理翻译切换 =====');
+    console.log('[service-worker] <- handleToggleTranslate');
     const { videoId, newState } = data;
-    console.log('[background] 处理翻译切换参数:', { videoId, newState });
+    console.log('[service-worker] 处理翻译切换参数:', { videoId, newState });
     
     // 更新运行时状态
     if (!newState) {
       // 关闭翻译 - 直接设置为INACTIVE（不经过PENDING）
-      await runtimeStateManager.setTranslateState('inactive');
+      await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
       return { 
         success: true, 
         action: 'stopped',
@@ -1835,14 +1810,14 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     }
     
     // 开启翻译 - 设置为PENDING状态
-    await runtimeStateManager.setTranslateState('pending');
+    await runtimeStateManager.setTranslateState(TranslateActiveState.PENDING);
     
     // Step 1: 获取用户偏好配置
-    console.log('[background] Step 1: 开始获取用户偏好配置...');
+    console.log('[service-worker] Step 1: 获取用户偏好配置');
     let preferences;
     try {
       preferences = await userPreferencesManager.getUserPreferences();
-      console.log('[background] getUserPreferences 返回的数据:', {
+      console.log('[service-worker] getUserPreferences 返回的数据:', {
         hasPreferences: !!preferences,
         preferencesType: typeof preferences,
         hasTranslationService: preferences ? !!preferences.translationService : false,
@@ -1851,27 +1826,27 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
         fullPreferences: preferences
       });
     } catch (error) {
-      console.error('[background] getUserPreferences 抛出异常:', error);
+      console.error(`[service-worker] ✗ getUserPreferences: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }
     
     // 添加防御性检查
     if (!preferences || !preferences.translationService) {
-      console.error('[background] ❌ preferences 或 translationService 为空:', {
+      console.error('[service-worker] ✗ preferences或translationService为空:', {
         preferences,
         translationService: preferences?.translationService
       });
       throw new Error('用户偏好配置不完整：缺少 translationService');
     }
     
-    console.log('[background] 用户偏好配置获取完成:', {
+    console.log('[service-worker] 用户偏好配置获取完成:', {
       targetLang: preferences.targetLang,
       translationService: preferences.translationService,
       translationServiceType: preferences.translationService?.type
     });
     
     // Step 2: 构建缓存键并检查翻译结果缓存
-    console.log('[background] Step 2: 开始检查翻译结果缓存...');
+    console.log('[service-worker] Step 2: 检查翻译结果缓存');
     const cacheManager = TranslationCacheManager.getInstance();
     // 注意：sourceLang 需要从字幕数据中获取，这里暂时使用 'en' 作为默认值
     const sourceLang = 'en'; // TODO: 从字幕数据中获取实际的源语言
@@ -1887,7 +1862,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     };
     
     // 检查是否有缓存的翻译结果
-    console.log('[background] 正在检查缓存，缓存键:', cacheKey);
+    console.log('[service-worker] 检查缓存:', cacheKey);
     const cachedResult = await cacheManager.get(
       videoId,
       sourceLang,
@@ -1899,8 +1874,8 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
       }
     );
     if (cachedResult) {
-      console.log('[background] ✅ 找到缓存的翻译结果，直接返回');
-      await runtimeStateManager.setTranslateState('active');
+      console.log('[service-worker] ✓ 找到缓存的翻译结果');
+      await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
       return {
         success: true,
         action: 'cached',
@@ -1909,11 +1884,11 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     }
     
     // Step 3: 检查内存中的字幕数据
-    console.log('[background] Step 3: 检查内存中的字幕数据...');
-    console.log('[background] 缓存中没有翻译结果，检查是否有原始字幕数据');
+    console.log('[service-worker] Step 3: 检查内存中的字幕数据');
+    console.log('[service-worker] 检查内存中的原始字幕数据');
     const subtitleData = globalThis.subtitleCache?.get(videoId);
     if (subtitleData) {
-      console.log('[background] ✅ 找到内存中的字幕数据，准备翻译');
+      console.log('[service-worker] ✓ 找到内存中的字幕数据');
       
       // 执行翻译
       const translatedResult = await executeTranslation(subtitleData, preferences);
@@ -1922,7 +1897,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
       await cacheManager.set(translatedResult);
       
       // 更新状态为ACTIVE
-      await runtimeStateManager.setTranslateState('active');
+      await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
       
       return {
         success: true,
@@ -1932,11 +1907,11 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     }
     
     // Step 4: 需要获取字幕
-    console.log('[background] Step 4: 缓存和内存中都没有数据，需要获取字幕');
-    console.log('[background] ⚠️ 需要从YouTube获取字幕数据');
+    console.log('[service-worker] Step 4: 需要获取字幕数据');
+    console.log('[service-worker] ⚠️ 需要从YouTube获取字幕数据');
     
     // 设置为INTENT_ONLY状态（用户想翻译但无字幕）
-    await runtimeStateManager.setTranslateState('intent_only');
+    await runtimeStateManager.setTranslateState(TranslateActiveState.INTENT_ONLY);
     
     return {
       success: true,  // 操作成功，只是没有字幕
@@ -1946,8 +1921,8 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     };
     
   } catch (error) {
-    console.error('[background] 处理翻译切换失败:', error);
-    await runtimeStateManager.setTranslateState('inactive');
+    console.error(`[service-worker] ✗ handleToggleTranslate: ${error instanceof Error ? error.message : String(error)}`);
+    await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
     return {
       success: false,
       error: error instanceof Error ? error.message : '处理翻译切换失败'
@@ -1966,7 +1941,7 @@ async function executeTranslation(subtitleData: any, preferences: any): Promise<
     // 从字幕数据中检测源语言（默认为英语）
     const sourceLang = detectSourceLanguage(subtitles) || 'en';
     
-    console.log('[background] 开始执行翻译:', {
+    console.log('[service-worker] 执行翻译:', {
       subtitleCount: subtitles.length,
       sourceLang,
       targetLang,
@@ -1983,7 +1958,7 @@ async function executeTranslation(subtitleData: any, preferences: any): Promise<
     
     for (let i = 0; i < textsToTranslate.length; i += batchSize) {
       const batch = textsToTranslate.slice(i, i + batchSize);
-      console.log(`[background] 翻译批次 ${Math.floor(i/batchSize) + 1}/${Math.ceil(textsToTranslate.length/batchSize)}`);
+      console.log(`[service-worker] 翻译批次 ${Math.floor(i/batchSize) + 1}/${Math.ceil(textsToTranslate.length/batchSize)}`);
       
       // 调用翻译API
       const translatedBatch = await translateBatch(
@@ -2024,12 +1999,12 @@ async function executeTranslation(subtitleData: any, preferences: any): Promise<
       dataHash: ''  // 将由 TranslationCacheManager 计算
     };
     
-    console.log('[background] ✅ 翻译完成，共翻译', translatedSubtitles.length, '条字幕');
+    console.log(`[service-worker] ✓ 翻译完成: ${translatedSubtitles.length}条字幕`);
     
     return result;
     
   } catch (error) {
-    console.error('[background] 翻译执行失败:', error);
+    console.error(`[service-worker] ✗ 翻译执行: ${error instanceof Error ? error.message : String(error)}`);
     throw error;
   }
 }
@@ -2096,12 +2071,12 @@ async function translateBatch(
         return texts.map(text => `[译] ${text}`);
         
       default:
-        console.warn('[background] 不支持的翻译服务:', serviceType);
+        console.warn('[service-worker] 不支持的翻译服务:', serviceType);
         // 返回原文
         return texts;
     }
   } catch (error) {
-    console.error('[background] 批量翻译失败:', error);
+    console.error('[service-worker] 批量翻译失败:', error);
     // 失败时返回原文
     return texts;
   }
@@ -2165,7 +2140,7 @@ async function translateWithGoogle(
     return translatedTexts;
     
   } catch (error) {
-    console.error('[background] Google翻译失败:', error);
+    console.error('[service-worker] Google翻译失败:', error);
     return texts; // 失败返回原文
   }
 }
@@ -2178,7 +2153,7 @@ async function translateWithMicrosoft(
   sourceLang: string, 
   targetLang: string
 ): Promise<string[]> {
-  console.log('[background] Microsoft翻译API尚未实现，返回原文');
+  console.log('[service-worker] ⚠️ Microsoft翻译API尚未实现');
   // TODO: 实现Microsoft翻译API
   return texts;
 }
@@ -2192,14 +2167,14 @@ async function translateWithOpenAI(
   targetLang: string,
   service: any
 ): Promise<string[]> {
-  console.log('[background] OpenAI翻译API尚未实现，返回原文');
+  console.log('[service-worker] ⚠️ OpenAI翻译API尚未实现');
   // TODO: 实现OpenAI翻译API
   // 将使用 service.apiKey, service.model, service.temperature 等参数
   return texts;
 }
 
 async function handleApiConnectionTest(data: any): Promise<any> {
-  console.log('[background] 开始API连接测试:', data);
+  console.log('[service-worker] <- testApiConnection:', data);
   
   const { apiType, apiKey, forceTest } = data;
   
@@ -2219,7 +2194,7 @@ async function handleApiConnectionTest(data: any): Promise<any> {
       return await testPaidApiService(apiType, apiKey);
     }
   } catch (error) {
-    console.error('[background] API连接测试失败:', error);
+    console.error(`[service-worker] ✗ testApiConnection: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
       message: error instanceof Error ? error.message : '未知错误'
@@ -2229,13 +2204,13 @@ async function handleApiConnectionTest(data: any): Promise<any> {
 
 async function handleErrorReport(data: any): Promise<any> {
   try {
-    console.log('[background] 错误报告:', data);
+    console.log('[service-worker] <- errorReport:', data);
     return {
       success: true,
       message: 'Error report received'
     };
   } catch (error) {
-    console.error('[background] 处理错误报告失败:', error);
+    console.error(`[service-worker] ✗ handleErrorReport: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to handle error report'
@@ -2262,7 +2237,7 @@ function broadcastSidePanelStateChange(isOpen: boolean): void {
       }
     });
   });
-  console.log(`[background] 📡 已广播SidePanel状态变化: ${isOpen} 到所有YouTube标签页`);
+  console.log(`[service-worker] 📡 已广播SidePanel状态变化: ${isOpen} 到所有YouTube标签页`);
 }
 
 
@@ -2286,15 +2261,15 @@ async function getSidePanelStateForMessage(): Promise<any> {
  */
 async function handleSidePanelActuallyOpened(message: any): Promise<any> {
   try {
-    console.log('[background] 收到SidePanel实际打开通知:', message);
-    console.log('[background] ℹ️ 状态保存已由Port连接处理，此处仅记录日志');
+    console.log('[service-worker] 收到SidePanel实际打开通知:', message);
+    console.log('[service-worker] 状态保存已由Port连接处理');
     
     return {
       success: true,
       message: 'SidePanel open notification received (state handled by Port)'
     };
   } catch (error) {
-    console.error('[background] 处理SidePanel打开通知失败:', error);
+    console.error(`[service-worker] ✗ sidePanelActuallyOpened: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to handle SidePanel open notification'
@@ -2307,15 +2282,15 @@ async function handleSidePanelActuallyOpened(message: any): Promise<any> {
  */
 async function handleSidePanelActuallyClosed(message: any): Promise<any> {
   try {
-    console.log('[background] 收到SidePanel实际关闭通知:', message);
+    console.log('[service-worker] 收到SidePanel实际关闭通知:', message);
     
     // 🔥 更新状态缓存
     const tabId = message.tabId;
-    console.log(`[background] 🔄 SidePanel已实际关闭: 标签页 ${tabId}`);
+    console.log(`[service-worker] 🔄 SidePanel已实际关闭: 标签页 ${tabId}`);
     
     // 确保运行时状态为关闭
     await runtimeStateManager.setSettingPanelState(false);
-    console.log('[background] ✅ SidePanel状态已确认为关闭');
+    console.log('[service-worker] ✓ SidePanel状态已确认为关闭');
     
     // 🔧 生命周期事件：只负责内部状态同步，不广播
     // 广播由操作函数负责
@@ -2325,7 +2300,7 @@ async function handleSidePanelActuallyClosed(message: any): Promise<any> {
       message: 'SidePanel close state confirmed'
     };
   } catch (error) {
-    console.error('[background] 处理SidePanel关闭通知失败:', error);
+    console.error(`[service-worker] ✗ sidePanelActuallyClosed: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to handle SidePanel close notification'
@@ -2341,7 +2316,7 @@ async function handleCheckSidePanelStatus(sender: chrome.runtime.MessageSender):
   try {
     const tabId = sender.tab?.id;
     if (!tabId) {
-      console.warn('[background] 无法获取标签页ID');
+      console.warn('[service-worker] ⚠️ 无法获取标签页ID');
       return {
         success: false,
         error: '无法获取标签页ID'
@@ -2352,7 +2327,7 @@ async function handleCheckSidePanelStatus(sender: chrome.runtime.MessageSender):
     try {
       const isEnabled = await runtimeStateManager.getSettingPanelState();
       
-      console.log(`[background] 🎯 标签页 ${tabId} SidePanel存储状态: enabled=${isEnabled}`);
+      console.log(`[service-worker] 标签页${tabId} SidePanel状态: enabled=${isEnabled}`);
       
       return {
         success: true,
@@ -2360,14 +2335,14 @@ async function handleCheckSidePanelStatus(sender: chrome.runtime.MessageSender):
       };
     } catch (error) {
       // 如果获取失败，假设未启用
-      console.warn(`[background] 获取标签页 ${tabId} SidePanel存储状态失败:`, error);
+      console.warn(`[service-worker] ⚠️ 获取标签页${tabId}SidePanel状态: ${error instanceof Error ? error.message : String(error)}`);
       return {
         success: true,
         isEnabled: false
       };
     }
   } catch (error) {
-    console.error('[background] 检查SidePanel状态失败:', error);
+    console.error('[service-worker] 检查SidePanel状态失败:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : '检查SidePanel状态失败'
@@ -2384,14 +2359,14 @@ async function handleGetSidePanelStatus(sender: chrome.runtime.MessageSender): P
     // 直接从存储读取状态，高性能方案
     const isEnabled = await runtimeStateManager.getSettingPanelState();
     
-    console.log(`[background] getSidePanelStatus: enabled=${isEnabled}`);
+    console.log(`[service-worker] getSidePanelStatus: enabled=${isEnabled}`);
     
     return {
       success: true,
       isEnabled: isEnabled
     };
   } catch (error) {
-    console.error('[background] getSidePanelStatus失败:', error);
+    console.error('[service-worker] getSidePanelStatus失败:', error);
     return {
       success: false,
       isEnabled: false
@@ -2405,7 +2380,7 @@ async function handleGetSidePanelStatus(sender: chrome.runtime.MessageSender): P
  * 测试免费翻译服务
  */
 async function testFreeTranslationService(apiType: string): Promise<{success: boolean, message: string}> {
-  console.log(`[background] 测试免费翻译服务: ${apiType}`);
+  console.log(`[service-worker] 测试免费翻译服务: ${apiType}`);
   
   const testText = 'Hello, this is a test message.';
   const sourceLang = 'en';
@@ -2431,7 +2406,7 @@ async function testFreeTranslationService(apiType: string): Promise<{success: bo
       };
     }
   } catch (error) {
-    console.error(`[background] 免费翻译服务测试失败:`, error);
+    console.error(`[service-worker] ✗ 免费翻译服务测试: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
       message: error instanceof Error ? error.message : '测试失败'
@@ -2443,7 +2418,7 @@ async function testFreeTranslationService(apiType: string): Promise<{success: bo
  * 测试付费API服务
  */
 async function testPaidApiService(apiType: string, apiKey: string): Promise<{success: boolean, message: string}> {
-  console.log(`[background] 测试付费API服务: ${apiType}`);
+  console.log(`[service-worker] 测试付费API服务: ${apiType}`);
   
   try {
     if (apiType === 'openai') {
@@ -2465,7 +2440,7 @@ async function testPaidApiService(apiType: string, apiKey: string): Promise<{suc
       };
     }
   } catch (error) {
-    console.error(`[background] 付费API服务测试失败:`, error);
+    console.error(`[service-worker] ✗ 付费API服务测试: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
       message: error instanceof Error ? error.message : '测试失败'
@@ -2484,21 +2459,21 @@ async function testGoogleTranslateService(testText: string, sourceLang: string, 
   
   // 测试路径A: /translate_a/single
   try {
-    console.log('[background] 测试Google翻译路径A...');
+    console.log('[service-worker] 测试Google翻译路径A');
     pathATranslation = await testGoogleTranslatePathA(testText, sourceLang, targetLang);
     pathAResult = '成功✅';
   } catch (error) {
-    console.error('[background] Google翻译路径A测试失败:', error);
+    console.error(`[service-worker] ✗ Google翻译路径A: ${error instanceof Error ? error.message : String(error)}`);
     pathAResult = `失败❌ (${(error as Error).message})`;
   }
   
   // 测试路径B: /translate_a/t
   try {
-    console.log('[background] 测试Google翻译路径B...');
+    console.log('[service-worker] 测试Google翻译路径B');
     pathBTranslation = await testGoogleTranslatePathB(testText, sourceLang, targetLang);
     pathBResult = '成功✅';
   } catch (error) {
-    console.error('[background] Google翻译路径B测试失败:', error);
+    console.error(`[service-worker] ✗ Google翻译路径B: ${error instanceof Error ? error.message : String(error)}`);
     pathBResult = `失败❌ (${(error as Error).message})`;
   }
   
@@ -2631,21 +2606,21 @@ async function testMicrosoftTranslateService(testText: string, sourceLang: strin
   
   // 测试路径A: Edge认证令牌
   try {
-    console.log('[background] 测试微软翻译路径A...');
+    console.log('[service-worker] 测试微软翻译路径A');
     pathATranslation = await testMicrosoftTranslatePathA(testText, sourceLang, targetLang);
     pathAResult = '成功✅';
   } catch (error) {
-    console.error('[background] 微软翻译路径A测试失败:', error);
+    console.error(`[service-worker] ✗ 微软翻译路径A: ${error instanceof Error ? error.message : String(error)}`);
     pathAResult = `失败❌ (${(error as Error).message})`;
   }
   
   // 测试路径B: API-Edge端点
   try {
-    console.log('[background] 测试微软翻译路径B...');
+    console.log('[service-worker] 测试微软翻译路径B');
     pathBTranslation = await testMicrosoftTranslatePathB(testText, sourceLang, targetLang);
     pathBResult = '成功✅';
   } catch (error) {
-    console.error('[background] 微软翻译路径B测试失败:', error);
+    console.error(`[service-worker] ✗ 微软翻译路径B: ${error instanceof Error ? error.message : String(error)}`);
     pathBResult = `失败❌ (${(error as Error).message})`;
   }
   
@@ -2868,7 +2843,7 @@ async function testOpenAIService(apiKey: string, model: string): Promise<{succes
       throw new Error('OpenAI返回格式异常');
     }
   } catch (error) {
-    console.error('[background] OpenAI测试失败:', error);
+    console.error(`[service-worker] ✗ OpenAI测试: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
       message: error instanceof Error ? error.message : 'OpenAI测试失败'

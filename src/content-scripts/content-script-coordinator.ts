@@ -31,7 +31,7 @@ export class ContentScriptCoordinator {
   private readonly CONTROL_CHECK_INTERVAL = 2000;
 
   constructor() {
-    console.log('[ContentScriptCoordinator] 协调器已创建');
+    console.log('[content-script-coordinator] 协调器已创建');
   }
 
   /**
@@ -39,11 +39,11 @@ export class ContentScriptCoordinator {
    */
   async initialize(): Promise<void> {
     if (this.initialized) {
-      console.log('[ContentScriptCoordinator] 已初始化，跳过重复初始化');
+      console.log('[content-script-coordinator] 已初始化，跳过重复初始化');
       return;
     }
 
-    console.log('[ContentScriptCoordinator] 🚀 开始统一初始化...');
+    console.log('[content-script-coordinator] 初始化开始...');
 
     try {
       // 1. 一次性获取所有状态
@@ -55,7 +55,7 @@ export class ContentScriptCoordinator {
       // UI状态使用默认值，不需要从background获取
       const uiState = this.getDefaultState('ui');
 
-      console.log('[ContentScriptCoordinator] ✅ 状态获取完成:', {
+      console.log('[content-script-coordinator] ✓ 状态获取完成:', {
         runtimeState: runtimeState,
         userPreferences: userPreferences,
         uiState: uiState
@@ -81,10 +81,10 @@ export class ContentScriptCoordinator {
       subtitleOverlay.initialize();
 
       this.initialized = true;
-      console.log('[ContentScriptCoordinator] ✅ 统一初始化完成');
+      console.log('[content-script-coordinator] ✓ 统一初始化完成');
 
     } catch (error) {
-      console.error('[ContentScriptCoordinator] ❌ 初始化失败:', error);
+      console.error('[content-script-coordinator] ✗ 初始化失败:', error);
       throw error;
     }
   }
@@ -107,11 +107,11 @@ export class ContentScriptCoordinator {
       if (response && response.success) {
         return type === 'runtime' ? response.state : response.data || response;
       } else {
-        console.warn(`[ContentScriptCoordinator] 获取${type}状态失败:`, response?.error);
+        console.warn(`[content-script-coordinator] 获取${type}状态失败:`, response?.error);
         return this.getDefaultState(type);
       }
     } catch (error) {
-      console.error(`[ContentScriptCoordinator] 获取${type}状态出错:`, error);
+      console.error(`[content-script-coordinator] 获取${type}状态出错:`, error);
       return this.getDefaultState(type);
     }
   }
@@ -136,7 +136,7 @@ export class ContentScriptCoordinator {
     userPreferences: any;
     uiState: any;
   }): Promise<void> {
-    console.log('[ContentScriptCoordinator] 🚀 初始化单一职责组件...');
+    console.log('[content-script-coordinator] 初始化单一职责组件...');
 
     // 导入单一职责组件
     const { UIRenderer } = await import('../shared/components/ui-renderer');
@@ -150,7 +150,7 @@ export class ContentScriptCoordinator {
     this.stateManager = new StateManager();
     this.stateManager.initialize(stateData.runtimeState, stateData.userPreferences);
 
-    console.log('[ContentScriptCoordinator] ✅ 组件初始化完成');
+    console.log('[content-script-coordinator] ✓ 组件初始化完成');
   }
 
   /**
@@ -173,12 +173,12 @@ export class ContentScriptCoordinator {
       
       // 处理来自main-world的字幕数据
       if (source === 'main-world' && type === 'SUBTITLE_CAPTURED') {
-        console.log('[ContentScriptCoordinator] 收到字幕数据:', payload.count, '条');
+        console.log('[content-script-coordinator] 收到字幕数据:', payload.count, '条');
         this.handleSubtitleCaptured(payload);
       }
     });
     
-    console.log('[ContentScriptCoordinator] 组件间通信设置完成');
+    console.log('[content-script-coordinator] 组件间通信设置完成');
   }
 
   /**
@@ -187,12 +187,12 @@ export class ContentScriptCoordinator {
   handleUserAction(action: string, data: any): void {
     // 🔥 简化日志：只记录关键用户行为，避免重复日志
     if (action === 'buttonClick') {
-      console.log(`[ContentScriptCoordinator] 🎯 ${data.buttonType}按钮点击`);
+      console.log(`[content-script-coordinator] 按钮点击: ${data.buttonType}`);
     } else if (action === 'chromeMessage') {
       // Chrome消息的具体处理由handleChromeMessage输出日志，这里不重复输出
       // 避免重复：handleUserAction + handleChromeMessage 双重日志
     } else {
-      console.log(`[ContentScriptCoordinator] 🎯 处理用户行为: ${action}`, data);
+      console.log(`[content-script-coordinator] 用户行为: ${action}`, data);
     }
 
     switch (action) {
@@ -209,7 +209,7 @@ export class ContentScriptCoordinator {
         this.handleChromeMessage(data);
         break;
       default:
-        console.warn(`[ContentScriptCoordinator] 未知的用户行为: ${action}`);
+        console.warn(`[content-script-coordinator] 未知的用户行为: ${action}`);
     }
   }
 
@@ -220,7 +220,7 @@ export class ContentScriptCoordinator {
     // 🔥 简化日志：上层已经记录了按钮点击，这里只处理逻辑
     
     if (!this.stateManager) {
-      console.warn('[ContentScriptCoordinator] StateManager未初始化');
+      console.warn('[content-script-coordinator] StateManager未初始化');
       return;
     }
 
@@ -237,7 +237,7 @@ export class ContentScriptCoordinator {
    * 处理翻译开关切换 - 缓存优先策略（基于4状态系统）
    */
   private async handleTranslateToggle(currentState: string): Promise<void> {
-    console.log('[ContentScriptCoordinator] ===== 开始处理翻译切换 =====');
+    console.log('[content-script-coordinator] ===== 开始处理翻译切换 =====');
     
     // 根据当前状态决定是开启还是关闭
     // INACTIVE -> 开启翻译
@@ -254,7 +254,7 @@ export class ContentScriptCoordinator {
         isEnabling = false;
         break;
       case 'pending':
-        console.log('[ContentScriptCoordinator] 忽略PENDING状态的点击');
+        console.log('[content-script-coordinator] 忽略PENDING状态的点击');
         return;
       default:
         // 默认当作INACTIVE处理
@@ -264,18 +264,18 @@ export class ContentScriptCoordinator {
     const videoId = this.getVideoId();
     
     if (!videoId) {
-      console.error('[ContentScriptCoordinator] 无法获取视频ID');
+      console.error('[content-script-coordinator] 无法获取视频ID');
       return;
     }
     
-    console.log('[ContentScriptCoordinator] 切换翻译状态:', { 
+    console.log('[content-script-coordinator] 切换翻译状态:', { 
       currentState, 
       isEnabling, 
       videoId 
     });
     
     try {
-      console.log('[ContentScriptCoordinator] 准备发送 TOGGLE_TRANSLATE 消息到 Service Worker...');
+      console.log('[content-script-coordinator] 准备发送 TOGGLE_TRANSLATE 消息到 Service Worker...');
       // 发送翻译切换请求到Service Worker（缓存优先）
       const response = await chrome.runtime.sendMessage({
         type: 'TOGGLE_TRANSLATE',
@@ -285,49 +285,49 @@ export class ContentScriptCoordinator {
         }
       });
       
-      console.log('[ContentScriptCoordinator] 翻译切换响应:', response);
+      console.log('[content-script-coordinator] 翻译切换响应:', response);
       
       // 根据响应处理不同场景
       switch (response.action) {
         case 'cached':
           // 使用缓存的翻译结果
-          console.log('[ContentScriptCoordinator] ✅ 使用缓存的翻译结果');
+          console.log('[content-script-coordinator] ✓ translateSubtitles: 使用缓存结果');
           this.displayTranslatedSubtitles(response.data);
           break;
           
         case 'translated':
           // 显示新翻译的结果
-          console.log('[ContentScriptCoordinator] ✅ 显示新翻译结果');
+          console.log('[content-script-coordinator] ✓ translateSubtitles: 显示新翻译结果');
           this.displayTranslatedSubtitles(response.data);
           break;
           
         case 'needTranslation':
           // 有字幕数据但需要翻译（临时处理，将在Step 3实现翻译）
-          console.log('[ContentScriptCoordinator] 有字幕数据，等待翻译实现');
+          console.log('[content-script-coordinator] 有字幕数据，等待翻译实现');
           // TODO: 显示加载状态
           break;
           
         case 'needFetch':
           // 需要获取字幕
-          console.log('[ContentScriptCoordinator] 需要获取字幕数据');
+          console.log('[content-script-coordinator] 需要获取字幕数据');
           this.requestSubtitleCapture();
           break;
           
         case 'stopped':
           // 翻译已停止
-          console.log('[ContentScriptCoordinator] 翻译已停止');
+          console.log('[content-script-coordinator] 翻译已停止');
           this.hideTranslatedSubtitles();
           break;
           
         default:
-          console.warn('[ContentScriptCoordinator] 未知响应动作:', response.action);
+          console.warn('[content-script-coordinator] 未知响应动作:', response.action);
       }
       
       // 更新本地状态（Service Worker会设置正确的最终状态）
       // 这里不需要手动更新，因为状态会通过消息系统同步
       
     } catch (error) {
-      console.error('[ContentScriptCoordinator] 翻译切换失败:', error);
+      console.error('[content-script-coordinator] 翻译切换失败:', error);
       // 错误时恢复到INACTIVE状态
       this.stateManager.updateState('translateActive', 'inactive');
     }
@@ -345,7 +345,7 @@ export class ContentScriptCoordinator {
    * 显示翻译后的字幕
    */
   private displayTranslatedSubtitles(data: any): void {
-    console.log('[ContentScriptCoordinator] 准备显示翻译字幕:', data);
+    console.log('[content-script-coordinator] 准备显示翻译字幕:', data);
     
     // 显示翻译字幕
     subtitleOverlay.show(data);
@@ -360,7 +360,7 @@ export class ContentScriptCoordinator {
    * 隐藏翻译字幕
    */
   private hideTranslatedSubtitles(): void {
-    console.log('[ContentScriptCoordinator] 隐藏翻译字幕');
+    console.log('[content-script-coordinator] 隐藏翻译字幕');
     
     // 隐藏字幕显示层
     subtitleOverlay.hide();
@@ -375,7 +375,7 @@ export class ContentScriptCoordinator {
    * 请求获取字幕数据
    */
   private requestSubtitleCapture(): void {
-    console.log('[ContentScriptCoordinator] 发送字幕捕获请求到main-world...');
+    console.log('[content-script-coordinator] 发送字幕捕获请求到main-world...');
     
     // 向main-world脚本发送消息
     window.postMessage({
@@ -388,14 +388,14 @@ export class ContentScriptCoordinator {
    * 处理捕获到的字幕数据
    */
   private handleSubtitleCaptured(payload: any): void {
-    console.log('[ContentScriptCoordinator] 处理字幕数据，共', payload.count, '条');
+    console.log('[content-script-coordinator] 处理字幕数据，共', payload.count, '条');
     
     // 获取当前视频ID
     const urlParams = new URLSearchParams(window.location.search);
     const videoId = urlParams.get('v');
     
     if (!videoId) {
-      console.warn('[ContentScriptCoordinator] 无法获取视频ID');
+      console.warn('[content-script-coordinator] 无法获取视频ID');
       return;
     }
     
@@ -410,12 +410,12 @@ export class ContentScriptCoordinator {
       }
     }, (response) => {
       if (chrome.runtime.lastError) {
-        console.error('[ContentScriptCoordinator] 发送字幕数据失败:', chrome.runtime.lastError);
+        console.error('[content-script-coordinator] ✗ SUBTITLE_DATA:', chrome.runtime.lastError);
         return;
       }
       
       if (response && response.success) {
-        console.log('[ContentScriptCoordinator] ✅ 字幕数据已发送到Service Worker');
+        console.log('[content-script-coordinator] ✓ SUBTITLE_DATA: 成功');
         // TODO: 触发翻译流程
       }
     });
@@ -432,26 +432,26 @@ export class ContentScriptCoordinator {
       });
       
       const currentState = stateResponse.isOpen;
-      console.log('[ContentScriptCoordinator] 当前Popup状态:', currentState ? '已打开' : '关闭');
+      console.log('[content-script-coordinator] 当前Popup状态:', currentState ? '已打开' : '关闭');
       
       if (currentState) {
         // Popup已打开，让Chrome自动关闭即可
-        console.log('[ContentScriptCoordinator] Popup已打开，将由Chrome自动关闭');
+        console.log('[content-script-coordinator] Popup已打开，将由Chrome自动关闭');
         return;
       }
       
       // Popup未打开，检查是否刚刚关闭（防抖）
       const timeSinceClose = Date.now() - this.lastPopupCloseTime;
-      console.log(`[ContentScriptCoordinator] 距离上次关闭时间: ${timeSinceClose}ms`);
+      console.log(`[content-script-coordinator] 距离上次关闭时间: ${timeSinceClose}ms`);
       
       if (timeSinceClose < 300) {
         // 300ms内的点击视为Chrome自动关闭导致的，不执行打开
-        console.log('[ContentScriptCoordinator] 刚刚关闭popup（300ms内），不执行打开操作');
+        console.log('[content-script-coordinator] 刚刚关闭popup（300ms内），不执行打开操作');
         return;
       }
       
       // 执行打开操作
-      console.log('[ContentScriptCoordinator] 执行打开Popup操作');
+      console.log('[content-script-coordinator] 执行打开Popup操作');
       const openResponse = await chrome.runtime.sendMessage({
         type: 'openPopup',
         data: { source: 'settings-button' },
@@ -459,13 +459,13 @@ export class ContentScriptCoordinator {
       });
       
       if (openResponse && openResponse.success) {
-        console.log('[ContentScriptCoordinator] ✅ Popup打开成功');
+        console.log('[content-script-coordinator] ✓ openPopup: 成功');
       } else {
-        console.error('[ContentScriptCoordinator] ❌ Popup打开失败:', openResponse?.error);
+        console.error('[content-script-coordinator] ✗ openPopup:', openResponse?.error);
       }
       
     } catch (error) {
-      console.error('[ContentScriptCoordinator] ❌ 处理Popup切换失败:', error);
+      console.error('[content-script-coordinator] ✗ togglePopup:', error);
     }
   }
   
@@ -511,7 +511,7 @@ export class ContentScriptCoordinator {
       style.remove();
     }, 4000);
     
-    console.log('[ContentScriptCoordinator] 💡 已显示SidePanel操作提示');
+    console.log('[content-script-coordinator] 💡 已显示SidePanel操作提示');
   }
 
   /**
@@ -519,7 +519,7 @@ export class ContentScriptCoordinator {
    * @deprecated 推荐使用toggleSidePanel进行状态切换
    */
   private async openSidePanel(): Promise<void> {
-    console.log('[ContentScriptCoordinator] 🚀 打开SidePanel（用户手势上下文）');
+    console.log('[content-script-coordinator] 🚀 打开SidePanel（用户手势上下文）');
     
     try {
       // 发送打开sidepanel请求到background
@@ -529,13 +529,13 @@ export class ContentScriptCoordinator {
       });
       
       if (result && result.success) {
-        console.log('[ContentScriptCoordinator] ✅ SidePanel打开成功');
+        console.log('[content-script-coordinator] ✓ openSidePanel: 成功');
         // 注意：状态更新将由SidePanel的Port连接自动处理，避免重复调用
       } else {
-        console.error('[ContentScriptCoordinator] ❌ SidePanel打开失败:', result?.error);
+        console.error('[content-script-coordinator] ✗ openSidePanel:', result?.error);
       }
     } catch (error) {
-      console.error('[ContentScriptCoordinator] ❌ 打开SidePanel出错:', error);
+      console.error('[content-script-coordinator] ✗ openSidePanel:', error);
     }
   }
 
@@ -543,10 +543,10 @@ export class ContentScriptCoordinator {
    * 处理状态变化
    */
   private handleStateChange(data: any): void {
-    console.log('[ContentScriptCoordinator] 处理状态变化:', data);
+    console.log('[content-script-coordinator] 处理状态变化:', data);
     
     if (!this.uiRenderer) {
-      console.warn('[ContentScriptCoordinator] UIRenderer未初始化');
+      console.warn('[content-script-coordinator] UIRenderer未初始化');
       return;
     }
 
@@ -575,7 +575,7 @@ export class ContentScriptCoordinator {
    * 处理页面可见性变化
    */
   private handlePageVisible(data: any): void {
-    console.log('[ContentScriptCoordinator] 页面变为可见，刷新状态');
+    console.log('[content-script-coordinator] 页面变为可见，刷新状态');
     // 可以在这里触发状态刷新，但通过协调器统一管理
     this.refreshStates();
   }
@@ -585,7 +585,7 @@ export class ContentScriptCoordinator {
    */
   private handleChromeMessage(data: any): void {
     const { messageType, message } = data;
-    console.log(`[ContentScriptCoordinator] 处理Chrome消息: ${messageType}`, message);
+    console.log(`[content-script-coordinator] 处理Chrome消息: ${messageType}`, message);
     
     // 根据消息类型处理
     switch (messageType) {
@@ -595,10 +595,10 @@ export class ContentScriptCoordinator {
           // 记录popup关闭时间
           if (!message.isOpen) {
             this.lastPopupCloseTime = Date.now();
-            console.log(`[ContentScriptCoordinator] 记录popup关闭时间: ${this.lastPopupCloseTime}`);
+            console.log(`[content-script-coordinator] 记录popup关闭时间: ${this.lastPopupCloseTime}`);
           }
           this.uiRenderer.update({ settingPanelOpen: message.isOpen });
-          console.log(`[ContentScriptCoordinator] 按钮状态更新: ${message.isOpen ? '已打开' : '已关闭'} (${message.source})`);
+          console.log(`[content-script-coordinator] 按钮状态更新: ${message.isOpen ? '已打开' : '已关闭'} (${message.source})`);
         }
         break;
         
@@ -606,13 +606,13 @@ export class ContentScriptCoordinator {
         // 🔧 向后兼容：保持对旧消息格式的支持
         if (message.isOpen !== undefined && this.uiRenderer) {
           this.uiRenderer.update({ settingPanelOpen: message.isOpen });
-          console.log(`[ContentScriptCoordinator] 状态变化 (兼容模式): ${message.isOpen ? '已打开' : '已关闭'}`);
+          console.log(`[content-script-coordinator] 状态变化 (兼容模式): ${message.isOpen ? '已打开' : '已关闭'}`);
         }
         break;
         
       default:
         // 其他Chrome消息暂时只记录，不处理
-        console.log(`[ContentScriptCoordinator] 收到其他Chrome消息: ${messageType}`);
+        console.log(`[content-script-coordinator] 收到其他Chrome消息: ${messageType}`);
     }
   }
 
@@ -621,7 +621,7 @@ export class ContentScriptCoordinator {
    */
   private async initializePopupState(): Promise<void> {
     try {
-      console.log('[ContentScriptCoordinator] 🎯 获取Popup初始状态...');
+      console.log('[content-script-coordinator] 🎯 获取Popup初始状态...');
       
       // 发送getPopupState消息到Background
       const result = await chrome.runtime.sendMessage({
@@ -630,15 +630,15 @@ export class ContentScriptCoordinator {
       
       if (result && result.success && this.uiRenderer) {
         this.uiRenderer.update({ settingPanelOpen: result.isOpen });
-        console.log(`[ContentScriptCoordinator] ✅ Popup初始状态: ${result.isOpen ? '已打开' : '已关闭'}`);
+        console.log(`[content-script-coordinator] ✓ getPopupState: ${result.isOpen ? '已打开' : '已关闭'}`);
       } else {
-        console.warn('[ContentScriptCoordinator] ⚠️ 获取Popup状态失败，使用默认状态');
+        console.warn('[content-script-coordinator] ✗ getPopupState: 使用默认状态');
         if (this.uiRenderer) {
           this.uiRenderer.update({ settingPanelOpen: false });
         }
       }
     } catch (error) {
-      console.error('[ContentScriptCoordinator] ❌ 初始化Popup状态失败:', error);
+      console.error('[content-script-coordinator] ✗ initializePopupState:', error);
       // 降级到默认状态
       if (this.uiRenderer) {
         this.uiRenderer.update({ settingPanelOpen: false });
@@ -651,7 +651,7 @@ export class ContentScriptCoordinator {
    */
   private async refreshStates(): Promise<void> {
     try {
-      console.log('[ContentScriptCoordinator] 🔄 刷新状态...');
+      console.log('[content-script-coordinator] 🔄 刷新状态...');
       
       // 仍然是一次性获取所有状态
       const [runtimeState, userPreferences] = await Promise.all([
@@ -669,9 +669,9 @@ export class ContentScriptCoordinator {
         this.uiRenderer.refresh();
       }
 
-      console.log('[ContentScriptCoordinator] ✅ 状态刷新完成');
+      console.log('[content-script-coordinator] ✓ refreshStates: 完成');
     } catch (error) {
-      console.error('[ContentScriptCoordinator] 刷新状态失败:', error);
+      console.error('[content-script-coordinator] 刷新状态失败:', error);
     }
   }
 
@@ -697,7 +697,7 @@ export class ContentScriptCoordinator {
    * 🚀 启动UI管理 - 成为唯一的UI决策点
    */
   private startUIManagement(): void {
-    console.log('[ContentScriptCoordinator] 🎯 启动UI管理模块');
+    console.log('[content-script-coordinator] 启动UI管理模块');
     
     // 设置DOM观察器
     this.setupDOMObserver();
@@ -711,11 +711,11 @@ export class ContentScriptCoordinator {
    */
   private setupDOMObserver(): void {
     if (this.observerSetup) {
-      console.log('[ContentScriptCoordinator] DOM观察器已设置，跳过');
+      console.log('[content-script-coordinator] DOM观察器已设置，跳过');
       return;
     }
     
-    console.log('[ContentScriptCoordinator] 🔍 设置DOM观察器');
+    console.log('[content-script-coordinator] 🔍 设置DOM观察器');
     this.observerSetup = true;
     
     const observer = new MutationObserver((mutations) => {
@@ -737,7 +737,7 @@ export class ContentScriptCoordinator {
                   node.classList.contains('html5-video-player')
                 )) {
                 hasRelevantChanges = true;
-                console.log('[ContentScriptCoordinator] 检测到关键元素:', node.className);
+                console.log('[content-script-coordinator] 检测到关键元素:', node.className);
               }
             }
           });
@@ -756,29 +756,29 @@ export class ContentScriptCoordinator {
       attributeFilter: ['class', 'style']
     });
     
-    console.log('[ContentScriptCoordinator] ✅ DOM观察器已设置');
+    console.log('[content-script-coordinator] ✓ DOM观察器已设置');
   }
   
   /**
    * 🚀 执行初始按钮检查
    */
   private performInitialButtonCheck(): void {
-    console.log('[ContentScriptCoordinator] 🔍 执行初始按钮检查');
+    console.log('[content-script-coordinator] 🔍 执行初始按钮检查');
     
     const rightControls = document.querySelector('.ytp-right-controls');
     const autoplayButton = document.querySelector('.ytp-autonav-toggle-button');
     
     if (rightControls && autoplayButton) {
-      console.log('[ContentScriptCoordinator] 初始检测到必要元素，尝试创建按钮');
+      console.log('[content-script-coordinator] 初始检测到必要元素，尝试创建按钮');
       this.checkAndCreateButtons('初始检测');
     } else {
-      console.log('[ContentScriptCoordinator] 初始检测未找到必要元素，等待DOM变化');
+      console.log('[content-script-coordinator] 初始检测未找到必要元素，等待DOM变化');
     }
     
     // 设置超时检查
     setTimeout(() => {
       if (!this.controlsInjected) {
-        console.log('[ContentScriptCoordinator] 超时检查，尝试创建按钮');
+        console.log('[content-script-coordinator] 超时检查，尝试创建按钮');
         this.checkAndCreateButtons('超时检查');
       }
     }, 3000);
@@ -792,13 +792,13 @@ export class ContentScriptCoordinator {
       return;
     }
     
-    console.log(`[ContentScriptCoordinator] ${source}触发按钮创建检查`);
+    console.log(`[content-script-coordinator] ${source}触发按钮创建检查`);
     
     const rightControls = document.querySelector('.ytp-right-controls');
     const autoplayButton = document.querySelector('.ytp-autonav-toggle-button');
     
     if (rightControls && autoplayButton) {
-      console.log('[ContentScriptCoordinator] 检测到YouTube控制栏就绪，调用UIRenderer创建按钮');
+      console.log('[content-script-coordinator] 检测到YouTube控制栏就绪，调用UIRenderer创建按钮');
       
       const success = await this.uiRenderer.createButtons();
       if (success) {
@@ -809,14 +809,14 @@ export class ContentScriptCoordinator {
       } else {
         this.injectionAttempts++;
         if (this.injectionAttempts < this.MAX_INJECTION_ATTEMPTS) {
-          console.log(`[ContentScriptCoordinator] 按钮创建失败，第${this.injectionAttempts}次尝试，将重试`);
+          console.log(`[content-script-coordinator] 按钮创建失败，第${this.injectionAttempts}次尝试，将重试`);
           setTimeout(() => this.checkAndCreateButtons(source + '-重试'), this.INJECTION_RETRY_DELAY);
         } else {
-          console.warn('[ContentScriptCoordinator] 达到最大尝试次数，放弃创建按钮');
+          console.warn('[content-script-coordinator] 达到最大尝试次数，放弃创建按钮');
         }
       }
     } else {
-      console.log('[ContentScriptCoordinator] YouTube控制栏尚未就绪，等待中...');
+      console.log('[content-script-coordinator] YouTube控制栏尚未就绪，等待中...');
     }
   }
   
@@ -828,7 +828,7 @@ export class ContentScriptCoordinator {
       return;
     }
     
-    console.log('[ContentScriptCoordinator] 🔄 启动控件监测');
+    console.log('[content-script-coordinator] 🔄 启动控件监测');
     
     this.controlsCheckInterval = window.setInterval(() => {
       if (this.controlsInjected) {
@@ -839,7 +839,7 @@ export class ContentScriptCoordinator {
         
         // 如果按钮丢失但YouTube控制栏就绪，尝试恢复
         if ((!translateButton || !settingsButton) && autoplayButton && rightControls) {
-          console.log('[ContentScriptCoordinator] 检测到按钮丢失，尝试恢复');
+          console.log('[content-script-coordinator] 检测到按钮丢失，尝试恢复');
           this.controlsInjected = false;
           this.injectionAttempts = 0;
           this.checkAndCreateButtons('按钮恢复');
@@ -855,7 +855,7 @@ export class ContentScriptCoordinator {
     if (this.controlsCheckInterval !== null) {
       window.clearInterval(this.controlsCheckInterval);
       this.controlsCheckInterval = null;
-      console.log('[ContentScriptCoordinator] 🛑 已停止控件监测');
+      console.log('[content-script-coordinator] 🛑 已停止控件监测');
     }
   }
 }

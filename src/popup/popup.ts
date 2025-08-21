@@ -32,16 +32,16 @@ interface VideoSourceLanguageCache {
   maxSize: number; // 固定为10，FIFO策略
 }
 
-console.log('[Popup] 初始化开始...');
+console.log('[popup] 初始化开始...');
 
 // 通知Service Worker popup已打开
 chrome.runtime.sendMessage({ 
   type: 'popupOpened',
   timestamp: Date.now()
 }).then(() => {
-  console.log('[Popup] 已通知Service Worker popup打开');
+  console.log('[popup] 已通知Service Worker popup打开');
 }).catch(error => {
-  console.error('[Popup] 通知Service Worker失败:', error);
+  console.error('[popup] 通知Service Worker失败:', error);
 });
 
 // === 语言族互斥检测工具函数 ===
@@ -724,7 +724,7 @@ function isSameLanguageFamily(sourceLang: string, targetLang: string): boolean {
   
   // 只在发生互斥时打印日志
   if (isSame) {
-    console.log(`[Popup] 语言族互斥检测: ${sourceLang} (${sourceBase}) 与 ${targetLang} (${targetBase}) 属于同一语言族`);
+    console.log(`[popup] 语言族互斥检测: ${sourceLang} (${sourceBase}) 与 ${targetLang} (${targetBase}) 属于同一语言族`);
   }
   
   return isSame;
@@ -813,21 +813,21 @@ let uiLangCode: string | null = null;
 
 // === Port连接管理 ===
 const port = chrome.runtime.connect({ name: 'popup-lifecycle' });
-console.log('[Popup] Port连接已建立');
+console.log('[popup] Port连接已建立');
 
 // === 生命周期管理 ===
 window.addEventListener('beforeunload', () => {
-  console.log('[Popup] 发送关闭通知...');
+  console.log('[popup] 发送关闭通知...');
   chrome.runtime.sendMessage({ type: 'popupClosed' });
 });
 
 window.addEventListener('blur', () => {
-  console.log('[Popup] 失去焦点...');
+  console.log('[popup] 失去焦点...');
   chrome.runtime.sendMessage({ type: 'popupBlurred' });
 });
 
 port.onDisconnect.addListener(() => {
-  console.log('[Popup] Port连接断开');
+  console.log('[popup] Port连接断开');
 });
 
 // === 核心功能函数 ===
@@ -863,7 +863,7 @@ function extractVideoIdFromUrl(url: string): string | null {
  * 显示使用说明界面（非YouTube页面时使用）
  */
 function showUsageGuide(): void {
-  console.log('[Popup] 显示使用说明界面');
+  console.log('[popup] 显示使用说明界面');
   
   document.body.innerHTML = `
     <div style="
@@ -1061,7 +1061,7 @@ function initializeDOMElements(): void {
   sourceLangOptions = document.getElementById('source-language-options') as HTMLDivElement | null;
   
   // 调试：检查DOM元素是否正确获取
-  console.log('[Popup] DOM元素获取状态:', {
+  console.log('[popup] DOM元素获取状态:', {
     sourceLangContainer: !!sourceLangContainer,
     sourceLangTrigger: !!sourceLangTrigger,
     sourceLangSelectedValue: !!sourceLangSelectedValue,
@@ -1098,7 +1098,7 @@ function initializeDOMElements(): void {
  * @param apiType 当前选择的API类型
  */
 function updateApiPanels(apiType: string): void {
-  console.log(`[Popup] 更新API面板: ${apiType}`);
+  console.log(`[popup] 更新API面板: ${apiType}`);
   
   // 重置所有面板为隐藏
   if (apiKeyPanel) apiKeyPanel.style.display = 'none';
@@ -1117,7 +1117,7 @@ function updateApiPanels(apiType: string): void {
   
   // 非付费API，不显示任何面板
   if (!apiInfo) {
-    console.log(`[Popup] 未找到API信息: ${apiType}`);
+    console.log(`[popup] 未找到API信息: ${apiType}`);
     return;
   }
   
@@ -1183,13 +1183,13 @@ function populateTargetLanguages(searchTerm: string = ''): void {
       option.classList.add('disabled');
       option.setAttribute('data-disabled-reason', 'same-language-family');
       option.title = `无法选择同语言族的语言：${lang.name} 与源语言冲突`;
-      console.log(`[Popup] populateTargetLanguages: 目标语言 ${lang.code} 因与源语言 ${currentSourceLang} 冲突而被禁用`);
+      console.log(`[popup] populateTargetLanguages: 目标语言 ${lang.code} 因与源语言 ${currentSourceLang} 冲突而被禁用`);
     }
     
     option.addEventListener('click', () => {
       // 检查是否被禁用
       if (option.classList.contains('disabled')) {
-        console.log(`[Popup] 尝试选择被禁用的目标语言: ${lang.code}`);
+        console.log(`[popup] 尝试选择被禁用的目标语言: ${lang.code}`);
         return; // 禁止选择被禁用的选项
       }
       
@@ -1214,15 +1214,15 @@ function populateTargetLanguages(searchTerm: string = ''): void {
 async function saveTargetLanguage(langCode: string): Promise<void> {
   try {
     await userPreferencesManager.updateUserPreferences({ targetLang: langCode });
-    console.log('[Popup] 目标语言已保存:', langCode);
+    console.log('[popup] 目标语言已保存:', langCode);
     
     // 重新填充源语言列表以应用语言族互斥逻辑
     populateSourceLanguages();
     
-    console.log('[Popup] 目标语言已保存:', langCode, '，源语言列表已更新');
-    console.log(`[Popup] 语言族互斥检测已应用，当前目标语言: ${langCode}`);
+    console.log('[popup] 目标语言已保存:', langCode, '，源语言列表已更新');
+    console.log(`[popup] 语言族互斥检测已应用，当前目标语言: ${langCode}`);
   } catch (error) {
-    console.error('[Popup] 保存目标语言失败:', error);
+    console.error('[popup] 保存目标语言失败:', error);
     }
 }
 
@@ -1270,7 +1270,7 @@ function addEventListeners(): void {
         const isVisible = sourceLangPanel.style.display === 'block';
         sourceLangPanel.style.display = isVisible ? 'none' : 'block';
         if (!isVisible) {
-          console.log('[Popup] 源语言下拉菜单点击，uiTrackData:', uiTrackData);
+          console.log('[popup] 源语言下拉菜单点击，uiTrackData:', uiTrackData);
           populateSourceLanguages();
           if (sourceLangSearch) {
             sourceLangSearch.focus();
@@ -1315,16 +1315,16 @@ function addEventListeners(): void {
  * 初始化YouTube功能界面
  */
 async function initializeYouTubeUI(): Promise<void> {
-  console.log('[Popup] 初始化YouTube功能界面...');
+  console.log('[popup] 初始化YouTube功能界面...');
   
   try {
     // 步骤4：统一初始化流程
     await initializeUnifiedStorage();
     
-    console.log('[Popup] YouTube功能界面初始化完成');
+    console.log('[popup] YouTube功能界面初始化完成');
     
   } catch (error) {
-    console.error('[Popup] YouTube界面初始化失败:', error);
+    console.error('[popup] YouTube界面初始化失败:', error);
     throw error;
   }
 }
@@ -1333,40 +1333,40 @@ async function initializeYouTubeUI(): Promise<void> {
  * 步骤4：统一初始化流程 - 整合两套存储的读取和UI更新
  */
 async function initializeUnifiedStorage(): Promise<void> {
-  console.log('[Popup] 🔄 步骤4：开始统一初始化流程...');
+  console.log('[popup] 🔄 步骤4：开始统一初始化流程...');
   
   try {
     // 1. 基础设置
-    console.log('[Popup] 1/6 - 初始化DOM元素和事件监听器');
+    console.log('[popup] 1/6 - 初始化DOM元素和事件监听器');
     initializeDOMElements();
     addEventListeners();
     
     // 2. 初始化UserPreferencesManager并加载用户偏好设置
-    console.log('[Popup] 2/6 - 加载用户偏好设置 (UserPreferencesManager)');
+    console.log('[popup] 2/6 - 加载用户偏好设置 (UserPreferencesManager)');
     await userPreferencesManager.initialize();
     const userPreferences = await userPreferencesManager.getUserPreferences();
-    console.log('[Popup] 用户偏好设置已加载:', userPreferences);
+    console.log('[popup] 用户偏好设置已加载:', userPreferences);
     
     // 3. 更新用户偏好设置相关的UI
-    console.log('[Popup] 3/6 - 更新用户偏好设置UI');
+    console.log('[popup] 3/6 - 更新用户偏好设置UI');
     await updateUserPreferencesUI(userPreferences);
     
     // 4. 获取PopupContext数据（包含源语言信息）
-    console.log('[Popup] 4/6 - 获取PopupContext数据');
+    console.log('[popup] 4/6 - 获取PopupContext数据');
     const popupContext = await requestPopupContextData();
     
     // 5. 加载源语言数据并更新UI
-    console.log('[Popup] 5/6 - 加载源语言数据 (VideoSourceLanguageCache)');
+    console.log('[popup] 5/6 - 加载源语言数据 (VideoSourceLanguageCache)');
     await loadSourceLanguageData(popupContext);
     
     // 6. 设置统一事件监听器
-    console.log('[Popup] 6/6 - 设置统一事件监听器');
+    console.log('[popup] 6/6 - 设置统一事件监听器');
     setupUnifiedSettingsListener();
     
-    console.log('[Popup] ✅ 统一初始化流程完成');
+    console.log('[popup] ✓ 统一初始化流程完成');
     
   } catch (error) {
-    console.error('[Popup] ❌ 统一初始化流程失败:', error);
+    console.error('[popup] ✗ 统一初始化流程失败:', error);
     throw error;
   }
 }
@@ -1395,44 +1395,44 @@ async function updateUserPreferencesUI(userPreferences: UserPreferences): Promis
     // 更新翻译服务配置
     if (userPreferences.translationService) {
       const service = userPreferences.translationService;
-      console.log('[Popup] 正在设置翻译服务UI:', service);
+      console.log('[popup] 正在设置翻译服务UI:', service);
       
       // 设置翻译API选择器
       if (translationApiSelect) {
-        console.log('[Popup] 设置翻译API选择器:', service.type);
+        console.log('[popup] 设置翻译API选择器:', service.type);
         translationApiSelect.value = service.type;
         updateApiPanels(service.type);
-        console.log('[Popup] 翻译API选择器设置完成，当前值:', translationApiSelect.value);
+        console.log('[popup] 翻译API选择器设置完成，当前值:', translationApiSelect.value);
       } else {
-        console.warn('[Popup] translationApiSelect 元素未找到');
+        console.warn('[popup] translationApiSelect 元素未找到');
       }
       
       // 设置API密钥
       if (apiKeyInput && service.apiKey) {
         apiKeyInput.value = service.apiKey;
-        console.log('[Popup] API密钥已设置');
+        console.log('[popup] API密钥已设置');
       }
       
       // 设置模型选择
       if (modelSelect && service.model) {
         modelSelect.value = service.model;
-        console.log('[Popup] 模型选择已设置:', service.model);
+        console.log('[popup] 模型选择已设置:', service.model);
       }
       
       // 设置温度参数
       if (temperatureInput && service.temperature !== null && service.temperature !== undefined) {
         temperatureInput.value = service.temperature.toString();
-        console.log('[Popup] 温度参数已设置:', service.temperature);
+        console.log('[popup] 温度参数已设置:', service.temperature);
       }
     }
     
     // 填充目标语言列表
     populateTargetLanguages();
     
-    console.log('[Popup] 用户偏好设置UI更新完成');
+    console.log('[popup] 用户偏好设置UI更新完成');
     
   } catch (error) {
-    console.error('[Popup] 更新用户偏好设置UI失败:', error);
+    console.error('[popup] 更新用户偏好设置UI失败:', error);
     throw error;
   }
 }
@@ -1442,7 +1442,7 @@ async function updateUserPreferencesUI(userPreferences: UserPreferences): Promis
  */
 async function requestPopupContextData(): Promise<any> {
   if (!currentTabId) {
-    console.log('[Popup] 无法请求PopupContext: 缺少标签页ID');
+    console.log('[popup] 无法请求PopupContext: 缺少标签页ID');
     return null;
   }
   
@@ -1454,7 +1454,7 @@ async function requestPopupContextData(): Promise<any> {
     
     if (response && response.type === 'popupInitDataResponse') {
       const popupContext = response.popupContext;
-      console.log('[Popup] PopupContext数据已获取:', popupContext);
+      console.log('[popup] PopupContext数据已获取:', popupContext);
       
       // 更新全局变量
       if (popupContext) {
@@ -1463,11 +1463,11 @@ async function requestPopupContextData(): Promise<any> {
       
       return popupContext;
     } else {
-      console.log('[Popup] 无效的PopupContext响应:', response);
+      console.log('[popup] 无效的PopupContext响应:', response);
       return null;
     }
   } catch (error) {
-    console.error('[Popup] 请求PopupContext数据失败:', error);
+    console.error('[popup] 请求PopupContext数据失败:', error);
     return null;
   }
 }
@@ -1478,7 +1478,7 @@ async function requestPopupContextData(): Promise<any> {
 async function loadSourceLanguageData(popupContext: any): Promise<void> {
   try {
     if (!currentVideoId) {
-      console.log('[Popup] 无法加载源语言数据: 缺少视频ID');
+      console.log('[popup] 无法加载源语言数据: 缺少视频ID');
       return;
     }
     
@@ -1500,7 +1500,7 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
           kind: track.kind || 'standard'
         }))
       ];
-      console.log('[Popup] 源语言列表已获取（包含自动检测）:', uiTrackData);
+      console.log('[popup] 源语言列表已获取（包含自动检测）:', uiTrackData);
     }
     
     // 先加载用户之前选择的源语言，设置全局变量
@@ -1508,10 +1508,10 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
     if (selectedTrack) {
       currentSourceLang = selectedTrack.languageCode;
       currentSourceTrackKind = selectedTrack.kind || 'standard';
-      console.log('[Popup] 已恢复用户选择的源语言:', selectedTrack);
-      console.log('[Popup] 当前全局变量 - currentSourceLang:', currentSourceLang, 'currentSourceTrackKind:', currentSourceTrackKind);
+      console.log('[popup] 已恢复用户选择的源语言:', selectedTrack);
+      console.log('[popup] 当前全局变量 - currentSourceLang:', currentSourceLang, 'currentSourceTrackKind:', currentSourceTrackKind);
     } else {
-      console.log('[Popup] 未找到用户之前选择的源语言，保持默认值 auto');
+      console.log('[popup] 未找到用户之前选择的源语言，保持默认值 auto');
     }
     
     // 然后填充源语言选择器（此时 currentSourceLang 已经设置正确）
@@ -1529,10 +1529,10 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
       await handleDetectedSourceLanguage(popupContext.detectedSourceLang);
     }
     
-    console.log('[Popup] 源语言数据加载完成');
+    console.log('[popup] 源语言数据加载完成');
     
   } catch (error) {
-    console.error('[Popup] 加载源语言数据失败:', error);
+    console.error('[popup] 加载源语言数据失败:', error);
   }
 }
 
@@ -1542,14 +1542,14 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
  */
 async function handleDetectedSourceLanguage(detectedLang: string): Promise<void> {
   try {
-    console.log('[Popup] 处理检测到的源语言:', detectedLang);
+    console.log('[popup] 处理检测到的源语言:', detectedLang);
     
     // 自动设置源语言（如果用户没有手动选择过）
     // 使用与loadSourceLanguageData相同的检查机制
     const savedSourceTrack = await getSelectedSourceTrack(currentVideoId || '');
     
     if (!savedSourceTrack) {
-      console.log('[Popup] 自动设置检测到的源语言:', detectedLang);
+      console.log('[popup] 自动设置检测到的源语言:', detectedLang);
       await saveSourceLanguage(detectedLang, 'auto');
       // 更新全局变量
       currentSourceLang = detectedLang;
@@ -1558,11 +1558,11 @@ async function handleDetectedSourceLanguage(detectedLang: string): Promise<void>
       populateSourceLanguages();
       updateSourceLanguageDisplay(detectedLang, 'auto');
     } else {
-      console.log('[Popup] 用户已选择源语言，跳过自动设置:', savedSourceTrack);
+      console.log('[popup] 用户已选择源语言，跳过自动设置:', savedSourceTrack);
     }
     
   } catch (error) {
-    console.error('[Popup] 处理检测到的源语言失败:', error);
+    console.error('[popup] 处理检测到的源语言失败:', error);
   }
 }
 
@@ -1604,7 +1604,7 @@ function generateLanguageDisplayName(trackInfo: {
  */
 function populateSourceLanguages(searchTerm: string = ''): void {
   if (!sourceLangOptions) {
-    console.warn('[Popup] populateSourceLanguages: sourceLangOptions元素不存在');
+    console.warn('[popup] populateSourceLanguages: sourceLangOptions元素不存在');
     return;
   }
   
@@ -1645,7 +1645,7 @@ function populateSourceLanguages(searchTerm: string = ''): void {
         option.classList.add('disabled');
         option.setAttribute('data-disabled-reason', 'same-language-family');
         option.title = `无法选择同语言族的语言：${displayName} 与目标语言冲突`;
-        console.log(`[Popup] populateSourceLanguages: 源语言 ${trackInfo.languageCode} 因与目标语言 ${currentTargetLang} 冲突而被禁用`);
+        console.log(`[popup] populateSourceLanguages: 源语言 ${trackInfo.languageCode} 因与目标语言 ${currentTargetLang} 冲突而被禁用`);
       }
       
       // 如果有搜索词，高亮匹配的部分
@@ -1687,13 +1687,13 @@ function handleSourceLanguageOptionClick(event: Event): void {
   const trackKind = target.getAttribute('data-kind');
   
   if (!languageCode || !trackKind) {
-    console.error('[Popup] 无效的语言选项数据');
+    console.error('[popup] 无效的语言选项数据');
     return;
   }
   
   // 检查是否被禁用
   if (target.classList.contains('disabled')) {
-    console.log(`[Popup] 尝试选择被禁用的源语言: ${languageCode}`);
+    console.log(`[popup] 尝试选择被禁用的源语言: ${languageCode}`);
     return; // 禁止选择被禁用的选项
   }
   
@@ -1716,18 +1716,18 @@ function handleSourceLanguageOptionClick(event: Event): void {
   // 重新填充目标语言列表以应用语言族互斥逻辑
   populateTargetLanguages();
   
-  console.log(`[Popup] 源语言已选择: ${languageCode} (${trackKind})，目标语言列表已更新`);
-  console.log(`[Popup] 语言族互斥检测已应用，当前源语言: ${languageCode}`);
+  console.log(`[popup] 源语言已选择: ${languageCode} (${trackKind})，目标语言列表已更新`);
+  console.log(`[popup] 语言族互斥检测已应用，当前源语言: ${languageCode}`);
 }
 
 /**
  * 更新源语言显示
  */
 function updateSourceLanguageDisplay(languageCode: string, trackKind: string): void {
-  console.log('[Popup] updateSourceLanguageDisplay 被调用:', { languageCode, trackKind });
+  console.log('[popup] updateSourceLanguageDisplay 被调用:', { languageCode, trackKind });
   
   if (!sourceLangSelectedValue) {
-    console.warn('[Popup] sourceLangSelectedValue 元素不存在');
+    console.warn('[popup] sourceLangSelectedValue 元素不存在');
     return;
   }
   
@@ -1746,11 +1746,11 @@ function updateSourceLanguageDisplay(languageCode: string, trackKind: string): v
       displayText = generateLanguageDisplayName(trackInfo);
     } else {
       displayText = languageCode;
-      console.warn('[Popup] 未找到匹配的轨道信息:', { languageCode, trackKind, uiTrackData });
+      console.warn('[popup] 未找到匹配的轨道信息:', { languageCode, trackKind, uiTrackData });
     }
   }
   
-  console.log('[Popup] 设置源语言显示文本:', displayText);
+  console.log('[popup] 设置源语言显示文本:', displayText);
   sourceLangSelectedValue.textContent = displayText;
   sourceLangSelectedValue.setAttribute('data-value', languageCode);
   sourceLangSelectedValue.setAttribute('data-kind', trackKind);
@@ -1762,7 +1762,7 @@ function updateSourceLanguageDisplay(languageCode: string, trackKind: string): v
 async function saveSourceLanguage(languageCode: string, trackKind: string): Promise<void> {
   try {
     if (!currentVideoId) {
-      console.error('[Popup] currentVideoId为空，无法保存源语言');
+      console.error('[popup] currentVideoId为空，无法保存源语言');
       return;
     }
     
@@ -1783,12 +1783,12 @@ async function saveSourceLanguage(languageCode: string, trackKind: string): Prom
       
       // 保存轨道信息
       await saveSelectedSourceTrack(currentVideoId, simplifiedTrack);
-      console.log('[Popup] 源语言设置已保存:', simplifiedTrack);
+      console.log('[popup] 源语言设置已保存:', simplifiedTrack);
     } else {
-      console.warn('[Popup] 未找到匹配的源语言轨道:', { languageCode, trackKind, uiTrackData });
+      console.warn('[popup] 未找到匹配的源语言轨道:', { languageCode, trackKind, uiTrackData });
     }
   } catch (error) {
-    console.error('[Popup] 保存源语言设置失败:', error);
+    console.error('[popup] 保存源语言设置失败:', error);
   }
 }
 
@@ -1846,7 +1846,7 @@ async function handleSourceLanguageChange(selectElement: HTMLSelectElement): Pro
     const languageCode = selectedOption.value;
     const trackKind = selectedOption.dataset.kind || 'standard';
     
-    console.log('[Popup] 统一监听器 - 源语言变更:', { languageCode, trackKind });
+    console.log('[popup] 统一监听器 - 源语言变更:', { languageCode, trackKind });
     
     // 使用步骤2实现的新缓存机制
     await saveSourceLanguage(languageCode, trackKind);
@@ -1858,7 +1858,7 @@ async function handleSourceLanguageChange(selectElement: HTMLSelectElement): Pro
     populateTargetLanguages();
     
   } catch (error) {
-    console.error('[Popup] 统一监听器 - 源语言变更失败:', error);
+    console.error('[popup] 统一监听器 - 源语言变更失败:', error);
   }
 }
 
@@ -1868,7 +1868,7 @@ async function handleSourceLanguageChange(selectElement: HTMLSelectElement): Pro
 async function handleTargetLanguageChange(selectElement: HTMLSelectElement): Promise<void> {
   try {
     const langCode = selectElement.value;
-    console.log('[Popup] 统一监听器 - 目标语言变更:', langCode);
+    console.log('[popup] 统一监听器 - 目标语言变更:', langCode);
     
     // 使用步骤1实现的UserPreferencesManager
     await userPreferencesManager.updateUserPreferences({ targetLang: langCode });
@@ -1886,7 +1886,7 @@ async function handleTargetLanguageChange(selectElement: HTMLSelectElement): Pro
     populateSourceLanguages();
     
   } catch (error) {
-    console.error('[Popup] 统一监听器 - 目标语言变更失败:', error);
+    console.error('[popup] 统一监听器 - 目标语言变更失败:', error);
   }
 }
 
@@ -1896,13 +1896,13 @@ async function handleTargetLanguageChange(selectElement: HTMLSelectElement): Pro
 async function handleSubtitleModeChange(switchElement: HTMLInputElement): Promise<void> {
   try {
     const subtitleMode = switchElement.checked ? SubtitleMode.BILINGUAL : SubtitleMode.TARGET_ONLY;
-    console.log('[Popup] 统一监听器 - 字幕模式变更:', subtitleMode);
+    console.log('[popup] 统一监听器 - 字幕模式变更:', subtitleMode);
     
     // 使用步骤1实现的UserPreferencesManager
     await userPreferencesManager.updateUserPreferences({ subtitleMode });
     
   } catch (error) {
-    console.error('[Popup] 统一监听器 - 字幕模式变更失败:', error);
+    console.error('[popup] 统一监听器 - 字幕模式变更失败:', error);
   }
 }
 
@@ -1911,7 +1911,7 @@ async function handleSubtitleModeChange(switchElement: HTMLInputElement): Promis
  */
 async function handleTranslationServiceChange(): Promise<void> {
   try {
-    console.log('[Popup] 统一监听器 - 翻译服务变更');
+    console.log('[popup] 统一监听器 - 翻译服务变更');
     
     // 从UI读取完整的翻译服务配置
     const translationApiSelect = document.getElementById('translation-api') as HTMLSelectElement;
@@ -1939,10 +1939,10 @@ async function handleTranslationServiceChange(): Promise<void> {
       updateApiPanels(translationApiSelect.value);
     }
     
-    console.log('[Popup] 统一监听器 - 翻译服务配置已更新:', updatedService);
+    console.log('[popup] 统一监听器 - 翻译服务配置已更新:', updatedService);
     
   } catch (error) {
-    console.error('[Popup] 统一监听器 - 翻译服务变更失败:', error);
+    console.error('[popup] 统一监听器 - 翻译服务变更失败:', error);
   }
 }
 
@@ -1960,15 +1960,15 @@ async function getAvailableSourceLanguages(videoId: string): Promise<SimplifiedC
     // 查找该视频的缓存
     const cachedItem = cache.items.find(item => item.videoId === videoId);
     if (cachedItem && cachedItem.availableSourceLanguages.length > 0) {
-      console.log('[Popup] 使用缓存的源语言列表:', cachedItem.availableSourceLanguages);
+      console.log('[popup] 使用缓存的源语言列表:', cachedItem.availableSourceLanguages);
       return cachedItem.availableSourceLanguages;
     }
     
     // 2. Local Storage没有，调用API获取
-    console.log('[Popup] 缓存未命中，从API获取源语言列表...');
+    console.log('[popup] 缓存未命中，从API获取源语言列表...');
     
     if (!currentTabId) {
-      console.error('[Popup] currentTabId为空，无法发送消息');
+      console.error('[popup] currentTabId为空，无法发送消息');
       return [];
     }
     
@@ -1989,15 +1989,15 @@ async function getAvailableSourceLanguages(videoId: string): Promise<SimplifiedC
       // 4. 存储到缓存
       await saveVideoSourceLanguageCache(videoId, availableSourceLanguages, null);
       
-      console.log('[Popup] API获取源语言列表成功:', availableSourceLanguages);
+      console.log('[popup] API获取源语言列表成功:', availableSourceLanguages);
       return availableSourceLanguages;
     }
     
-    console.warn('[Popup] API返回数据无效:', response);
+    console.warn('[popup] API返回数据无效:', response);
     return [];
     
   } catch (error) {
-    console.error('[Popup] 获取源语言列表失败:', error);
+    console.error('[popup] 获取源语言列表失败:', error);
     return [];
   }
 }
@@ -2016,7 +2016,7 @@ async function getSelectedSourceTrack(videoId: string): Promise<SimplifiedCaptio
     console.log('[DEBUG] 找到的缓存项:', { cachedItem, selectedTrack });
     return selectedTrack;
   } catch (error) {
-    console.error('[Popup] 获取选中源语言失败:', error);
+    console.error('[popup] 获取选中源语言失败:', error);
     return null;
   }
 }
@@ -2059,7 +2059,7 @@ async function saveVideoSourceLanguageCache(
     console.log('[DEBUG] 源语言缓存保存成功:', { videoId, selectedTrack: selectedSourceTrack, cacheSize: cache.items.length });
     
   } catch (error) {
-    console.error('[Popup] 保存源语言缓存失败:', error);
+    console.error('[popup] 保存源语言缓存失败:', error);
   }
 }
 
@@ -2074,9 +2074,9 @@ async function saveSelectedSourceTrack(videoId: string, selectedTrack: Simplifie
     // 更新选中的轨道
     await saveVideoSourceLanguageCache(videoId, availableLanguages, selectedTrack);
     
-    console.log('[Popup] 用户选择的源语言已保存:', selectedTrack);
+    console.log('[popup] 用户选择的源语言已保存:', selectedTrack);
   } catch (error) {
-    console.error('[Popup] 保存用户选择失败:', error);
+    console.error('[popup] 保存用户选择失败:', error);
   }
 }
 
@@ -2084,7 +2084,7 @@ async function saveSelectedSourceTrack(videoId: string, selectedTrack: Simplifie
  * 初始化Popup UI
  */
 async function initializePopupUI(): Promise<void> {
-  console.log('[Popup] 开始初始化UI组件...');
+  console.log('[popup] 开始初始化UI组件...');
   
   try {
     // 1. 获取当前标签页信息
@@ -2094,28 +2094,28 @@ async function initializePopupUI(): Promise<void> {
     }
     
     currentTabId = tab.id;
-    console.log(`[Popup] 当前标签页ID: ${currentTabId}`);
+    console.log(`[popup] 当前标签页ID: ${currentTabId}`);
     
     // 2. 检查是否为YouTube页面
     if (tab.url && isYoutubeUrl(tab.url)) {
       isYouTubePage = true;
       currentVideoId = extractVideoIdFromUrl(tab.url);
-      console.log(`[Popup] YouTube页面，视频ID: ${currentVideoId || '未检测到'}`);
+      console.log(`[popup] YouTube页面，视频ID: ${currentVideoId || '未检测到'}`);
       
       // 初始化YouTube功能界面
       await initializeYouTubeUI();
 } else {
       isYouTubePage = false;
-      console.log(`[Popup] 非YouTube页面: ${tab.url}`);
+      console.log(`[popup] 非YouTube页面: ${tab.url}`);
       
       // 显示使用说明界面
       showUsageGuide();
     }
     
-    console.log('[Popup] UI组件初始化完成');
+    console.log('[popup] UI组件初始化完成');
     
   } catch (error) {
-    console.error('[Popup] UI初始化失败:', error);
+    console.error('[popup] UI初始化失败:', error);
     throw error;
   }
 }
@@ -2158,7 +2158,7 @@ async function handleTestApiConnection(): Promise<void> {
       testResult.className = 'test-result error';
     }
   } catch (error) {
-    console.error('[Popup] API连接测试失败:', error);
+    console.error('[popup] API连接测试失败:', error);
     testResult.textContent = `测试失败: ${error instanceof Error ? error.message : '未知错误'}`;
     testResult.className = 'test-result error';
   }
@@ -2168,7 +2168,7 @@ async function handleTestApiConnection(): Promise<void> {
  * 处理初始化错误
  */
 function handleInitializationError(error: any): void {
-  console.error('[Popup] 初始化发生错误:', error);
+  console.error('[popup] 初始化发生错误:', error);
   
   // 显示错误信息给用户
   document.body.innerHTML = `
@@ -2237,18 +2237,18 @@ function handleInitializationError(error: any): void {
 document.addEventListener('DOMContentLoaded', async () => {
   // 防止重复初始化
   if (sidePanelInitialized) {
-    console.log('[Popup] 已初始化，跳过重复初始化');
+    console.log('[popup] 已初始化，跳过重复初始化');
     return;
   }
   
-  console.log('[Popup] 🎯 开始初始化...');
+  console.log('[popup] 🎯 开始初始化...');
   sidePanelInitialized = true;
   
   try {
     await initializePopupUI();
-    console.log('[Popup] 🎉 初始化完成');
+    console.log('[popup] 🎉 初始化完成');
   } catch (error) {
-    console.error('[Popup] ❌ 初始化失败:', error);
+    console.error('[popup] ✗ 初始化失败:', error);
     sidePanelInitialized = false; // 重置标志，允许重试
     handleInitializationError(error);
   }

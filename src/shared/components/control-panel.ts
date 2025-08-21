@@ -74,11 +74,11 @@ export class ControlPanel {
       // 标记为已初始化
       this.state.isInitialized = true;
       
-      console.log('[control-panel] 初始化完成（通过Background Script访问存储）');
+      console.log('[control-panel] ✓ 初始化完成（通过Background Script访问存储）');
       this.emitMessage(ControlPanelEvent.PANEL_INITIALIZED, { timestamp: Date.now() });
       
     } catch (error) {
-      console.error('[control-panel] 初始化失败:', error);
+      console.error('[control-panel] ✗ 初始化失败:', error);
       this.state.lastError = `初始化失败: ${error}`;
       throw error;
     }
@@ -92,14 +92,14 @@ export class ControlPanel {
     this.userPreferencesManager.addChangeListener(
       UserPreferenceChangeEvent.TARGET_LANG_CHANGED,
       (newValue, oldValue) => {
-        console.log('[control-panel] 目标语言已变更:', newValue);
+        console.log('[control-panel] 状态变更: targetLang [', oldValue, '→', newValue, ']');
       }
     );
     
     this.userPreferencesManager.addChangeListener(
       UserPreferenceChangeEvent.SUBTITLE_MODE_CHANGED,
       (newValue, oldValue) => {
-        console.log('[control-panel] 字幕模式已变更:', newValue);
+        console.log('[control-panel] 状态变更: subtitleMode [', oldValue, '→', newValue, ']');
       }
     );
     
@@ -108,14 +108,14 @@ export class ControlPanel {
       RuntimeStateChangeEvent.TRANSLATE_ACTIVE_CHANGED,
       (newValue, oldValue) => {
         this.handleTranslateActiveChanged(newValue, oldValue);
-        console.log('[control-panel] 翻译状态已变更:', newValue);
+        console.log('[control-panel] 状态变更: translateActive [', oldValue, '→', newValue, ']');
       }
     );
     
     this.runtimeStateManager.addChangeListener(
       RuntimeStateChangeEvent.SETTING_PANEL_CHANGED,
       (newValue, oldValue) => {
-        console.log('[control-panel] 设置面板状态已变更:', newValue);
+        console.log('[control-panel] 状态变更: settingPanelOpen [', oldValue, '→', newValue, ']');
       }
     );
   }
@@ -139,7 +139,7 @@ export class ControlPanel {
     try {
       // ✅ 迁移到MessageBus
       if (this.messageBus) {
-        console.log('[control-panel] 发送消息:', { messageType, data });
+        console.log('[control-panel] →', messageType, ':', data);
         this.messageBus.sendMessage({
           type: MessageType.UI_STATE_UPDATE,
           data: { event: messageType, ...data },
@@ -151,7 +151,7 @@ export class ControlPanel {
         console.warn('[control-panel] MessageBus未初始化，无法发送消息:', messageType);
       }
     } catch (error) {
-      console.error('[control-panel] 发送消息失败:', error, { messageType, data });
+      console.error('[control-panel] ✗ 发送消息失败:', error);
     }
   }
   
@@ -358,7 +358,7 @@ export class ControlPanel {
       return;
     }
     
-    console.log('[control-panel] 设置当前视频ID:', videoId);
+    console.log('[control-panel] setCurrentVideo:', videoId);
     
     // 清空之前的字幕事件
     this.state.currentVideoId = videoId;
@@ -372,7 +372,7 @@ export class ControlPanel {
       timestamp: Date.now()
     });
     
-    console.log('[control-panel] 当前视频ID已设置，字幕事件已清空');
+    console.log('[control-panel] ✓ setCurrentVideo: 字幕事件已清空');
   }
   
   /**
@@ -402,12 +402,12 @@ export class ControlPanel {
 
   // ✅ MessageBus回调处理方法
   private handleTranslationResponse(data: any): void {
-    console.log('[control-panel] 收到翻译响应:', data);
+    console.log('[control-panel] <- translation response:', data);
     // 控制面板可以根据翻译响应更新状态
   }
 
   private handleUIStateUpdate(data: any): void {
-    console.log('[control-panel] 收到UI状态更新:', data);
+    console.log('[control-panel] <- UI state update:', data);
     // 处理UI状态更新逻辑
     if (data.translateActive !== undefined) {
       this.state.isTranslating = data.translateActive;
@@ -415,7 +415,7 @@ export class ControlPanel {
   }
 
   private handleSubtitleUpdated(data: any): void {
-    console.log('[control-panel] 收到字幕更新:', data);
+    console.log('[control-panel] <- subtitle update:', data);
     // 控制面板可以记录字幕事件
     if (data.subtitleText) {
       // ✅ 使用正确的ProcessedSubtitleEvent结构
@@ -433,8 +433,8 @@ export class ControlPanel {
   }
 
   private handleErrorReport(data: any): void {
-    console.log('[control-panel] 收到错误报告:', data);
-    console.error('[control-panel] 错误详情:', data.errorMessage || data.error);
+    console.log('[control-panel] <- error report:', data);
+    console.error('[control-panel] ✗ error details:', data.errorMessage || data.error);
     this.state.lastError = data.errorMessage || data.error || '未知错误';
   }
 }

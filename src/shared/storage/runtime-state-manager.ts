@@ -131,7 +131,7 @@ export class RuntimeStateManager {
         try {
           handler(newValue, oldValue, event as RuntimeStateChangeEvent);
         } catch (error) {
-          console.error(`[runtime-state-manager] 事件处理器执行失败 (${event}):`, error);
+          console.error(`[runtime-state-manager] ✗ 事件处理器执行失败 (${event}):`, error);
         }
       });
     }
@@ -163,7 +163,7 @@ export class RuntimeStateManager {
     if (this.initialized) return;
     
     try {
-      console.log('[runtime-state-manager] 初始化运行时状态管理器...');
+      console.log('[runtime-state-manager] 初始化开始...');
       
       // 🔧 数据迁移：清理存储中的布尔值
       await this.cleanupBooleanValues();
@@ -174,18 +174,18 @@ export class RuntimeStateManager {
       if (loadResult.success && loadResult.state) {
         // 加载成功，使用存储的状态
         this.stateMemoryCache = loadResult.state;
-        console.log('[runtime-state-manager] 已从存储加载运行时状态:', loadResult.state);
+        console.log('[runtime-state-manager] ✓ 从存储加载状态:', loadResult.state);
       } else {
         // 加载失败，使用默认状态
-        console.log(`[runtime-state-manager] 加载失败，使用默认状态: ${loadResult.reason}`);
+        console.log(`[runtime-state-manager] 使用默认状态: ${loadResult.reason}`);
         await this.useDefaultState();
       }
       
       this.initialized = true;
-      console.log('[runtime-state-manager] 运行时状态管理器初始化完成');
+      console.log('[runtime-state-manager] ✓ 初始化完成');
       
     } catch (error) {
-      console.error('[runtime-state-manager] 初始化失败:', error);
+      console.error('[runtime-state-manager] ✗ 初始化失败:', error);
       // 出错时使用默认状态
       await this.useDefaultState();
       this.initialized = true;
@@ -205,10 +205,10 @@ export class RuntimeStateManager {
         console.warn('[runtime-state-manager] 发现存储中的布尔值，进行数据迁移:', currentValue);
         const enumValue = currentValue ? TranslateActiveState.ACTIVE : TranslateActiveState.INACTIVE;
         await this.storageManager.set(storageKey, enumValue, RUNTIME_STATE_CONFIG.STORAGE_AREA);
-        console.log('[runtime-state-manager] 数据迁移完成，新值:', enumValue);
+        console.log('[runtime-state-manager] ✓ 数据迁移完成:', enumValue);
       }
     } catch (error) {
-      console.error('[runtime-state-manager] 清理布尔值失败:', error);
+      console.error('[runtime-state-manager] ✗ 清理布尔值失败:', error);
     }
   }
 
@@ -228,9 +228,9 @@ export class RuntimeStateManager {
       this.syncCache.settingPanelOpen = defaultState.settingPanelOpen;
       await this.saveToStorage(defaultState);
       
-      console.log('[runtime-state-manager] 已设置默认状态:', defaultState);
+      console.log('[runtime-state-manager] ✓ 默认状态已设置:', defaultState);
     } catch (error) {
-      console.warn('[runtime-state-manager] 设置默认状态失败:', error);
+      console.warn('[runtime-state-manager] ✗ 设置默认状态失败:', error);
       this.stateMemoryCache = { ...DEFAULT_RUNTIME_STATE };
       // 🔧 同步更新 syncCache
       this.syncCache.settingPanelOpen = DEFAULT_RUNTIME_STATE.settingPanelOpen;
@@ -301,12 +301,12 @@ export class RuntimeStateManager {
       [RUNTIME_STATE_STORAGE_KEYS.SETTING_PANEL_OPEN]: state.settingPanelOpen
     };
     
-    console.log(`[runtime-state-manager] 准备保存到${RUNTIME_STATE_CONFIG.STORAGE_AREA} storage:`, storageData);
+    console.log(`[runtime-state-manager] 保存到${RUNTIME_STATE_CONFIG.STORAGE_AREA}:`, storageData);
     
     // 批量保存到存储
     await this.storageManager.setBatch(storageData, RUNTIME_STATE_CONFIG.STORAGE_AREA);
     
-    console.log(`[runtime-state-manager] ✅ 已成功保存到${RUNTIME_STATE_CONFIG.STORAGE_AREA} storage`);
+    console.log(`[runtime-state-manager] ✓ 保存成功到${RUNTIME_STATE_CONFIG.STORAGE_AREA}`);
     
     // 更新内存缓存
     this.stateMemoryCache = { ...state };
@@ -375,7 +375,7 @@ export class RuntimeStateManager {
     const fullState = await this.getAllState();
     await this.saveToStorage(fullState);
     
-    console.log(`[runtime-state-manager] 翻译状态已更新:`, state);
+    console.log(`[runtime-state-manager] 状态变更: translateActive [${this.stateMemoryCache.translateActive} → ${state}]`);
   }
 
   /**
@@ -417,7 +417,7 @@ export class RuntimeStateManager {
    * 设置设置面板状态
    */
   public async setSettingPanelState(open: boolean): Promise<void> {
-    console.log(`[runtime-state-manager] 设置面板状态变更请求: ${open}`);
+    console.log(`[runtime-state-manager] <- setSettingPanelState (${open})`);
     
     // 🔧 立即更新同步缓存
     this.syncCache.settingPanelOpen = open;
@@ -427,11 +427,11 @@ export class RuntimeStateManager {
     }
     
     if (this.stateMemoryCache.settingPanelOpen === open) {
-      console.log(`[runtime-state-manager] 设置面板状态无变化 (${open})，跳过保存`);
+      console.log(`[runtime-state-manager] 状态无变化 (${open})，跳过保存`);
       return; // 值未变化，无需保存
     }
     
-    console.log(`[runtime-state-manager] 设置面板状态从 ${this.stateMemoryCache.settingPanelOpen} 变更为 ${open}`);
+    console.log(`[runtime-state-manager] 状态变更: settingPanelOpen [${this.stateMemoryCache.settingPanelOpen} → ${open}]`);
     
     // 更新内存缓存
     this.stateMemoryCache.settingPanelOpen = open;
@@ -440,7 +440,7 @@ export class RuntimeStateManager {
     const fullState = await this.getAllState();
     await this.saveToStorage(fullState);
     
-    console.log(`[runtime-state-manager] ✅ 设置面板状态已更新并保存到session storage: ${open}`);
+    console.log(`[runtime-state-manager] ✓ setSettingPanelState: ${open}`);
   }
 
   /**
@@ -451,7 +451,7 @@ export class RuntimeStateManager {
     this.stateMemoryCache = {};
     this.initialized = false;
     
-    console.log('[runtime-state-manager] 运行时状态管理器已销毁');
+    console.log('[runtime-state-manager] 管理器已销毁');
   }
 
   /**
