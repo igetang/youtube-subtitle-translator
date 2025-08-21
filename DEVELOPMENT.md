@@ -1137,22 +1137,7 @@ enum ConflictResolutionState {
 }
 ```
 
-#### 2. 日志格式
-```typescript
-// 统一日志前缀：[组件名] 描述
-console.log('[SidePanel] Context更新完成:', context);
-console.log('[Background] 构建SidePanelContext:', { videoId, tabId });
-console.log('[ConflictStateMachine] 状态转换:', `${oldState} → ${newState}`);
-
-// 错误日志包含足够的上下文信息
-console.error('[SidePanel] OpenAI配置验证失败:', {
-  service: 'openai',
-  errors: validationErrors,
-  config: sanitizedConfig  // 注意不要记录敏感信息
-});
-```
-
-#### 3. TypeScript规范
+#### 2. TypeScript规范
 ```typescript
 // ✅ 使用明确的类型定义
 interface ServiceConfig {

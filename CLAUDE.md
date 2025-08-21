@@ -55,3 +55,49 @@
 - **单一同步：** 按钮操作/sidepanel操作时使用 getSingleState(key)
 - **无防重复限制：** 尊重用户每次操作，不设时间限制
 - **Chrome规范合规：** 符合Manifest V3最佳实践，需后续加强错误处理和类型安全
+
+## 日志格式规范
+### 基本格式
+- **组件前缀：** 使用 `[文件名]` 格式，不带扩展名和行号
+  - 示例：`[service-worker]`, `[content-script]`, `[runtime-state-manager]`
+  - 注意：使用实际文件名，如 `service-worker` 而非过时的 `background`
+
+### 消息日志
+```javascript
+// 接收消息
+console.log(`[service-worker] <- ${message.type} (Tab:${sender.tab?.id || '扩展'})`);
+// 输出: [service-worker] <- getRuntimeState (Tab:699429904)
+
+// 处理成功
+console.log(`[service-worker] ✓ ${message.type}:`, result);
+// 输出: [service-worker] ✓ getRuntimeState: {translateActive: 'inactive'}
+
+// 处理失败
+console.error(`[service-worker] ✗ ${message.type}: ${error.message}`);
+// 输出: [service-worker] ✗ toggleTranslate: 非法状态转换
+```
+
+### 状态变更日志
+```javascript
+console.log(`[runtime-state-manager] 状态变更: ${key} [${oldValue} → ${newValue}]`);
+// 输出: [runtime-state-manager] 状态变更: translateActive [inactive → pending]
+```
+
+### 组件通信日志
+```javascript
+console.log(`[content-script] → service-worker: ${message.type}`);
+console.log(`[service-worker] → content-script: ${response.type}`);
+```
+
+### 重要操作日志
+```javascript
+console.log(`[service-worker] 处理翻译请求: videoId=${videoId}`);
+console.log(`[translation-cache-manager] 缓存命中: 42条字幕`);
+```
+
+### 日志原则
+- **避免重复：** 同一个消息只记录一次，避免在多个处理层重复输出
+- **使用符号：** `<-` 表示接收，`→` 表示发送，`✓` 表示成功，`✗` 表示失败
+- **包含关键信息：** 消息类型、来源、关键参数值
+- **简洁清晰：** 信息完整但不冗余，便于grep搜索和分析
+- **敏感信息：** 不记录API密钥、用户隐私数据等敏感信息

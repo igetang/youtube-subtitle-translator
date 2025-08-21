@@ -10,7 +10,7 @@ You are an expert Chrome extension developer, proficient in JavaScript/TypeScrip
 - 如未发现 README.md，请创建并记录功能模块、页面结构、数据流、依赖库等信息。
 - 调试功能完成后，请同步更新项目文档，确保文档与进度匹配。
 - 编写、优化、修改代码时，尽量只改动相关代码。
-- 添加日志时，日志前缀格式：`[文件名] 日志内容`（无路径、无后缀）。
+
 
 ## ✨ 代码风格与结构
 - 使用 TypeScript，添加 JSDoc 注释。
@@ -86,3 +86,49 @@ You are an expert Chrome extension developer, proficient in JavaScript/TypeScrip
 - 遵循安全最佳实践
 - 确保跨浏览器兼容性
 - 编写可维护、可扩展的代码
+
+## 日志格式规范
+### 基本格式
+- **组件前缀：** 使用 `[文件名]` 格式，不带扩展名和行号
+  - 示例：`[service-worker]`, `[content-script]`, `[runtime-state-manager]`
+  - 注意：使用实际文件名，如 `service-worker` 而非过时的 `background`
+
+### 消息日志
+```javascript
+// 接收消息
+console.log(`[service-worker] <- ${message.type} (Tab:${sender.tab?.id || '扩展'})`);
+// 输出: [service-worker] <- getRuntimeState (Tab:699429904)
+
+// 处理成功
+console.log(`[service-worker] ✓ ${message.type}:`, result);
+// 输出: [service-worker] ✓ getRuntimeState: {translateActive: 'inactive'}
+
+// 处理失败
+console.error(`[service-worker] ✗ ${message.type}: ${error.message}`);
+// 输出: [service-worker] ✗ toggleTranslate: 非法状态转换
+```
+
+### 状态变更日志
+```javascript
+console.log(`[runtime-state-manager] 状态变更: ${key} [${oldValue} → ${newValue}]`);
+// 输出: [runtime-state-manager] 状态变更: translateActive [inactive → pending]
+```
+
+### 组件通信日志
+```javascript
+console.log(`[content-script] → service-worker: ${message.type}`);
+console.log(`[service-worker] → content-script: ${response.type}`);
+```
+
+### 重要操作日志
+```javascript
+console.log(`[service-worker] 处理翻译请求: videoId=${videoId}`);
+console.log(`[translation-cache-manager] 缓存命中: 42条字幕`);
+```
+
+### 日志原则
+- **避免重复：** 同一个消息只记录一次，避免在多个处理层重复输出
+- **使用符号：** `<-` 表示接收，`→` 表示发送，`✓` 表示成功，`✗` 表示失败
+- **包含关键信息：** 消息类型、来源、关键参数值
+- **简洁清晰：** 信息完整但不冗余，便于grep搜索和分析
+- **敏感信息：** 不记录API密钥、用户隐私数据等敏感信息
