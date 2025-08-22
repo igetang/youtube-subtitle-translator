@@ -34,15 +34,7 @@ interface VideoSourceLanguageCache {
 
 console.log('[popup] 初始化开始...');
 
-// 通知Service Worker popup已打开
-chrome.runtime.sendMessage({ 
-  type: 'popupOpened',
-  timestamp: Date.now()
-}).then(() => {
-  console.log('[popup] 已通知Service Worker popup打开');
-}).catch(error => {
-  console.error('[popup] 通知Service Worker失败:', error);
-});
+// 状态更新已通过Port连接机制自动处理，无需发送消息
 
 // === 语言族互斥检测工具函数 ===
 
@@ -815,16 +807,16 @@ let uiLangCode: string | null = null;
 const port = chrome.runtime.connect({ name: 'popup-lifecycle' });
 console.log('[popup] Port连接已建立');
 
-// === 生命周期管理 ===
-window.addEventListener('beforeunload', () => {
-  console.log('[popup] 发送关闭通知...');
-  chrome.runtime.sendMessage({ type: 'popupClosed' });
+// 发送标签页ID给service-worker（用于关闭时的UI更新）
+chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+  if (tabs[0]?.id) {
+    port.postMessage({ type: 'init', tabId: tabs[0].id });
+    console.log(`[popup] 已发送标签页ID: ${tabs[0].id}`);
+  }
 });
 
-window.addEventListener('blur', () => {
-  console.log('[popup] 失去焦点...');
-  chrome.runtime.sendMessage({ type: 'popupBlurred' });
-});
+// === 生命周期管理 ===
+// 关闭和失焦事件已通过Port断开机制处理，无需额外消息
 
 port.onDisconnect.addListener(() => {
   console.log('[popup] Port连接断开');

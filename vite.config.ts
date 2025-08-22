@@ -90,7 +90,7 @@ export default defineConfig(({ command, mode }) => {
     });
   }
 
-  // 默认配置 - 构建popup和sidepanel
+  // 默认配置 - 构建popup
   return mergeConfig(baseConfig, {
     plugins: [
       viteStaticCopy({
@@ -118,7 +118,6 @@ export default defineConfig(({ command, mode }) => {
       outDir: 'dist',
       rollupOptions: {
         input: {
-          'sidepanel/sidepanel': path.resolve(__dirname, 'src/sidepanel/sidepanel.html'),
           'popup/popup': path.resolve(__dirname, 'src/popup/popup.html'),
         },
         output: {

@@ -26,8 +26,8 @@ import {
   RuntimeStateChangeEvent,
   DEFAULT_RUNTIME_STATE 
 } from '../shared/types/runtime-state-types';
-// 移除SidePanel相关导入
-// import { sidePanelController, SidePanelSource } from './sidepanel-controller';
+// SidePanel相关代码已归档至 /docs/archive/deprecated-sidepanel/
+// 原文件: sidepanel-controller.ts (已移至归档目录)
 
 // === 全局管理器实例 ===
 const userPreferencesManager = UserPreferencesManager.getInstance();
@@ -181,10 +181,21 @@ function setupPortListener(): void {
     if (port.name === 'popup-lifecycle') {
       console.log('[service-worker] Popup Port连接建立');
       
+      // 记录关联的标签页ID
+      let associatedTabId: number | undefined;
+      
+      // 监听来自popup的消息，获取标签页ID
+      port.onMessage.addListener((msg) => {
+        if (msg.type === 'init' && msg.tabId) {
+          associatedTabId = msg.tabId;
+          console.log(`[service-worker] Port关联标签页ID: ${associatedTabId}`);
+        }
+      });
+      
       try {
         // 🔧 统一状态管理：Port连接 = Popup真正打开
         await runtimeStateManager.setSettingPanelState(true);
-        broadcastSidePanelStateChange(true);
+        // broadcastSidePanelStateChange(true); // ❌ Popup架构不需要跨标签页广播
         console.log('[service-worker] ✓ popupOpened: 状态已更新');
         
       } catch (error) {
@@ -198,11 +209,21 @@ function setupPortListener(): void {
           // 🔧 统一状态管理：Port断开 = Popup真正关闭
           await runtimeStateManager.setSettingPanelState(false);
           
-          // 🔧 修复：统一使用broadcastSidePanelStateChange，避免重复和消息类型不匹配
-          // 移除重复的直接消息发送，由broadcastSidePanelStateChange统一处理
-          
-          broadcastSidePanelStateChange(false);
-          console.log('[service-worker] ✓ popupClosed: 状态已同步');
+          // 🔧 使用记录的标签页ID通知UI更新
+          if (associatedTabId) {
+            chrome.tabs.sendMessage(associatedTabId, {
+              type: 'UPDATE_BUTTON_STATE',
+              isOpen: false,
+              source: 'popup-closed'
+            }).catch(() => {
+              // 忽略错误：标签页可能已关闭
+              console.log(`[service-worker] 标签页${associatedTabId}可能已关闭`);
+            });
+            console.log(`[service-worker] 已通知标签页${associatedTabId}更新UI`);
+          } else {
+            console.warn('[service-worker] 无关联标签页ID，无法通知UI更新');
+          }
+          console.log('[service-worker] ✓ Popup已关闭');
           
         } catch (error) {
           console.error(`[service-worker] ✗ popupClosed: ${error instanceof Error ? error.message : String(error)}`);
@@ -855,20 +876,19 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
 
 /**
  * 🎯 处理Popup打开事件
+ * @deprecated 状态管理已由Port连接机制处理，此函数仅保留兼容性
  */
 async function handlePopupOpened(sender: chrome.runtime.MessageSender): Promise<any> {
   try {
-    console.log(`[service-worker] <- popupOpened`);
+    console.log(`[service-worker] <- popupOpened (已由Port机制处理状态)`);
     
-    // 更新运行时状态（使用全局实例）
-    await runtimeStateManager.setSettingPanelState(true);
-    
-    // 广播状态变化
-    await broadcastSidePanelStateChange(true);
+    // 状态更新已在Port连接时处理，避免重复
+    // await runtimeStateManager.setSettingPanelState(true);
+    // await broadcastSidePanelStateChange(true);
     
     return {
       success: true,
-      message: 'Popup打开事件已处理'
+      message: 'Popup已打开'
     };
     
   } catch (error) {
@@ -882,16 +902,15 @@ async function handlePopupOpened(sender: chrome.runtime.MessageSender): Promise<
 
 /**
  * 🎯 处理Popup关闭事件
+ * @deprecated 状态管理已由Port断开机制处理，此函数已不再使用
  */
 async function handlePopupClosed(sender: chrome.runtime.MessageSender): Promise<any> {
   try {
-    console.log(`[service-worker] <- popupClosed`);
+    console.log(`[service-worker] <- popupClosed (已废弃，由Port机制处理)`);
     
-    // 更新运行时状态（使用全局实例）
-    await runtimeStateManager.setSettingPanelState(false);
-    
-    // 广播状态变化
-    await broadcastSidePanelStateChange(false);
+    // 状态更新已在Port断开时处理，避免重复
+    // await runtimeStateManager.setSettingPanelState(false);
+    // await broadcastSidePanelStateChange(false);
     
     return {
       success: true,
@@ -909,10 +928,11 @@ async function handlePopupClosed(sender: chrome.runtime.MessageSender): Promise<
 
 /**
  * 🎯 处理Popup失去焦点事件
+ * @deprecated 此事件已不再发送，函数保留仅用于兼容性
  */
 async function handlePopupBlurred(sender: chrome.runtime.MessageSender): Promise<any> {
   try {
-    console.log(`[service-worker] <- popupBlurred`);
+    console.log(`[service-worker] <- popupBlurred (已废弃，不再使用)`);
     
     // 对于失去焦点事件，我们只记录日志，不改变状态
     // 因为用户可能只是临时点击了其他地方，popup仍然可能是打开的

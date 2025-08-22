@@ -441,13 +441,18 @@ export class ContentScriptCoordinator {
       }
       
       // Popup未打开，检查是否刚刚关闭（防抖）
-      const timeSinceClose = Date.now() - this.lastPopupCloseTime;
-      console.log(`[content-script-coordinator] 距离上次关闭时间: ${timeSinceClose}ms`);
-      
-      if (timeSinceClose < 300) {
-        // 300ms内的点击视为Chrome自动关闭导致的，不执行打开
-        console.log('[content-script-coordinator] 刚刚关闭popup（300ms内），不执行打开操作');
-        return;
+      // 如果lastPopupCloseTime为0，说明是第一次点击，跳过防抖检查
+      if (this.lastPopupCloseTime > 0) {
+        const timeSinceClose = Date.now() - this.lastPopupCloseTime;
+        console.log(`[content-script-coordinator] 距离上次关闭时间: ${timeSinceClose}ms`);
+        
+        if (timeSinceClose < 300) {
+          // 300ms内的点击视为Chrome自动关闭导致的，不执行打开
+          console.log('[content-script-coordinator] 刚刚关闭popup（300ms内），不执行打开操作');
+          return;
+        }
+      } else {
+        console.log('[content-script-coordinator] 第一次点击，跳过防抖检查');
       }
       
       // 执行打开操作
@@ -460,6 +465,11 @@ export class ContentScriptCoordinator {
       
       if (openResponse && openResponse.success) {
         console.log('[content-script-coordinator] ✓ openPopup: 成功');
+        // 直接更新UI状态，无需等待消息通知
+        if (this.uiRenderer) {
+          this.uiRenderer.update({ settingPanelOpen: true });
+          console.log('[content-script-coordinator] UI状态已更新: 打开');
+        }
       } else {
         console.error('[content-script-coordinator] ✗ openPopup:', openResponse?.error);
       }

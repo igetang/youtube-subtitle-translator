@@ -5,7 +5,7 @@
 
 ## 🚀 核心功能
 - ✅ **播放器控制栏集成**：翻译开关按钮 + 设置按钮
-- ✅ **SidePanel设置面板**：支持插件图标和设置按钮双重开关
+- ✅ **Popup设置面板**：支持插件图标点击打开设置界面
 - ✅ **实时字幕翻译**：支持多种翻译服务
 - ✅ **多语言支持**：自动检测源语言，支持多目标语言
 - ✅ **本地缓存**：智能缓存翻译结果，提升性能
@@ -100,12 +100,12 @@ SharedMessageSystem (统一初始化和管理)
 
 **功能状态**：
 - ✅ **翻译按钮**：开启/关闭翻译功能，状态图标动态切换
-- ✅ **设置按钮**：控制SidePanel开关，与插件图标状态同步
+- ✅ **设置按钮**：打开Popup设置界面，管理翻译配置
 - ✅ **状态同步**：按钮状态与实际功能状态完全一致
 
 **架构完成**：
 - ✅ **MessageBus 系统**：统一的消息通信机制
-- ✅ **SidePanel 控制器**：多标签页独立状态管理
+- ✅ **Popup 控制器**：智能页面检测和界面切换
 - ✅ **UI 管理器**：自动注入和状态管理
 
 ## 🏗️ 技术架构
@@ -137,7 +137,7 @@ src/
 │   │   ├── control-panel.ts          # 🔄 重命名：control-panel-new.ts → control-panel.ts
 │   │   └── ui-manager.ts
 │   └── types/              # 类型定义
-└── sidepanel/              # 设置面板
+└── popup/                  # Popup设置界面（替代SidePanel）
 ```
 
 ## 🚀 开发指南
@@ -152,7 +152,7 @@ npm run build:watch    # 监听模式构建
 ### 调试技巧
 1. **F12控制台**：查看详细的日志输出，现在日志更加清晰
 2. **Extension DevTools**：查看Background Script状态
-3. **SidePanel DevTools**：调试设置面板功能
+3. **Popup DevTools**：调试Popup设置界面功能
 
 ## 📝 开发日志
 
@@ -188,10 +188,10 @@ npm run build:watch    # 监听模式构建
 
 **消息格式变更**:
 ```typescript
-// ❌ 旧格式 (已移除)
+// ❌ 旧格式 (已彻底废弃，不应在任何新代码中使用)
 { action: 'getRuntimeState', key: 'translateActive' }
 
-// ✅ 新格式 (当前标准)
+// ✅ 新格式 (当前标准，所有代码必须使用此格式)
 { 
   type: MessageType.UI_STATE_UPDATE,
   messageId: 'msg_xxx',

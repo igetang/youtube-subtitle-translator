@@ -33,10 +33,10 @@
 │   │   ├── content-script.ts           # 主内容脚本
 │   │   ├── content-script-coordinator.ts # 状态协调器
 │   │   └── subtitle-overlay.ts         # 字幕覆盖层
-│   ├── popup/                  # Popup弹窗（新方案，替代SidePanel）
+│   ├── popup/                  # Popup弹窗（当前方案）
 │   │   ├── popup.html         
 │   │   └── popup.ts           
-│   ├── sidepanel/             # 【已废弃】侧边栏（已迁移到Popup）
+│   ├── sidepanel/             # 【已废弃】已完全迁移到Popup
 │   ├── shared/                # 共享模块
 │   │   ├── types/             # TypeScript类型定义
 │   │   │   ├── runtime-state-types.ts  # 运行时状态类型
@@ -151,8 +151,8 @@ enum TranslateActiveState {
    - UserPreferences：全局共享，持久化存储
    - 避免状态混淆，提升代码可维护性
 
-4. **为什么从SidePanel迁移到Popup？**
-   - SidePanel兼容性问题
+4. **为什么选择Popup方案？**
+   - 兼容性最好，所有Chrome版本支持
    - Popup更轻量，用户体验更好
    - 符合Chrome扩展最佳实践
 
@@ -161,8 +161,8 @@ enum TranslateActiveState {
 ### ✅ 已完成
 - [x] 4状态翻译系统实现
 - [x] 缓存优先的翻译流程
-- [x] EventBus → MessageBus迁移
-- [x] SidePanel → Popup迁移
+- [x] MessageBus统一消息系统
+- [x] Popup作为设置界面
 - [x] Boolean → Enum状态迁移
 - [x] 日志格式统一和优化
 - [x] TypeScript类型安全
@@ -334,6 +334,6 @@ console.log(`[translation-cache-manager] 缓存命中: 42条字幕`);
 
 ---
 
-*最后更新时间：2025年1月*  
+*最后更新时间：2025年8月*  
 *版本：v3.0.0*  
 *架构：Manifest V3 + TypeScript*
