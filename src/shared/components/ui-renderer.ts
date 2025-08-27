@@ -134,16 +134,15 @@ export class UIRenderer {
     // 1. 创建设置按钮
     const { button: settingsButton, icon: settingsIcon } = this.createControlButton(
       'vid-translate-settings-button',
-      this.runtimeState.settingPanelOpen ? '关闭翻译设置' : '翻译设置',
-      this.runtimeState.settingPanelOpen ? this.ACTIVE_SETTING_ICON_URL : this.SETTING_ICON_URL,
+      this.runtimeState.popupOpen ? '关闭翻译设置' : '翻译设置',
+      this.runtimeState.popupOpen ? this.ACTIVE_SETTING_ICON_URL : this.SETTING_ICON_URL,
       () => this.onButtonClick('settings')
     );
     
-    // 2. 创建翻译按钮（基于4状态系统）
+    // 2. 创建翻译按钮（基于3状态系统）
     const translateState = this.runtimeState.translateActive || 'inactive';
     const isActive = translateState === 'active';
     const isPending = translateState === 'pending';
-    const isIntentOnly = translateState === 'intent_only';
     
     // 根据状态决定图标和提示文本
     let buttonIcon = this.OFF_ICON_URL;  // 默认关闭图标
@@ -155,9 +154,6 @@ export class UIRenderer {
     } else if (isPending) {
       buttonIcon = this.OFF_ICON_URL;  // PENDING时暂时显示关闭图标，后续添加动画
       buttonTooltip = '处理中...';
-    } else if (isIntentOnly) {
-      buttonIcon = this.OFF_ICON_URL;  // INTENT_ONLY显示为关闭状态
-      buttonTooltip = '无字幕';
     }
     
     const { button: translateButton, icon: toggleIcon } = this.createControlButton(
@@ -303,7 +299,7 @@ export class UIRenderer {
   // 新的注入逻辑提供了更好的等待机制、错误处理和状态管理
 
   /**
-   * 更新按钮状态 - 基于传入的状态（4状态系统）
+   * 更新按钮状态 - 基于传入的状态（3状态系统）
    */
   private updateButtonStates(runtimeState: any): void {
     if (!runtimeState) return;
@@ -314,14 +310,14 @@ export class UIRenderer {
       this.updateTranslateButtonWithState(translateState);
     }
 
-    const isSettingPanelOpen = runtimeState.settingPanelOpen === true;
+    const isPopupOpen = runtimeState.popupOpen === true;
     if (this.settingsButton) {
       this.updateSettingsButton(isSettingPanelOpen);
     }
 
     console.log('[UIRenderer] ✅ 按钮状态已更新:', {
       translateActive: isTranslateActive,
-      settingPanelOpen: isSettingPanelOpen
+      popupOpen: isPopupOpen
     });
   }
 
@@ -329,25 +325,35 @@ export class UIRenderer {
    * 只做UI更新
    */
   update(changes: Partial<any>): void {
-    console.log('[UIRenderer] 🔄 更新UI状态:', changes);
+    // 合并所有状态更新为一条日志
+    const updates: string[] = [];
 
     if (changes.translateActive !== undefined) {
       this.runtimeState.translateActive = changes.translateActive;
-      this.updateTranslateButton(changes.translateActive);
+      // 直接使用枚举状态值，而不是转换为布尔值
+      this.updateTranslateButtonWithState(changes.translateActive);
+      updates.push(`翻译:${changes.translateActive}`);
     }
 
-    if (changes.settingPanelOpen !== undefined) {
-      this.runtimeState.settingPanelOpen = changes.settingPanelOpen;
-      this.updateSettingsButton(changes.settingPanelOpen);
+    if (changes.popupOpen !== undefined) {
+      this.runtimeState.popupOpen = changes.popupOpen;
+      this.updateSettingsButton(changes.popupOpen);
+      updates.push(`设置:${changes.popupOpen ? '开' : '关'}`);
     }
 
     if (changes.controlsInjected !== undefined) {
       this.uiState.controlsInjected = changes.controlsInjected;
+      updates.push(`控件:${changes.controlsInjected ? '已注入' : '未注入'}`);
+    }
+
+    // 只输出一条汇总日志
+    if (updates.length > 0) {
+      console.log(`[UIRenderer] ✅ UI更新: ${updates.join(', ')}`);
     }
   }
 
   /**
-   * 更新翻译按钮状态（基于4状态系统）
+   * 更新翻译按钮状态（基于3状态系统）
    */
   private updateTranslateButtonWithState(state: string): void {
     if (!this.translateButton || !this.translateToggleButtonIcon) return;
@@ -367,10 +373,6 @@ export class UIRenderer {
         buttonTooltip = '处理中...';
         isClickable = false;  // PENDING状态不可点击
         break;
-      case 'intent_only':
-        buttonIcon = this.OFF_ICON_URL;
-        buttonTooltip = '无字幕';
-        break;
       case 'inactive':
       default:
         buttonIcon = this.OFF_ICON_URL;
@@ -387,7 +389,8 @@ export class UIRenderer {
     this.translateButton.style.pointerEvents = isClickable ? 'auto' : 'none';
     this.translateButton.style.opacity = isClickable ? '1' : '0.5';
     
-    console.log(`[UIRenderer] 翻译按钮状态更新: ${state}`);
+    // 注释掉冗余日志，已在update方法中输出
+    // console.log(`[UIRenderer] 翻译按钮状态更新: ${state}`);
   }
   
   /**
@@ -414,7 +417,8 @@ export class UIRenderer {
       this.settingsButton.title = tooltipText;
       this.settingsButton.setAttribute('aria-label', tooltipText);
       
-      console.log(`[UIRenderer] 设置按钮状态更新: ${isOpen ? '打开' : '关闭'}`);
+      // 注释掉冗余日志，已在update方法中输出
+      // console.log(`[UIRenderer] 设置按钮状态更新: ${isOpen ? '打开' : '关闭'}`);
     }
   }
 
@@ -437,7 +441,7 @@ export class UIRenderer {
     // 获取当前状态（翻译使用枚举值，设置面板仍用布尔值）
     const currentState = buttonType === 'translate' ? 
       (this.runtimeState.translateActive || 'inactive') :  // 传递枚举状态
-      (this.runtimeState.settingPanelOpen || false);
+      (this.runtimeState.popupOpen || false);
     
     console.log(`[UIRenderer] ${buttonType}按钮被点击，当前状态:`, currentState);
     

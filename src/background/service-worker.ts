@@ -5,22 +5,17 @@
  * @version 5.24.6
  */
 
-// 声明 globalThis 的扩展类型
-declare global {
-  var subtitleCache: Map<string, {
-    subtitles: any[];
-    url: string;
-    timestamp: number;
-  }> | undefined;
-}
+// 已移除内存缓存层，直接使用 Local Storage 缓存
 
-console.log('[service-worker] Service Worker 已加载');
+// 注释掉启动日志，避免前后确认型冗余
+// console.log('[service-worker] Service Worker 已加载');
 
 // === 核心模块导入 ===
 import { UserPreferencesManager } from '../shared/storage/user-preferences-manager';
 import { RuntimeStateManager } from '../shared/storage/runtime-state-manager';
 import { StorageManager } from '../shared/storage/storage-manager';
 import { TranslationCacheManager } from '../shared/storage/translation-cache-manager';
+import { VideoSourceLanguageCacheManager } from '../shared/storage/video-source-language-cache-manager';
 import { 
   TranslateActiveState, 
   RuntimeStateChangeEvent,
@@ -33,6 +28,8 @@ import {
 const userPreferencesManager = UserPreferencesManager.getInstance();
 const runtimeStateManager = RuntimeStateManager.getInstance();
 const storageManager = StorageManager.getInstance();
+const translationCacheManager = TranslationCacheManager.getInstance();
+const videoSourceLanguageCacheManager = VideoSourceLanguageCacheManager.getInstance();
 
 // === 站点特定 SidePanel 功能 ===
 
@@ -58,7 +55,8 @@ function isYoutubeUrl(url: string): boolean {
     const urlObj = new URL(url);
     return YOUTUBE_ORIGINS.includes(urlObj.origin);
   } catch (error) {
-    console.warn(`[service-worker] ⚠️ URL解析失败: ${url}`, error);
+    // 静默处理URL解析失败，减少警告日志
+    // console.warn(`[service-worker] ⚠️ URL解析失败: ${url}`, error);
     return false;
   }
 }
@@ -74,7 +72,8 @@ function extractVideoIdFromUrl(url: string): string | null {
     }
     return null;
   } catch (error) {
-    console.warn(`[service-worker] ⚠️ 提取视频ID失败: ${url}`, error);
+    // 静默处理视频ID提取失败
+    // console.warn(`[service-worker] ⚠️ 提取视频ID失败: ${url}`, error);
     return null;
   }
 }
@@ -86,12 +85,13 @@ function extractVideoIdFromUrl(url: string): string | null {
 async function getPopupState(): Promise<boolean> {
   try {
     // 优先使用运行时状态管理器（使用已初始化的全局实例）
-    const settingPanelOpen = await runtimeStateManager.getSettingPanelState();
+    const popupOpen = await runtimeStateManager.getPopupState();
     
     // 如果有明确的状态，直接返回
-    if (typeof settingPanelOpen === 'boolean') {
-      console.log(`[service-worker] 状态检测: settingPanelOpen [${settingPanelOpen}]`);
-      return settingPanelOpen;
+    if (typeof popupOpen === 'boolean') {
+      // 注释掉中间层状态检测日志
+      // console.log(`[service-worker] 状态检测: popupOpen [${popupOpen}]`);
+      return popupOpen;
     }
     
     // 降级到chrome.runtime.getContexts（Chrome 125+）
@@ -102,7 +102,7 @@ async function getPopupState(): Promise<boolean> {
       const isOpen = contexts.length > 0;
       
       // 同步状态到运行时管理器
-      await runtimeStateManager.setSettingPanelState(isOpen);
+      await runtimeStateManager.setPopupState(isOpen);
       
       return isOpen;
     }
@@ -110,7 +110,7 @@ async function getPopupState(): Promise<boolean> {
     // 如果都不支持，返回false
     return false;
   } catch (error) {
-    console.error(`[service-worker] ✗ 获取Popup状态: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`[service-worker] ✗ 获取Popup状态失败`);
     return false;
   }
 }
@@ -143,7 +143,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
         popup: 'src/popup/popup.html'
       });
       
-      console.log(`[service-worker] ✓ YouTube页面图标和Popup已设置 (Tab:${tabId})`);
+      // 简化为静默执行，减少操作确认日志
+      // console.log(`[service-worker] ✓ YouTube页面图标和Popup已设置 (Tab:${tabId}`);
     } else {
       // 其他网站：设置图标但禁用popup
       await chrome.action.setIcon({
@@ -160,10 +161,12 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
         popup: ''  // 空字符串表示禁用popup
       });
       
-      console.log(`[service-worker] ✓ 非YouTube页面图标已设置，Popup已禁用 (Tab:${tabId})`);
+      // 静默处理非YouTube页面
+      // console.log(`[service-worker] ✓ 非YouTube页面图标已设置，Popup已禁用 (Tab:${tabId}`);
     }
   } catch (error) {
-    console.error(`[service-worker] ✗ 更新图标和Popup状态 (Tab:${tabId}): ${error instanceof Error ? error.message : String(error)}`);
+    // 静默处理图标更新错误
+    // console.error(`[service-worker] ✗ 更新图标失败 (Tab:${tabId})`);
   }
 });
 
@@ -179,7 +182,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
 function setupPortListener(): void {
   chrome.runtime.onConnect.addListener(async (port) => {
     if (port.name === 'popup-lifecycle') {
-      console.log('[service-worker] Popup Port连接建立');
+      // 注释掉Port连接日志，避免前后确认型冗余
+      // console.log('[service-worker] Popup Port连接建立');
       
       // 记录关联的标签页ID
       let associatedTabId: number | undefined;
@@ -188,26 +192,27 @@ function setupPortListener(): void {
       port.onMessage.addListener((msg) => {
         if (msg.type === 'init' && msg.tabId) {
           associatedTabId = msg.tabId;
-          console.log(`[service-worker] Port关联标签页ID: ${associatedTabId}`);
+          // 注释掉关联日志
+          // console.log(`[service-worker] Port关联标签页ID: ${associatedTabId}`);
         }
       });
       
       try {
         // 🔧 统一状态管理：Port连接 = Popup真正打开
-        await runtimeStateManager.setSettingPanelState(true);
-        // broadcastSidePanelStateChange(true); // ❌ Popup架构不需要跨标签页广播
-        console.log('[service-worker] ✓ popupOpened: 状态已更新');
+        await runtimeStateManager.setPopupState(true);
+        // 合并操作链路日志，移除此处的确认日志
         
       } catch (error) {
-        console.error(`[service-worker] ✗ popupOpened: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(`[service-worker] ✗ Popup状态更新失败`);
       }
       
       port.onDisconnect.addListener(async () => {
-        console.log('[service-worker] popup关闭检测');
+        // 注释掉中间层检测日志
+        // console.log('[service-worker] popup关闭检测');
         
         try {
           // 🔧 统一状态管理：Port断开 = Popup真正关闭
-          await runtimeStateManager.setSettingPanelState(false);
+          await runtimeStateManager.setPopupState(false);
           
           // 🔧 使用记录的标签页ID通知UI更新
           if (associatedTabId) {
@@ -217,13 +222,17 @@ function setupPortListener(): void {
               source: 'popup-closed'
             }).catch(() => {
               // 忽略错误：标签页可能已关闭
-              console.log(`[service-worker] 标签页${associatedTabId}可能已关闭`);
+              // 静默处理标签页关闭
+              // console.log(`[service-worker] 标签页${associatedTabId}可能已关闭`);
             });
-            console.log(`[service-worker] 已通知标签页${associatedTabId}更新UI`);
+            // 注释掉操作确认日志
+            // console.log(`[service-worker] 已通知标签页${associatedTabId}更新UI`);
           } else {
-            console.warn('[service-worker] 无关联标签页ID，无法通知UI更新');
+            // 静默处理无关联标签页
+            // console.warn('[service-worker] 无关联标签页ID，无法通知UI更新');
           }
-          console.log('[service-worker] ✓ Popup已关闭');
+          // 保留一条简洁的关闭日志
+          console.log('[service-worker] ✓ Popup关闭');
           
         } catch (error) {
           console.error(`[service-worker] ✗ popupClosed: ${error instanceof Error ? error.message : String(error)}`);
@@ -242,18 +251,21 @@ setupPortListener();
  * 扩展安装或更新事件
  */
 chrome.runtime.onInstalled.addListener(async (details) => {
-  console.log(`[service-worker] <- onInstalled (${details.reason})`);
+  // 注释掉启动日志
+  // console.log(`[service-worker] <- onInstalled (${details.reason})`);
   
   try {
     await initializeManagers();
     
     switch (details.reason) {
       case 'install':
-        console.log('[service-worker] 扩展首次安装，初始化默认设置');
+        // 静默处理安装
+        // console.log('[service-worker] 扩展首次安装，初始化默认设置');
         await setupDefaultSettings();
         break;
       case 'update':
-        console.log('[service-worker] 扩展更新，检查数据迁移');
+        // 静默处理更新
+        // console.log('[service-worker] 扩展更新，检查数据迁移');
         await handleUpdate(details.previousVersion);
         break;
     }
@@ -266,7 +278,8 @@ chrome.runtime.onInstalled.addListener(async (details) => {
  * Chrome 浏览器启动事件
  */
 chrome.runtime.onStartup.addListener(async () => {
-  console.log('[service-worker] <- onStartup');
+  // 注释掉启动日志
+  // console.log('[service-worker] <- onStartup');
   
   try {
     await initializeManagers();
@@ -280,7 +293,8 @@ chrome.runtime.onStartup.addListener(async () => {
         48: 'icons/icon48-disabled.png'
       }
     });
-    console.log('[service-worker] ✓ onStartup: Popup状态已禁用');
+    // 静默处理启动状态
+    // console.log('[service-worker] ✓ onStartup: Popup状态已禁用');
   } catch (error) {
     console.error(`[service-worker] ✗ onStartup: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -290,7 +304,8 @@ chrome.runtime.onStartup.addListener(async () => {
  * Service Worker 激活事件
  */
 self.addEventListener('activate', (event: any) => {
-  console.log('[service-worker] <- activate');
+  // 注释掉激活日志
+  // console.log('[service-worker] <- activate');
   // 不重复初始化，onInstalled和onStartup已处理
 });
 
@@ -304,7 +319,8 @@ self.addEventListener('activate', (event: any) => {
  * 基于 architecture.md 3.4 按钮交互完整流程设计
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log(`[service-worker] 收到消息: ${message.type || message.action} (来自${sender.tab?.id ? `标签页:${sender.tab.id}` : '扩展内部'})`);
+  // 简化消息日志，只在错误时输出
+  // console.log(`[service-worker] 收到消息: ${message.type || message.action}`);
   
   // 🎯 同步处理层：Popup操作处理
   // 替代原有的SidePanel逻辑，改为Popup实现
@@ -322,7 +338,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     
     // 检测当前Popup状态并执行相反操作
     getPopupState().then(isCurrentlyOpen => {
-      console.log(`[service-worker] 状态变更: popupOpen [${isCurrentlyOpen}]`);
+      // 注释掉中间层状态日志
+      // console.log(`[service-worker] 状态变更: popupOpen [${isCurrentlyOpen}]`);
       
       if (isCurrentlyOpen) {
         // 当前打开 → 关闭
@@ -330,7 +347,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         chrome.runtime.sendMessage({
           type: 'closePopup'
         }).then(() => {
-          console.log(`[service-worker] ✓ closePopup`);
+          // 简化成功日志
+          // console.log(`[service-worker] ✓ closePopup`);
           sendResponse({ success: true, status: 'closed', newState: false });
         }).catch(error => {
           console.error(`[service-worker] ✗ closePopup: ${error instanceof Error ? error.message : String(error)}`);
@@ -351,7 +369,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           
           // 路径设置成功后，打开popup
           chrome.action.openPopup().then(() => {
-            console.log(`[service-worker] ✓ openPopup`);
+            // 简化成功日志
+            // console.log(`[service-worker] ✓ openPopup`);
             sendResponse({ success: true, status: 'opened', newState: true });
           }).catch(error => {
             console.error(`[service-worker] ✗ openPopup: ${error instanceof Error ? error.message : String(error)}`);
@@ -366,7 +385,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               if (chrome.runtime.lastError) {
                 sendResponse({ success: false, error: chrome.runtime.lastError.message });
               } else {
-                console.log(`[service-worker] ✓ openPopup (备用方案)`);
+                // 简化备用方案日志
+                // console.log(`[service-worker] ✓ openPopup (备用方案)`);
                 sendResponse({ success: true, status: 'opened_window', newState: true });
               }
             });
@@ -401,7 +421,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   // 📦 其他消息使用异步处理（业务逻辑消息）
-  handleAsyncMessage(message, sender, sendResponse);
+  // 确保异步消息正确处理
+  (async () => {
+    try {
+      const response = await routeMessage(message, sender);
+      // 优化日志输出：对于简单成功响应，只输出状态
+      if (response && response.success === true && response.status) {
+        // 简化响应日志，只在错误时输出
+        // console.log(`[service-worker] ✓ ${message.type}: ${response.status}`);
+      } else {
+        // console.log(`[service-worker] ✓ ${message.type}:`, response);
+      }
+      sendResponse(response);
+    } catch (error) {
+      console.error(`[service-worker] ✗ ${message.type}: ${error instanceof Error ? error.message : String(error)}`);
+      sendResponse({
+        success: false,
+        error: error instanceof Error ? error.message : '消息处理失败'
+      });
+    }
+  })();
   return true; // 异步响应
 });
 
@@ -418,27 +457,6 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 
 
-/**
- * 异步消息处理函数
- * 🔧 优秀Chrome扩展设计：处理不需要用户手势的业务消息
- * 基于 architecture.md 3.4.5 统一数据管理消息接口
- */
-async function handleAsyncMessage(
-  message: any, 
-  sender: chrome.runtime.MessageSender, 
-  sendResponse: (response?: any) => void
-): Promise<void> {
-  try {
-    const response = await routeMessage(message, sender);
-    sendResponse(response);
-  } catch (error) {
-    console.error(`[service-worker] ✗ ${message.type}: ${error instanceof Error ? error.message : String(error)}`);
-    sendResponse({
-      success: false,
-      error: error instanceof Error ? error.message : '消息处理失败'
-    });
-  }
-}
 
 /**
  * 消息路由函数
@@ -505,7 +523,7 @@ async function routeMessage(
       return await handleRuntimeStateSet(data);
     
     case 'setRuntimeState':
-      // 新格式：{ type: 'setRuntimeState', data: { stateKey: 'settingPanelOpen', value: true } }
+      // 新格式：{ type: 'setRuntimeState', data: { stateKey: 'popupOpen', value: true } }
       // 直接从data中获取参数
       const setStateKey = data?.stateKey;
       const setStateValue = data?.value;
@@ -518,7 +536,7 @@ async function routeMessage(
         };
       }
       
-      console.log(`[service-worker] setRuntimeState: ${setStateKey}=${setStateValue}`);
+      // 删除这里的日志，runtime-state-manager内部已经有详细的状态变更日志
       return await handleRuntimeStateSet({ stateKey: setStateKey, value: setStateValue });
     
     case 'RUNTIME_STATE_GET_ALL':
@@ -544,6 +562,10 @@ async function routeMessage(
           error: allStateResult.error
         };
       }
+    
+    case 'getAllState':
+      // 支持整合后的content-script使用的消息类型
+      return await handleGetAllState(data);
     
     // === 用户偏好设置消息 ===
     case 'USER_PREFERENCES_GET':
@@ -617,12 +639,25 @@ async function routeMessage(
     
     // === 字幕数据处理 ===
     case 'SUBTITLE_DATA':
-      return await handleSubtitleData(data);
+      // 处理字幕数据并检查是否需要继续翻译流程
+      const subtitleResult = await handleSubtitleData(data);
+      
+      // 如果当前状态是PENDING，说明正在等待字幕，需要继续翻译流程
+      const currentState = await runtimeStateManager.getTranslateState();
+      if (currentState === TranslateActiveState.PENDING) {
+        console.log('[service-worker] 字幕捕获完成，继续执行翻译');
+        // 触发翻译流程
+        const translateResult = await continueTranslationWithSubtitles(data);
+        return translateResult || subtitleResult;
+      }
+      
+      return subtitleResult;
     
     // === 翻译控制 ===
     case 'TOGGLE_TRANSLATE':
-      console.log('[service-worker] 进入 TOGGLE_TRANSLATE case 分支');
-      console.log('[service-worker] 准备调用 handleToggleTranslate，参数:', { sender, data });
+    case 'translation_toggle':  // 支持新的消息类型
+      // 合并冗余日志
+      console.log('[service-worker] 翻译切换:', { type, data });
       return await handleToggleTranslate(sender, data);
     
     default:
@@ -671,10 +706,10 @@ async function handleOpenPopup(sender: chrome.runtime.MessageSender, data?: any)
     // 打开popup
     await chrome.action.openPopup();
     
-    // 更新运行时状态（使用全局实例）
-    await runtimeStateManager.setSettingPanelState(true);
+    // 状态更新将由Port连接处理，这里不需要重复设置
+    // await runtimeStateManager.setPopupState(true);
     
-    console.log(`[service-worker] ✓ Popup已打开`);
+    // 日志将由消息路由统一输出，这里不重复
     
     return {
       success: true,
@@ -735,7 +770,6 @@ async function handleTogglePopup(sender: chrome.runtime.MessageSender, data?: an
       };
     } else {
       // 当前未打开，执行打开操作
-      console.log(`[service-worker] 准备打开Popup (Tab:${tabId})`);
       
       // 确保popup路径设置正确
       await chrome.action.setPopup({
@@ -823,28 +857,75 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
     const userPreferencesResult = await handleUserPreferencesGet({});
     const userPreferences = userPreferencesResult.success ? userPreferencesResult.data : {};
     
-    // 5. 向Content Script请求字幕轨道数据
+    // 5. 两层缓存获取字幕轨道数据
     let availableSourceLanguages = [];
     let detectedSourceLang = 'auto';
+    let lastSelectedLanguage = null;
     
+    // 层级1: Local Storage缓存
     try {
-      console.log(`[service-worker] 请求Content Script字幕轨道数据`);
-      const trackResponse = await chrome.tabs.sendMessage(tabId, {
-        type: 'getVideoTrackData',
-        videoId
-      });
-      
-      if (trackResponse && trackResponse.success && trackResponse.trackData) {
-        availableSourceLanguages = trackResponse.trackData;
-        console.log(`[service-worker] 获取到${availableSourceLanguages.length}个字幕轨道`);
-      } else {
-        console.warn(`[service-worker] ⚠️ 获取字幕轨道数据失败`, trackResponse);
+      const localCache = await videoSourceLanguageCacheManager.get(videoId);
+      if (localCache && localCache.availableSourceLanguages) {
+        availableSourceLanguages = localCache.availableSourceLanguages;
+        lastSelectedLanguage = localCache.lastSelectedLanguage || null;
+        console.log(`[service-worker] ✓ 缓存命中[Local Storage]: ${availableSourceLanguages.length}个轨道`);
       }
     } catch (error) {
-      console.error(`[service-worker] ✗ 请求字幕轨道数据: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(`[service-worker] Local Storage读取失败:`, error);
     }
     
-    // 6. 构建PopupContext
+    // 层级2: Content Script API
+    if (availableSourceLanguages.length === 0) {
+      try {
+        console.log(`[service-worker] 缓存未命中，从Content Script获取`);
+        const trackResponse = await chrome.tabs.sendMessage(tabId, {
+          type: 'getVideoTrackData',
+          videoId
+        });
+        
+        if (trackResponse && trackResponse.success && trackResponse.tracks) {
+          availableSourceLanguages = trackResponse.tracks;
+          console.log(`[service-worker] ✓ 获取成功[Content Script API]: ${availableSourceLanguages.length}个轨道`);
+          
+          // 保存到Local Storage（注意：这里不设置lastSelectedLanguage，保持为null）
+          if (availableSourceLanguages.length > 0) {
+            await videoSourceLanguageCacheManager.set({
+              videoId,
+              availableSourceLanguages,
+              lastSelectedLanguage: lastSelectedLanguage
+            });
+            
+            console.log(`[service-worker] ✓ 已保存到缓存[Local Storage]`);
+          }
+        } else {
+          console.warn(`[service-worker] ⚠️ 获取字幕轨道数据失败`, trackResponse);
+        }
+      } catch (error) {
+        console.error(`[service-worker] ✗ 请求字幕轨道数据: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    
+    // 6. 智能选择源语言
+    // 如果用户有历史选择，使用它；否则智能选择
+    if (lastSelectedLanguage) {
+      detectedSourceLang = lastSelectedLanguage;
+      console.log(`[service-worker] 使用用户历史选择的源语言: ${detectedSourceLang}`);
+    } else if (availableSourceLanguages.length > 0) {
+      // 没有用户选择，进行智能选择
+      const targetLang = userPreferences.targetLang || 'zh-CN';
+      detectedSourceLang = selectBestSourceLanguage(
+        availableSourceLanguages,
+        targetLang,
+        null  // 没有历史选择
+      );
+      console.log(`[service-worker] 智能选择源语言: ${detectedSourceLang} (目标语言: ${targetLang})`);
+    } else {
+      // 没有可用轨道，保持'auto'
+      detectedSourceLang = 'auto';
+      console.log(`[service-worker] 无可用轨道，保持自动检测`);
+    }
+    
+    // 7. 构建PopupContext
     const popupContext = {
       videoId,
       tabId,
@@ -883,7 +964,7 @@ async function handlePopupOpened(sender: chrome.runtime.MessageSender): Promise<
     console.log(`[service-worker] <- popupOpened (已由Port机制处理状态)`);
     
     // 状态更新已在Port连接时处理，避免重复
-    // await runtimeStateManager.setSettingPanelState(true);
+    // await runtimeStateManager.setPopupState(true);
     // await broadcastSidePanelStateChange(true);
     
     return {
@@ -909,7 +990,7 @@ async function handlePopupClosed(sender: chrome.runtime.MessageSender): Promise<
     console.log(`[service-worker] <- popupClosed (已废弃，由Port机制处理)`);
     
     // 状态更新已在Port断开时处理，避免重复
-    // await runtimeStateManager.setSettingPanelState(false);
+    // await runtimeStateManager.setPopupState(false);
     // await broadcastSidePanelStateChange(false);
     
     return {
@@ -982,7 +1063,7 @@ async function handleToggleSidePanel(sender: chrome.runtime.MessageSender, data?
   try {
     // 🔥 关键修复：使用存储读取状态，避免重复API调用
     // 1. 首先从存储获取当前状态
-    const isCurrentlyEnabled = await runtimeStateManager.getSettingPanelState();
+    const isCurrentlyEnabled = await runtimeStateManager.getPopupState();
     
     console.log(`[service-worker] SidePanel状态: enabled=${isCurrentlyEnabled}`);
     
@@ -1125,7 +1206,7 @@ async function testSidePanelStateWithGetContexts(tabId: number): Promise<void> {
     });
     
     // 方法4：对比统一状态管理器
-    const managerState = runtimeStateManager.getSettingPanelStateSync();
+    const managerState = runtimeStateManager.getPopupStateSync();
     console.log(`[service-worker] 状态管理器状态: ${managerState}`);
     
     // 方法5：使用新的权威状态检测
@@ -1247,7 +1328,7 @@ function handleOpenSidePanelSync(sender: chrome.runtime.MessageSender, message?:
     
     // 🔧 优化：移除状态保存，由Port连接处理
     setTimeout(() => {
-      // runtimeStateManager.setSettingPanelState(true).catch(console.warn); // ❌ 移除：由Port连接处理
+      // runtimeStateManager.setPopupState(true).catch(console.warn); // ❌ 移除：由Port连接处理
       // 🔧 移除重复广播：此函数是openSidePanel的同步版本，已被handleToggleSidePanelSync替代
       // handleToggleSidePanelSync已在第650行执行广播，避免重复
       // broadcastSidePanelStateChange(true); // ❌ 已移除重复广播
@@ -1326,8 +1407,8 @@ async function handleOpenSidePanel(sender: chrome.runtime.MessageSender, message
     if (source !== 'cross-tab-sync') {
       // 🔧 优化：移除状态保存，由Port连接处理
       console.log(`[service-worker] 状态保存由Port连接处理`);
-      // runtimeStateManager.setSettingPanelState(true).then(() => {
-      //   console.log(`[service-worker] ✅ session storage更新成功: settingPanelOpen=true`);
+      // runtimeStateManager.setPopupState(true).then(() => {
+      //   console.log(`[service-worker] ✅ session storage更新成功: popupOpen=true`);
       // }).catch(error => {
       //   console.warn('[service-worker] ❌ 更新运行时状态失败:', error);
       // });
@@ -1409,7 +1490,7 @@ async function handleOpenPopupFallback(sender: chrome.runtime.MessageSender): Pr
     await fallbackToPopup('消息请求降级');
     
     // 更新运行时状态
-    await runtimeStateManager.setSettingPanelState(true);
+    await runtimeStateManager.setPopupState(true);
     
     return {
       success: true,
@@ -1476,8 +1557,8 @@ async function handleRuntimeStateGet(data: any): Promise<any> {
       case 'translateActive':
         result = await runtimeStateManager.getTranslateState();
         break;
-      case 'settingPanelOpen':
-        result = await runtimeStateManager.getSettingPanelState();
+      case 'popupOpen':
+        result = await runtimeStateManager.getPopupState();
         break;
       default:
         throw new Error(`未知状态键: ${stateKey}`);
@@ -1507,8 +1588,8 @@ async function handleRuntimeStateSet(data: any): Promise<any> {
       case 'translateActive':
         await runtimeStateManager.setTranslateState(value);
         break;
-      case 'settingPanelOpen':
-        await runtimeStateManager.setSettingPanelState(value);
+      case 'popupOpen':
+        await runtimeStateManager.setPopupState(value);
         break;
       default:
         throw new Error(`未知状态键: ${stateKey}`);
@@ -1542,6 +1623,38 @@ async function handleRuntimeStateGetAll(): Promise<any> {
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to get all runtime state'
+    };
+  }
+}
+
+/**
+ * 处理getAllState请求（整合后的content-script使用）
+ */
+async function handleGetAllState(data: any): Promise<any> {
+  try {
+    console.log('[service-worker] <- getAllState');
+    
+    // 获取运行时状态
+    const runtimeState = await runtimeStateManager.getAllState();
+    
+    // 如果请求包含用户偏好
+    let userPreferences = null;
+    if (data?.includeUserPreferences) {
+      userPreferences = await userPreferencesManager.getUserPreferences();
+    }
+    
+    return {
+      success: true,
+      data: {
+        ...runtimeState,
+        ...(userPreferences && { userPreferences })
+      }
+    };
+  } catch (error) {
+    console.error(`[service-worker] ✗ getAllState: ${error instanceof Error ? error.message : String(error)}`);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : '获取状态失败'
     };
   }
 }
@@ -1675,12 +1788,12 @@ async function setupDefaultSettings(): Promise<void> {
  */
 async function handleUpdate(previousVersion?: string): Promise<void> {
   try {
-    console.log(`[service-worker] 从版本 ${previousVersion} 更新到当前版本`);
+    // 合并为一条日志，因为目前没有实际的迁移逻辑
+    console.log(`[service-worker] 版本更新: ${previousVersion || '未知'} → 当前版本`);
     
     // 这里可以添加数据迁移逻辑
     // 例如：旧版本设置格式转换、清理过期缓存等
     
-    console.log('[service-worker] ✓ 更新处理完成');
   } catch (error) {
     console.error(`[service-worker] ✗ 更新处理: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -1701,9 +1814,9 @@ function setupStateChangeListeners(): void {
   
   // 监听设置面板状态变更
   runtimeStateManager.addChangeListener(
-    RuntimeStateChangeEvent.SETTING_PANEL_CHANGED,
+    RuntimeStateChangeEvent.POPUP_STATE_CHANGED,
     (newValue, oldValue) => {
-      console.log(`[service-worker] 状态变更: settingPanelOpen [${oldValue} → ${newValue}]`);
+      console.log(`[service-worker] 状态变更: popupOpen [${oldValue} → ${newValue}]`);
     }
   );
 }
@@ -1776,17 +1889,7 @@ async function handleSubtitleData(data: any): Promise<any> {
       return { success: false, error: '字幕数据格式无效' };
     }
     
-    // 存储到内存缓存（MemoryCache）
-    // 注意：这里使用简单的全局变量存储，实际项目中应该使用更完善的缓存管理
-    if (!globalThis.subtitleCache) {
-      globalThis.subtitleCache = new Map();
-    }
-    
-    globalThis.subtitleCache.set(data.videoId, {
-      subtitles: data.subtitles,
-      url: data.url,
-      timestamp: Date.now()
-    });
+    // 注意：已移除内存缓存，直接使用Local Storage
     
     console.log(`[service-worker] ✓ 字幕数据已缓存: ${data.videoId}`);
     
@@ -1809,10 +1912,141 @@ async function handleSubtitleData(data: any): Promise<any> {
   }
 }
 
+// === 类型定义 ===
+
+/**
+ * 翻译开关请求数据
+ */
+interface ToggleTranslateRequest {
+  videoId: string;
+  newState: boolean;
+}
+
+/**
+ * 翻译开关响应数据
+ */
+interface ToggleTranslateResponse {
+  success: boolean;
+  action: 'cached' | 'translated' | 'needFetch' | 'stopped';
+  data?: any;
+  message?: string;
+  error?: string;
+  config?: UserPreferences;
+}
+
+/**
+ * 字幕数据结构
+ */
+interface SubtitleData {
+  subtitles: any[];
+  videoId: string;
+  url: string;
+}
+
+/**
+ * 统一的源语言选择规则系统
+ * 
+ * 规则优先级：
+ * 1. 用户历史选择（如果存在于当前轨道中）
+ * 2. 英语优先（当目标语言非英语时）
+ * 3. 手动字幕优于ASR
+ * 4. 降级到第一个可用轨道
+ */
+function selectBestSourceLanguage(
+  tracks: Array<{ languageCode: string; name: string; kind?: string }>,
+  targetLang: string,
+  lastSelectedLanguage?: string
+): string {
+  if (!tracks || tracks.length === 0) {
+    return 'en'; // 默认返回英语
+  }
+
+  // 规则1: 用户历史选择优先
+  if (lastSelectedLanguage) {
+    const userTrack = tracks.find(t => t.languageCode === lastSelectedLanguage);
+    if (userTrack) {
+      console.log(`[service-worker] 使用用户历史选择: ${lastSelectedLanguage}`);
+      return lastSelectedLanguage;
+    }
+  }
+
+  // 准备数据：区分手动字幕和ASR
+  const manualTracks = tracks.filter(t => !t.kind || t.kind !== 'asr');
+  const asrTracks = tracks.filter(t => t.kind === 'asr');
+  const targetIsEnglish = targetLang.startsWith('en');
+
+  // 规则2+3: 英语优先（非英语目标时）+ 手动字幕优先
+  if (!targetIsEnglish) {
+    // 优先级：英语手动 > 英语ASR
+    const englishManual = manualTracks.find(t => t.languageCode.startsWith('en'));
+    if (englishManual) {
+      console.log(`[service-worker] 选择英语手动字幕: ${englishManual.languageCode}`);
+      return englishManual.languageCode;
+    }
+
+    const englishAsr = asrTracks.find(t => t.languageCode.startsWith('en'));
+    if (englishAsr) {
+      console.log(`[service-worker] 选择英语ASR字幕: ${englishAsr.languageCode}`);
+      return englishAsr.languageCode;
+    }
+  }
+
+  // 规则3: 手动字幕优先（非英语或目标为英语时）
+  if (manualTracks.length > 0) {
+    console.log(`[service-worker] 选择手动字幕: ${manualTracks[0].languageCode}`);
+    return manualTracks[0].languageCode;
+  }
+
+  // 规则4: 降级策略 - 使用第一个可用轨道
+  const selected = tracks[0];
+  console.log(`[service-worker] 使用默认轨道: ${selected.languageCode} (${selected.kind === 'asr' ? 'ASR' : '手动'})`);
+  return selected.languageCode;
+}
+
+/**
+ * 生成翻译缓存键
+ * 根据影响翻译结果的所有参数生成唯一键
+ */
+function generateTranslationCacheKey(
+  videoId: string,
+  sourceLang: string,
+  targetLang: string,
+  service: TranslationServiceConfig
+): string {
+  // 基础部分
+  let key = `translation_${videoId}_${sourceLang}_${targetLang}_${service.type}`;
+  
+  // 根据服务类型添加特定参数
+  switch (service.type) {
+    case 'openai':
+    case 'openai-free':
+      // OpenAI需要模型和temperature
+      if (service.model) {
+        key += `_${service.model}`;
+      }
+      if (service.temperature !== undefined && service.temperature !== null) {
+        key += `_${service.temperature}`;
+      }
+      break;
+    case 'google':
+    case 'google-free':
+      // Google翻译无额外参数
+      break;
+    case 'deepl':
+      // DeepL可能有formality参数
+      if ((service as any).formality) {
+        key += `_${(service as any).formality}`;
+      }
+      break;
+  }
+  
+  return key;
+}
+
 /**
  * 处理翻译开关切换 - 实现缓存优先策略
  */
-async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data: any): Promise<any> {
+async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data: ToggleTranslateRequest): Promise<ToggleTranslateResponse> {
   try {
     console.log('[service-worker] <- handleToggleTranslate');
     const { videoId, newState } = data;
@@ -1865,36 +2099,55 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
       translationServiceType: preferences.translationService?.type
     });
     
-    // Step 2: 构建缓存键并检查翻译结果缓存
-    console.log('[service-worker] Step 2: 检查翻译结果缓存');
+    // Step 2: 获取视频源语言数据
+    console.log('[service-worker] Step 2: 获取视频源语言数据');
+    const videoSourceManager = VideoSourceLanguageCacheManager.getInstance();
+    const sourceData = await videoSourceManager.get(videoId);
+    
+    let sourceLang: string = 'auto'; // 默认值
+    
+    if (sourceData && sourceData.availableSourceLanguages && sourceData.availableSourceLanguages.length > 0) {
+      // 使用智能选择函数
+      sourceLang = selectBestSourceLanguage(
+        sourceData.availableSourceLanguages,
+        preferences.targetLang,
+        sourceData.lastSelectedLanguage
+      );
+      console.log('[service-worker] 智能选择源语言:', sourceLang, {
+        targetLang: preferences.targetLang,
+        lastSelected: sourceData.lastSelectedLanguage,
+        availableCount: sourceData.availableSourceLanguages.length
+      });
+    } else {
+      // 没有缓存数据，需要从Content Script获取
+      console.log('[service-worker] ⚠️ 没有源语言缓存，需要获取字幕轨道信息');
+      // 这里暂时使用auto，后续在获取字幕时会更新
+      sourceLang = 'auto';
+    }
+    
+    // Step 3: 构建缓存键并检查翻译结果缓存
+    console.log('[service-worker] Step 3: 检查翻译结果缓存');
     const cacheManager = TranslationCacheManager.getInstance();
-    // 注意：sourceLang 需要从字幕数据中获取，这里暂时使用 'en' 作为默认值
-    const sourceLang = 'en'; // TODO: 从字幕数据中获取实际的源语言
-    const cacheKey = {
+    
+    // 使用新的缓存键生成函数
+    const cacheKey = generateTranslationCacheKey(
       videoId,
-      sourceLang: sourceLang,
-      targetLang: preferences.targetLang,
-      translationService: {
-        type: preferences.translationService.type,
-        model: preferences.translationService.model || '',
-        temperature: preferences.translationService.temperature || 0.3
-      }
-    };
+      sourceLang,
+      preferences.targetLang,
+      preferences.translationService
+    );
+    
+    console.log('[service-worker] 生成的缓存键:', cacheKey);
     
     // 检查是否有缓存的翻译结果
-    console.log('[service-worker] 检查缓存:', cacheKey);
     const cachedResult = await cacheManager.get(
       videoId,
       sourceLang,
       preferences.targetLang,
-      {
-        type: preferences.translationService.type,
-        model: preferences.translationService.model || '',
-        temperature: preferences.translationService.temperature || 0.3
-      }
+      preferences.translationService
     );
     if (cachedResult) {
-      console.log('[service-worker] ✓ 找到缓存的翻译结果');
+      console.log('[service-worker] ✓ 找到缓存的翻译结果（P0级完全命中）');
       await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
       return {
         success: true,
@@ -1903,22 +2156,39 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
       };
     }
     
-    // Step 3: 检查内存中的字幕数据
-    console.log('[service-worker] Step 3: 检查内存中的字幕数据');
-    console.log('[service-worker] 检查内存中的原始字幕数据');
-    const subtitleData = globalThis.subtitleCache?.get(videoId);
-    if (subtitleData) {
-      console.log('[service-worker] ✓ 找到内存中的字幕数据');
+    // Step 4: 查找相同源语言的原始字幕（P1级部分命中）
+    console.log('[service-worker] Step 4: 查找可复用的原始字幕');
+    const partialCaches = await cacheManager.findByVideoAndSourceLang(videoId, sourceLang);
+    
+    if (partialCaches.length > 0) {
+      console.log(`[service-worker] ✓ 找到${partialCaches.length}个相同源语言的缓存，复用原始字幕`);
+      const originalSubtitles = partialCaches[0].originalSubtitles;
       
       // 执行翻译
-      const translatedResult = await executeTranslation(subtitleData, preferences);
+      console.log('[service-worker] 执行翻译（使用复用的原始字幕）');
+      const translatedResult = await executeTranslation(
+        {
+          subtitles: originalSubtitles,
+          videoId: videoId,
+          url: window.location?.href || ''
+        },
+        preferences
+      );
       
       // 保存到缓存
-      await cacheManager.set(translatedResult);
+      await cacheManager.set({
+        videoId,
+        sourceLang,
+        targetLang: preferences.targetLang,
+        translationService: preferences.translationService,
+        originalSubtitles,
+        translatedSubtitles: translatedResult.translatedSubtitles,
+        createdAt: Date.now(),
+        lastUsed: Date.now(),
+        dataHash: ''
+      });
       
-      // 更新状态为ACTIVE
       await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
-      
       return {
         success: true,
         action: 'translated',
@@ -1926,19 +2196,52 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
       };
     }
     
-    // Step 4: 需要获取字幕
-    console.log('[service-worker] Step 4: 需要获取字幕数据');
-    console.log('[service-worker] ⚠️ 需要从YouTube获取字幕数据');
+    // Step 5: 需要获取字幕（P2/P3级）
+    console.log('[service-worker] Step 5: 需要获取字幕数据');
     
-    // 设置为INTENT_ONLY状态（用户想翻译但无字幕）
-    await runtimeStateManager.setTranslateState(TranslateActiveState.INTENT_ONLY);
+    // 检查是否有tabId
+    if (!sender.tab?.id) {
+      console.error('[service-worker] 无法获取tabId');
+      await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
+      return {
+        success: false,
+        error: '无法获取标签页信息'
+      };
+    }
     
-    return {
-      success: true,  // 操作成功，只是没有字幕
-      action: 'needFetch',
-      message: '等待字幕加载',
-      config: preferences
-    };
+    try {
+      // 直接使用方法2：触发字幕拦截器
+      // 方法1（GET_SUBTITLE_DATA）已被移除，详见：/docs/guides/decision-log.md #23
+      console.log('[service-worker] 触发字幕拦截器');
+      
+      // 触发字幕拦截器
+      await chrome.tabs.sendMessage(sender.tab.id, {
+        type: 'REQUEST_SUBTITLE_CAPTURE',
+        data: { videoId }
+      }).catch(error => {
+        console.log('[service-worker] 触发字幕拦截器失败:', error);
+      });
+      
+      // 保持PENDING状态，等待字幕数据
+      // PENDING状态已在前面设置（第2067行）
+      return {
+        success: true,
+        action: 'needFetch',
+        message: '正在加载字幕，请稍候',
+        config: preferences
+      };
+      
+      // 注意：实际字幕数据将通过拦截器异步获取
+      // 后续处理流程在handleSubtitleCaptured中完成
+      
+    } catch (error) {
+      console.error('[service-worker] 触发字幕拦截器失败:', error);
+      await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
+      return {
+        success: false,
+        error: '无法触发字幕加载'
+      };
+    }
     
   } catch (error) {
     console.error(`[service-worker] ✗ handleToggleTranslate: ${error instanceof Error ? error.message : String(error)}`);
@@ -1951,9 +2254,130 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
 }
 
 /**
+ * 继续翻译流程（当收到字幕数据后）
+ */
+async function continueTranslationWithSubtitles(data: any): Promise<any> {
+  try {
+    console.log('[service-worker] 继续翻译流程，处理字幕数据');
+    
+    const { videoId, subtitles } = data;
+    
+    if (!videoId || !subtitles || subtitles.length === 0) {
+      console.error('[service-worker] 字幕数据无效或无字幕');
+      // 无字幕时，设置为INACTIVE并发送错误消息
+      await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
+      
+      // 发送错误消息到content-script显示
+      if (data.tabId) {
+        chrome.tabs.sendMessage(data.tabId, {
+          type: 'SHOW_ERROR_MESSAGE',
+          data: {
+            message: '当前视频无字幕',
+            duration: 5000,
+            level: 'warning'
+          }
+        }).catch(err => {
+          console.error('[service-worker] 发送错误消息失败:', err);
+        });
+      }
+      
+      return {
+        success: false,
+        error: '当前视频无字幕',
+        action: 'no_subtitles'
+      };
+    }
+    
+    // 获取用户偏好配置
+    const preferences = await userPreferencesManager.getUserPreferences();
+    if (!preferences || !preferences.translationService) {
+      console.error('[service-worker] 用户偏好配置不完整');
+      return {
+        success: false,
+        error: '用户偏好配置不完整'
+      };
+    }
+    
+    // 获取或推断源语言
+    const videoSourceManager = VideoSourceLanguageCacheManager.getInstance();
+    const sourceData = await videoSourceManager.get(videoId);
+    let sourceLang = sourceData?.lastSelectedLanguage || 'auto';
+    
+    // 如果源语言是auto，尝试从字幕中检测
+    if (sourceLang === 'auto' && sourceData?.availableSourceLanguages?.length > 0) {
+      sourceLang = selectBestSourceLanguage(
+        sourceData.availableSourceLanguages,
+        preferences.targetLang,
+        sourceData.lastSelectedLanguage
+      );
+    }
+    
+    console.log('[service-worker] 开始翻译字幕:', {
+      videoId,
+      sourceLang,
+      targetLang: preferences.targetLang,
+      subtitleCount: subtitles.length
+    });
+    
+    // 执行翻译
+    const translatedResult = await executeTranslation(
+      {
+        subtitles: subtitles,
+        videoId: videoId,
+        url: data.url || ''
+      },
+      preferences
+    );
+    
+    // 保存到缓存
+    const cacheManager = TranslationCacheManager.getInstance();
+    await cacheManager.set({
+      videoId,
+      sourceLang,
+      targetLang: preferences.targetLang,
+      translationService: preferences.translationService,
+      originalSubtitles: subtitles,
+      translatedSubtitles: translatedResult.translatedSubtitles,
+      createdAt: Date.now(),
+      lastUsed: Date.now(),
+      dataHash: ''
+    });
+    
+    // 更新状态为ACTIVE
+    await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
+    
+    // 通知Content Script显示翻译结果
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs[0]?.id) {
+      await chrome.tabs.sendMessage(tabs[0].id, {
+        type: 'DISPLAY_TRANSLATION',
+        data: translatedResult
+      }).catch(error => {
+        console.error('[service-worker] 无法发送翻译结果到Content Script:', error);
+      });
+    }
+    
+    return {
+      success: true,
+      action: 'translated',
+      data: translatedResult,
+      message: '字幕翻译完成'
+    };
+    
+  } catch (error) {
+    console.error('[service-worker] 继续翻译流程失败:', error);
+    await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : '翻译处理失败'
+    };
+  }
+}
+
+/**
  * 执行字幕翻译
  */
-async function executeTranslation(subtitleData: any, preferences: any): Promise<any> {
+async function executeTranslation(subtitleData: SubtitleData, preferences: UserPreferences): Promise<any> {
   try {
     const { subtitles, videoId, url } = subtitleData;
     const { targetLang, translationService, subtitleMode } = preferences;
@@ -2309,7 +2733,7 @@ async function handleSidePanelActuallyClosed(message: any): Promise<any> {
     console.log(`[service-worker] 🔄 SidePanel已实际关闭: 标签页 ${tabId}`);
     
     // 确保运行时状态为关闭
-    await runtimeStateManager.setSettingPanelState(false);
+    await runtimeStateManager.setPopupState(false);
     console.log('[service-worker] ✓ SidePanel状态已确认为关闭');
     
     // 🔧 生命周期事件：只负责内部状态同步，不广播
@@ -2345,7 +2769,7 @@ async function handleCheckSidePanelStatus(sender: chrome.runtime.MessageSender):
     
     // 使用存储读取检查SidePanel状态，高性能方案
     try {
-      const isEnabled = await runtimeStateManager.getSettingPanelState();
+      const isEnabled = await runtimeStateManager.getPopupState();
       
       console.log(`[service-worker] 标签页${tabId} SidePanel状态: enabled=${isEnabled}`);
       
@@ -2377,7 +2801,7 @@ async function handleCheckSidePanelStatus(sender: chrome.runtime.MessageSender):
 async function handleGetSidePanelStatus(sender: chrome.runtime.MessageSender): Promise<any> {
   try {
     // 直接从存储读取状态，高性能方案
-    const isEnabled = await runtimeStateManager.getSettingPanelState();
+    const isEnabled = await runtimeStateManager.getPopupState();
     
     console.log(`[service-worker] getSidePanelStatus: enabled=${isEnabled}`);
     

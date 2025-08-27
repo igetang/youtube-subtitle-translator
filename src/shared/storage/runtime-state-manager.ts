@@ -25,11 +25,11 @@ export class RuntimeStateManager {
   private static instance: RuntimeStateManager;
   private storageManager: StorageManager;
   private changeHandlers: Map<RuntimeStateChangeEvent, Set<RuntimeStateChangeHandler>>;
-  private stateMemoryCache: Partial<RuntimeState> = {};
+  private runtimeCache: Partial<RuntimeState> = {};
   private initialized: boolean = false;
   
   // 🔧 新增：同步缓存，用于保持用户手势上下文
-  private syncCache: { settingPanelOpen: boolean } = { settingPanelOpen: false };
+  private syncCache: { popupOpen: boolean } = { popupOpen: false };
 
   /**
    * 私有构造函数，防止直接实例化
@@ -73,8 +73,8 @@ export class RuntimeStateManager {
               newValue = newValue ? TranslateActiveState.ACTIVE : TranslateActiveState.INACTIVE;
             }
             
-            // 更新内存缓存
-            (this.stateMemoryCache as any)[stateKey] = newValue;
+            // 更新运行时缓存
+            (this.runtimeCache as any)[stateKey] = newValue;
             
             // 触发变更事件
             this.triggerChangeEvent(stateKey, newValue, change.oldValue);
@@ -100,7 +100,7 @@ export class RuntimeStateManager {
   private extractStateKey(storageKey: string): keyof RuntimeState | null {
     const mapping: Record<string, keyof RuntimeState> = {
       [RUNTIME_STATE_STORAGE_KEYS.TRANSLATE_ACTIVE]: 'translateActive',
-      [RUNTIME_STATE_STORAGE_KEYS.SETTING_PANEL_OPEN]: 'settingPanelOpen'
+      [RUNTIME_STATE_STORAGE_KEYS.POPUP_OPEN]: 'popupOpen'
     };
     
     return mapping[storageKey] || null;
@@ -120,8 +120,8 @@ export class RuntimeStateManager {
       case 'translateActive':
         event = RuntimeStateChangeEvent.TRANSLATE_ACTIVE_CHANGED;
         break;
-      case 'settingPanelOpen':
-        event = RuntimeStateChangeEvent.SETTING_PANEL_CHANGED;
+      case 'popupOpen':
+        event = RuntimeStateChangeEvent.POPUP_STATE_CHANGED;
         break;
     }
     
@@ -163,8 +163,6 @@ export class RuntimeStateManager {
     if (this.initialized) return;
     
     try {
-      console.log('[runtime-state-manager] 初始化开始...');
-      
       // 🔧 数据迁移：清理存储中的布尔值
       await this.cleanupBooleanValues();
       
@@ -173,8 +171,8 @@ export class RuntimeStateManager {
       
       if (loadResult.success && loadResult.state) {
         // 加载成功，使用存储的状态
-        this.stateMemoryCache = loadResult.state;
-        console.log('[runtime-state-manager] ✓ 从存储加载状态:', loadResult.state);
+        this.runtimeCache = loadResult.state;
+        console.log('[runtime-state-manager] ✓ 初始化完成:', loadResult.state);
       } else {
         // 加载失败，使用默认状态
         console.log(`[runtime-state-manager] 使用默认状态: ${loadResult.reason}`);
@@ -217,23 +215,23 @@ export class RuntimeStateManager {
    * 🔧 优化：移除重复的存储检查，直接使用默认状态
    */
   private async useDefaultState(): Promise<void> {
-    console.log('[runtime-state-manager] 使用默认状态（避免重复存储查询）...');
+    // 删除重复日志，上层调用处已经说明了使用默认状态的原因
     
     try {
       // 直接使用默认状态，避免重复的存储检查
       const defaultState: RuntimeState = { ...DEFAULT_RUNTIME_STATE };
       
-      this.stateMemoryCache = defaultState;
+      this.runtimeCache = defaultState;
       // 🔧 同步更新 syncCache
-      this.syncCache.settingPanelOpen = defaultState.settingPanelOpen;
+      this.syncCache.popupOpen = defaultState.popupOpen;
       await this.saveToStorage(defaultState);
       
       console.log('[runtime-state-manager] ✓ 默认状态已设置:', defaultState);
     } catch (error) {
       console.warn('[runtime-state-manager] ✗ 设置默认状态失败:', error);
-      this.stateMemoryCache = { ...DEFAULT_RUNTIME_STATE };
+      this.runtimeCache = { ...DEFAULT_RUNTIME_STATE };
       // 🔧 同步更新 syncCache
-      this.syncCache.settingPanelOpen = DEFAULT_RUNTIME_STATE.settingPanelOpen;
+      this.syncCache.popupOpen = DEFAULT_RUNTIME_STATE.popupOpen;
     }
   }
 
@@ -248,14 +246,14 @@ export class RuntimeStateManager {
     try {
       const storageData = await this.storageManager.getBatch([
         RUNTIME_STATE_STORAGE_KEYS.TRANSLATE_ACTIVE,
-        RUNTIME_STATE_STORAGE_KEYS.SETTING_PANEL_OPEN
+        RUNTIME_STATE_STORAGE_KEYS.POPUP_OPEN
       ], RUNTIME_STATE_CONFIG.STORAGE_AREA);
       
       // 🔧 修复：检查是否有任何有效数据，即使是部分数据也算成功
       const hasTranslateData = storageData[RUNTIME_STATE_STORAGE_KEYS.TRANSLATE_ACTIVE] !== undefined;
-      const hasSettingData = storageData[RUNTIME_STATE_STORAGE_KEYS.SETTING_PANEL_OPEN] !== undefined;
+      const hasPopupData = storageData[RUNTIME_STATE_STORAGE_KEYS.POPUP_OPEN] !== undefined;
       
-      if (!hasTranslateData && !hasSettingData) {
+      if (!hasTranslateData && !hasPopupData) {
         return {
           success: false,
           reason: 'STORAGE_EMPTY: 存储完全为空'
@@ -272,11 +270,11 @@ export class RuntimeStateManager {
       // 重构运行时状态对象
       const loadedState: RuntimeState = {
         translateActive: translateActiveValue || DEFAULT_RUNTIME_STATE.translateActive,
-        settingPanelOpen: storageData[RUNTIME_STATE_STORAGE_KEYS.SETTING_PANEL_OPEN] || DEFAULT_RUNTIME_STATE.settingPanelOpen
+        popupOpen: storageData[RUNTIME_STATE_STORAGE_KEYS.POPUP_OPEN] || DEFAULT_RUNTIME_STATE.popupOpen
       };
       
       // 🔧 同步更新 syncCache
-      this.syncCache.settingPanelOpen = loadedState.settingPanelOpen;
+      this.syncCache.popupOpen = loadedState.popupOpen;
       
       return {
         success: true,
@@ -298,18 +296,16 @@ export class RuntimeStateManager {
     // 准备存储数据
     const storageData = {
       [RUNTIME_STATE_STORAGE_KEYS.TRANSLATE_ACTIVE]: state.translateActive,
-      [RUNTIME_STATE_STORAGE_KEYS.SETTING_PANEL_OPEN]: state.settingPanelOpen
+      [RUNTIME_STATE_STORAGE_KEYS.POPUP_OPEN]: state.popupOpen
     };
-    
-    console.log(`[runtime-state-manager] 保存到${RUNTIME_STATE_CONFIG.STORAGE_AREA}:`, storageData);
     
     // 批量保存到存储
     await this.storageManager.setBatch(storageData, RUNTIME_STATE_CONFIG.STORAGE_AREA);
     
-    console.log(`[runtime-state-manager] ✓ 保存成功到${RUNTIME_STATE_CONFIG.STORAGE_AREA}`);
+    console.log(`[runtime-state-manager] ✓ 保存到${RUNTIME_STATE_CONFIG.STORAGE_AREA}:`, storageData);
     
-    // 更新内存缓存
-    this.stateMemoryCache = { ...state };
+    // 更新运行时缓存
+    this.runtimeCache = { ...state };
   }
 
   /**
@@ -321,7 +317,7 @@ export class RuntimeStateManager {
     }
     
     // 🔧 数据清理：确保translateActive始终是枚举值
-    const state = { ...DEFAULT_RUNTIME_STATE, ...this.stateMemoryCache } as RuntimeState;
+    const state = { ...DEFAULT_RUNTIME_STATE, ...this.runtimeCache } as RuntimeState;
     if (typeof state.translateActive === 'boolean') {
       console.warn('[runtime-state-manager] getAllState检测到布尔值，进行转换:', state.translateActive);
       state.translateActive = (state.translateActive as any) ? TranslateActiveState.ACTIVE : TranslateActiveState.INACTIVE;
@@ -338,7 +334,7 @@ export class RuntimeStateManager {
       await this.initialize();
     }
     
-    let translateState = this.stateMemoryCache.translateActive || DEFAULT_RUNTIME_STATE.translateActive;
+    let translateState = this.runtimeCache.translateActive || DEFAULT_RUNTIME_STATE.translateActive;
     
     // 🔧 数据清理：确保返回的始终是枚举值
     if (typeof translateState === 'boolean') {
@@ -364,18 +360,18 @@ export class RuntimeStateManager {
       return;
     }
     
-    if (this.stateMemoryCache.translateActive === state) {
+    if (this.runtimeCache.translateActive === state) {
       return; // 值未变化，无需保存
     }
     
-    // 更新内存缓存
-    this.stateMemoryCache.translateActive = state;
+    // 更新运行时缓存
+    this.runtimeCache.translateActive = state;
     
     // 获取完整的状态并保存
     const fullState = await this.getAllState();
     await this.saveToStorage(fullState);
     
-    console.log(`[runtime-state-manager] 状态变更: translateActive [${this.stateMemoryCache.translateActive} → ${state}]`);
+    console.log(`[runtime-state-manager] 状态变更: translateActive [${currentState} → ${state}]`);
   }
 
   /**
@@ -395,52 +391,49 @@ export class RuntimeStateManager {
   }
 
   /**
-   * 获取设置面板状态
+   * 获取Popup状态
    */
-  public async getSettingPanelState(): Promise<boolean> {
+  public async getPopupState(): Promise<boolean> {
     if (!this.initialized) {
       await this.initialize();
     }
     
-    return this.stateMemoryCache.settingPanelOpen || DEFAULT_RUNTIME_STATE.settingPanelOpen;
+    return this.runtimeCache.popupOpen || DEFAULT_RUNTIME_STATE.popupOpen;
   }
 
   /**
-   * 🔧 新增：同步获取设置面板状态（用于保持用户手势上下文）
-   * @returns 设置面板是否打开
+   * 🔧 新增：同步获取Popup状态（用于保持用户手势上下文）
+   * @returns Popup是否打开
    */
-  public getSettingPanelStateSync(): boolean {
-    return this.syncCache.settingPanelOpen;
+  public getPopupStateSync(): boolean {
+    return this.syncCache.popupOpen;
   }
 
   /**
-   * 设置设置面板状态
+   * 设置Popup状态
    */
-  public async setSettingPanelState(open: boolean): Promise<void> {
-    console.log(`[runtime-state-manager] <- setSettingPanelState (${open})`);
-    
+  public async setPopupState(open: boolean): Promise<void> {
     // 🔧 立即更新同步缓存
-    this.syncCache.settingPanelOpen = open;
+    this.syncCache.popupOpen = open;
     
     if (!this.initialized) {
       await this.initialize();
     }
     
-    if (this.stateMemoryCache.settingPanelOpen === open) {
-      console.log(`[runtime-state-manager] 状态无变化 (${open})，跳过保存`);
+    const oldValue = this.runtimeCache.popupOpen;
+    if (oldValue === open) {
+      console.log(`[runtime-state-manager] setPopupState(${open}) - 状态无变化，跳过保存`);
       return; // 值未变化，无需保存
     }
     
-    console.log(`[runtime-state-manager] 状态变更: settingPanelOpen [${this.stateMemoryCache.settingPanelOpen} → ${open}]`);
+    console.log(`[runtime-state-manager] setPopupState: popupOpen [${oldValue} → ${open}]`);
     
-    // 更新内存缓存
-    this.stateMemoryCache.settingPanelOpen = open;
+    // 更新运行时缓存
+    this.runtimeCache.popupOpen = open;
     
     // 获取完整的状态并保存
     const fullState = await this.getAllState();
     await this.saveToStorage(fullState);
-    
-    console.log(`[runtime-state-manager] ✓ setSettingPanelState: ${open}`);
   }
 
   /**
@@ -448,7 +441,7 @@ export class RuntimeStateManager {
    */
   public destroy(): void {
     this.changeHandlers.clear();
-    this.stateMemoryCache = {};
+    this.runtimeCache = {};
     this.initialized = false;
     
     console.log('[runtime-state-manager] 管理器已销毁');
@@ -463,6 +456,6 @@ export class RuntimeStateManager {
     if (!this.initialized) {
       await this.initialize();
     }
-    return { ...this.stateMemoryCache };
+    return { ...this.runtimeCache };
   }
 } 

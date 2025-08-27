@@ -5,13 +5,12 @@
  */
 
 /**
- * 翻译状态枚举 - 支持4状态逻辑
+ * 翻译状态枚举 - 支持3状态逻辑
  */
 export enum TranslateActiveState {
   INACTIVE = 'inactive',      // 翻译关闭
   PENDING = 'pending',         // 翻译执行中（过渡状态）
-  ACTIVE = 'active',           // 翻译激活（有字幕并显示翻译）
-  INTENT_ONLY = 'intent_only'  // 仅有意图（用户想翻译但无字幕）
+  ACTIVE = 'active'            // 翻译激活（有字幕并显示翻译）
 }
 
 /**
@@ -20,8 +19,8 @@ export enum TranslateActiveState {
  */
 export interface RuntimeState {
   // === 核心功能状态 ===
-  translateActive: TranslateActiveState;      // 翻译状态（三态：INACTIVE/ACTIVE/PENDING）
-  settingPanelOpen: boolean;                  // 设置面板状态（支持A段状态判断）
+  translateActive: TranslateActiveState;      // 翻译状态（三态：INACTIVE/PENDING/ACTIVE）
+  popupOpen: boolean;                         // Popup弹窗状态
 }
 
 /**
@@ -30,7 +29,7 @@ export interface RuntimeState {
  */
 export const DEFAULT_RUNTIME_STATE: RuntimeState = {
   translateActive: TranslateActiveState.INACTIVE,  // 默认翻译关闭
-  settingPanelOpen: false                          // 默认设置面板关闭
+  popupOpen: false                                 // 默认Popup关闭
 };
 
 /**
@@ -38,7 +37,7 @@ export const DEFAULT_RUNTIME_STATE: RuntimeState = {
  */
 export enum RuntimeStateChangeEvent {
   TRANSLATE_ACTIVE_CHANGED = 'translateActiveChanged',
-  SETTING_PANEL_CHANGED = 'settingPanelChanged'
+  POPUP_STATE_CHANGED = 'popupStateChanged'
 }
 
 /**
@@ -66,16 +65,14 @@ export class TranslateStateHelper {
       return true;
     }
     
-    // 定义状态转换规则（4状态系统）
+    // 定义状态转换规则（3状态系统）
     const transitions: Record<TranslateActiveState, TranslateActiveState[]> = {
       // 从INACTIVE只能进入PENDING（开启翻译）
       [TranslateActiveState.INACTIVE]: [TranslateActiveState.PENDING],
-      // 从PENDING可以进入ACTIVE（有字幕）、INTENT_ONLY（无字幕）或INACTIVE（出错）
-      [TranslateActiveState.PENDING]: [TranslateActiveState.ACTIVE, TranslateActiveState.INTENT_ONLY, TranslateActiveState.INACTIVE],
-      // 从ACTIVE直接回到INACTIVE（关闭翻译）
-      [TranslateActiveState.ACTIVE]: [TranslateActiveState.INACTIVE],
-      // 从INTENT_ONLY直接回到INACTIVE（关闭翻译）
-      [TranslateActiveState.INTENT_ONLY]: [TranslateActiveState.INACTIVE]
+      // 从PENDING可以进入ACTIVE（有字幕）或INACTIVE（无字幕或出错）
+      [TranslateActiveState.PENDING]: [TranslateActiveState.ACTIVE, TranslateActiveState.INACTIVE],
+      // 从ACTIVE可以进入PENDING（重新获取）或INACTIVE（关闭翻译）
+      [TranslateActiveState.ACTIVE]: [TranslateActiveState.PENDING, TranslateActiveState.INACTIVE]
     };
     
     return transitions[from]?.includes(to) || false;
@@ -90,8 +87,7 @@ export class TranslateStateHelper {
     const names: Record<TranslateActiveState, string> = {
       [TranslateActiveState.INACTIVE]: '翻译关闭',
       [TranslateActiveState.PENDING]: '处理中...',
-      [TranslateActiveState.ACTIVE]: '翻译已开启',
-      [TranslateActiveState.INTENT_ONLY]: '无字幕'
+      [TranslateActiveState.ACTIVE]: '翻译已开启'
     };
     
     return names[state];
@@ -113,10 +109,9 @@ export class TranslateStateHelper {
    * @returns 是否有翻译意图
    */
   static hasTranslationIntent(state: TranslateActiveState): boolean {
-    // ACTIVE、PENDING和INTENT_ONLY都表示用户想要翻译
+    // ACTIVE和PENDING都表示用户想要翻译
     return state === TranslateActiveState.ACTIVE || 
-           state === TranslateActiveState.PENDING || 
-           state === TranslateActiveState.INTENT_ONLY;
+           state === TranslateActiveState.PENDING;
   }
   
   /**
@@ -135,7 +130,7 @@ export class TranslateStateHelper {
  */
 export const RUNTIME_STATE_STORAGE_KEYS = {
   TRANSLATE_ACTIVE: 'runtime_state_translateActive',
-  SETTING_PANEL_OPEN: 'runtime_state_settingPanelOpen'
+  POPUP_OPEN: 'runtime_state_popupOpen'
 } as const;
 
 /**

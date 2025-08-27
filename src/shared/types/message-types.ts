@@ -100,6 +100,8 @@ export enum MessageType {
   
   // 错误处理消息
   ERROR_REPORT = 'error_report',
+  SHOW_ERROR_MESSAGE = 'show_error_message',
+  CLEAR_ERROR_MESSAGE = 'clear_error_message',
   
   // 性能监控消息
   PERFORMANCE_STATS = 'performance_stats'
@@ -489,6 +491,26 @@ export interface ErrorReportMessage extends BaseMessage {
   };
 }
 
+/**
+ * 显示错误消息（用于在字幕区域显示）
+ */
+export interface ShowErrorMessage extends BaseMessage {
+  type: MessageType.SHOW_ERROR_MESSAGE;
+  data: {
+    message: string;
+    duration?: number; // 消息显示时间（毫秒），默认5000
+    level?: 'info' | 'warning' | 'error'; // 错误级别
+  };
+}
+
+/**
+ * 清除错误消息
+ */
+export interface ClearErrorMessage extends BaseMessage {
+  type: MessageType.CLEAR_ERROR_MESSAGE;
+  data?: {};
+}
+
 // ================================
 // 📈 性能监控消息
 // ================================
@@ -543,6 +565,8 @@ export type ExtensionMessage =
   | CacheSetMessage
   | CacheClearMessage
   | ErrorReportMessage
+  | ShowErrorMessage
+  | ClearErrorMessage
   | PerformanceStatsMessage;
 
 /**
