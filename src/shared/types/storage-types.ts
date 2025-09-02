@@ -100,7 +100,7 @@ export interface TranslationServiceConfig {
  * 
  * 标准 RuntimeState 仅包含核心字段：
  * - translateActive: TranslateActiveState
- * - settingPanelOpen: boolean
+ * - popupOpen: boolean
  */
 
 // ================================
@@ -167,6 +167,8 @@ export interface TranslationCacheData {
   translationService: import('../types/user-preferences-types').TranslationServiceForStorage;
   
   // === 翻译内容 ===
+  /** 原始字幕数据（完整VTT格式字符串） - 用于服务切换时复用 */
+  originalSubtitles: string;
   /** 翻译后的字幕数据（完整VTT格式字符串） */
   translatedSubtitles: string;
   

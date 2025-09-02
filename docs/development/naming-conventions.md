@@ -1,7 +1,7 @@
 # YouTube字幕翻译助手 - 命名规范文档
 
-> **版本**: 5.24.6  
-> **最后更新**: 2025-06-03
+> **版本**: v3.0.0  
+> **最后更新**: 2025-09-02
 
 ## 🎯 文件命名规范
 
@@ -28,13 +28,13 @@ import { MessageType, VideoId } from '../types/index';
 import { MessageType, VideoId } from '../types/';
 ```
 
-#### 事件系统引用
+#### 消息系统引用
 ```typescript
 // ✅ 推荐写法
-import { initializeMessageSystem, MessageBus } from '../messages/index';
+import { MessageBus, MessageHandlers } from '../messages/message-bus';
 
 // ❌ 避免写法
-import { initializeMessageSystem, MessageBus } from '../messages/messages';
+import { EventBus } from '../messages/event-bus';  // 已废弃
 ```
 
 #### 存储系统引用

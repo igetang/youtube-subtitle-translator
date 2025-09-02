@@ -6,31 +6,34 @@
 
 字幕翻译流程分为以下几个主要阶段：
 
-1. 翻译开关触发与状态管理
-2. 字幕轨道获取与语言匹配
-3. 翻译调度与优先级处理
-4. 字幕翻译与缓存机制
-5. 字幕显示与更新
+1. 翻译开关触发与3状态管理（INACTIVE → PENDING → ACTIVE）
+2. YouTube Player API字幕轨道获取（ISO 639-1标准）
+3. 智能源语言选择与缓存优先策略
+4. 字幕翻译与两层缓存机制
+5. 字幕显示与实时更新
 
 ```mermaid
 flowchart TD
-    A[用户点击翻译开关] --> B[翻译状态更新]
-    B --> C[获取字幕轨道]
-    C --> D[字幕语言匹配]
-    D --> E{是否有原生目标语言?}
-    E -- 是 --> F[合并原生字幕]
-    E -- 否 --> G[分析字幕优先级]
-    G --> H[查询翻译缓存]
-    H --> I{缓存命中?}
-    I -- 全部命中 --> J[使用缓存结果]
-    I -- 部分命中 --> K[翻译缺失部分]
-    I -- 完全未命中 --> L[翻译全部字幕]
-    K --> M[更新缓存]
-    L --> M
-    J --> N[合并字幕数据]
-    F --> N
+    A[用户点击翻译开关] --> B[状态: INACTIVE → PENDING]
+    B --> C[通过Player API获取字幕轨道]
+    C --> D{API成功?}
+    D -- 否 --> E[降级到拦截器方案]
+    D -- 是 --> F[获取ISO 639-1语言列表]
+    F --> G[智能选择源语言]
+    G --> H[通过API设置字幕语言]
+    H --> I[获取字幕内容]
+    I --> J{缓存命中?}
+    J -- 是 --> K[使用缓存结果]
+    J -- 否 --> L[调用翻译API]
+    L --> M[保存到缓存]
+    K --> N[状态: PENDING → ACTIVE]
     M --> N
-    N --> O[显示字幕]
+    N --> O[显示双语字幕]
+    E --> P[状态: PENDING → INACTIVE]
+    
+    style B fill:#FFE4B5
+    style N fill:#90EE90
+    style P fill:#FFB6C1
 ```
 
 ## 1. 翻译开关触发与状态管理
@@ -38,16 +41,23 @@ flowchart TD
 ### 1.1 UI交互触发
 
 - 用户点击YouTube播放器控制栏中的翻译按钮
-- `UIManager`类的按钮点击处理函数被触发
-- 切换内部`translateActive`状态
-- 触发`state:translate_active_changed`事件
+- `ControlPanel`通过MessageBus发送`toggleTranslate`消息
+- 使用3状态系统管理翻译状态
+- 立即设置PENDING状态，防止重复点击
 
 ```typescript
-// 伪代码示例 - UIManager中的翻译按钮点击处理
-translateButton.addEventListener('click', () => {
-  const newState = !this.state.translateActive;
-  this.eventBus.emit('state:translate_active_changed', newState);
-});
+// 实际代码 - ControlPanel中的翻译按钮点击处理
+private async handleTranslateButtonClick(event: MouseEvent): Promise<void> {
+  event.stopPropagation();
+  
+  // 发送切换消息到Service Worker
+  const response = await chrome.runtime.sendMessage({
+    type: 'toggleTranslate',
+    data: { trigger: 'button_click' }
+  });
+  
+  // UI会通过状态变更消息自动更新
+}
 ```
 
 ### 1.2 状态更新与持久化
@@ -59,99 +69,176 @@ translateButton.addEventListener('click', () => {
 - 当状态为激活时，触发`translation:start_requested`事件
 
 ```typescript
-// 伪代码示例 - 设置翻译激活状态
-public setTranslateActive(active: boolean): void {
-  this.state.translateActive = active;
-  this.updateTranslateButtonState(active);
-  chrome.storage.local.set({ translateActive: active });
+// 实际代码 - Service Worker中的3状态管理
+async function handleToggleTranslate(message: any, sender: any) {
+  const currentState = await runtimeStateManager.getTranslateState();
   
-  if (active) {
-    this.eventBus.emit('translation:start_requested', {});
-  } else {
-    this.eventBus.emit('translation:stop_requested', {});
+  // 3状态转换逻辑
+  if (currentState === TranslateActiveState.INACTIVE) {
+    // Step 1: 设置PENDING状态
+    await runtimeStateManager.setTranslateState(TranslateActiveState.PENDING);
+    
+    // Step 2-5: 执行翻译流程
+    const success = await executeTranslation(sender.tab.id);
+    
+    // Step 6: 根据结果设置最终状态
+    if (success) {
+      await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
+    } else {
+      await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
+    }
+  } else if (currentState === TranslateActiveState.ACTIVE) {
+    // 关闭翻译
+    await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
+  }
+  // PENDING状态下忽略点击
+}
+```
+
+### 1.3 PENDING状态超时机制
+
+- PENDING状态设置5秒超时保护
+- 超时后自动回退到INACTIVE状态
+- 防止因异常导致的状态卡死
+- 确保系统始终可恢复
+
+```typescript
+// 实际代码 - PENDING超时处理
+if (translateActive === TranslateActiveState.PENDING) {
+  // 设置5秒超时
+  setTimeout(async () => {
+    const currentState = await runtimeStateManager.getTranslateState();
+    if (currentState === TranslateActiveState.PENDING) {
+      console.warn('[service-worker] PENDING状态超时，回退到INACTIVE');
+      await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
+    }
+  }, 5000);
+}
+```
+
+## 2. YouTube Player API与字幕获取
+
+### 2.1 YouTube Player API集成
+
+系统通过YouTube Player API直接控制字幕，使用ISO 639-1标准语言代码：
+
+```typescript
+// main-world.ts中的SubtitleAPIController
+class SubtitleAPIController {
+  private player: any;
+  private captionsModule: string = 'captions';
+  
+  async getAvailableTracks(): Promise<any[]> {
+    const tracks = this.player.getOption(this.captionsModule, 'tracklist');
+    return tracks.map(track => ({
+      languageCode: track.languageCode,  // ISO 639-1代码
+      languageName: track.languageName,
+      kind: track.kind,  // 'asr'表示自动生成
+      isDefault: track.is_default
+    }));
+  }
+  
+  async setSubtitleTrack(langCode: string): Promise<boolean> {
+    this.player.setOption(this.captionsModule, 'track', {
+      languageCode: langCode  // 使用ISO 639-1
+    });
+    return true;
   }
 }
 ```
 
-### 1.3 启动翻译流程
+### 2.2 优化后的缓存检查策略（基于原始字幕复用）
 
-- ContentScript监听`translation:start_requested`事件
-- 转换为标准化的`TRANSLATION_STARTED`事件
-- 包含事件来源、时间戳等元数据
-- 通知其他组件开始翻译流程
+系统实现了优化的缓存架构，核心优势是**原始字幕只需获取一次**：
 
-## 2. 缓存策略与参数配置（集中式Background缓存管理）
+**数据获取优先级**：
+1. **P0: TranslationCacheData完全命中** → 缓存键完全匹配（包含model/temperature），直接返回
+2. **P1: TranslationCacheData部分命中** → 源语言相同但服务参数不同，复用originalSubtitles，仅需翻译
+3. **P2: VideoSourceLanguageData命中** → 有源语言选择记录，需获取字幕并翻译  
+4. **P3: 完全未命中** → 从YouTube API获取所有数据
 
-### 2.1 翻译配置获取（集中式Background缓存管理）
-
-翻译流程基于**集中式Background缓存管理策略**，所有缓存操作统一在Background Script中处理：
-
-```mermaid
-flowchart TD
-    A[ContentScript监听start_requested] --> B[组装翻译参数请求]
-    B --> C[发送消息到Background: getTranslationConfig]
-    C --> D[Background: 检查视频设置缓存]
-    D --> E{视频有SidePanel设置缓存?}
-    E -->|有| F[读取视频特定配置]
-    E -->|无| G[生成默认配置]
-    F --> H[语言冲突检查与处理]
-    G --> H
-    H --> I[Background返回配置到ContentScript]
-```
-
-### 2.2 三层缓存检查策略
-
-系统实现了三层缓存架构，按优先级顺序检查：
-
-**优先级顺序**：
-1. **Local Storage翻译设置参数检查** → 有设置则使用缓存配置，无设置则生成默认配置
-2. **Local Storage翻译结果缓存** → 完全匹配则直接显示 ✨
-3. **Memory Cache字幕轨道** → 使用内存缓存轨道数据 ⚡  
-4. **API调用获取字幕轨道** → 调用YouTube API获取完整字幕轨道数据
-5. **API调用翻译** → 调用翻译API执行翻译流程
+**关键优化**：
+- **原始字幕复用**：TranslationCacheData包含originalSubtitles，切换服务无需重新获取
+- **精确缓存匹配**：缓存键包含service type、model、temperature等所有影响翻译结果的参数
+- **智能降级**：从P0到P3逐级降级，最大化利用已有数据
 
 ```mermaid
 flowchart TD
-    A[翻译使能请求] --> B[C11: 组装翻译参数请求]
-    B --> C[C12: 发送getTranslationConfig到Background]
-    C --> D[Background: 检查Local Storage翻译设置参数]
-    D --> E{C23: 有翻译设置参数?}
+    A[用户点击翻译开关] --> B[获取源语言信息]
+    B --> C{VideoSourceLanguageData存在?}
     
-    E -->|有| F[使用Local Storage的翻译设置参数]
-    E -->|无| G[生成默认翻译设置参数]
+    C -->|是| D[使用缓存的源语言]
+    C -->|否| E[从YouTube API获取]
+    E --> F[保存到VideoSourceLanguageData]
+    F --> D
     
-    F --> H[C24: 检查Local Storage翻译结果缓存]
-    H --> I{翻译结果缓存完全匹配?}
+    D --> G[生成完整缓存键]
+    G --> H{TranslationCacheData<br/>完全匹配?}
     
-    I -->|是| J[C29: 直接显示缓存翻译结果 ✨]
-    I -->|否| K[C27: 翻译local storage未完全匹配]
+    H -->|P0: 是| I[直接返回缓存结果 ✨]
+    H -->|否| J[查找相同源语言缓存]
     
-    %% 🔥 有设置参数时检查Memory Cache
-    K --> L[检查Memory Cache字幕轨道]
-    L --> M{内存缓存有轨道数据?}
-    M -->|有| N[使用内存缓存轨道数据 ⚡]
-    M -->|无| O[C31: 调用API获取字幕轨道]
+    J --> K{找到originalSubtitles?}
+    K -->|P1: 是| L[复用原始字幕]
+    L --> M[仅调用翻译API]
+    K -->|否| N[从YouTube获取原始字幕]
     
-    %% 🔥 无设置参数直接调用API
-    G --> O
+    N --> O[调用翻译API]
+    M --> P[保存完整TranslationCacheData]
+    O --> P
     
-    %% 🔥 关键点：O有两个来源，都需要执行翻译流程
-    N --> P[执行翻译流程]
-    O --> Q[保存轨道到Memory Cache]
-    Q --> R[调用翻译API]
-    R --> P
+    P --> Q[返回翻译结果]
+    I --> Q
+    Q --> R[显示翻译字幕]
     
-    P --> S[保存翻译结果到Local Storage]
-    S --> T[显示翻译字幕]
+    style I fill:#90EE90
+    style L fill:#87CEEB
+    style P fill:#FFE4B5
 ```
 
-### 2.3 字幕轨道获取与处理
+### 2.3 执行流程（Service Worker中的10步骤）
 
-- 获取当前YouTube视频ID
-- 通过`window.postMessage`向主世界脚本发送请求
-- 主世界脚本访问YouTube播放器API获取字幕轨道列表
-- 返回字幕轨道数组(`captionTracks`)给ContentScript
-- **保存轨道到Background内存缓存** - 实现跨组件复用
+完整的翻译执行流程在Service Worker中实现：
+
+```typescript
+// Step 1: 设置PENDING状态
+await runtimeStateManager.setTranslateState(TranslateActiveState.PENDING);
+
+// Step 2: 获取用户偏好设置
+const userPreferences = await userPreferencesManager.getUserPreferences();
+
+// Step 3: 获取字幕数据（优先缓存）
+let subtitleData = await getSubtitleDataWithCache(videoId, sourceLang);
+
+// Step 4: 执行翻译（优先缓存）
+const translatedData = await translateWithCache(subtitleData, params);
+
+// Step 5: 智能源语言选择（新增Player API）
+// Step 5.1: 通过Player API获取轨道
+const apiTracks = await chrome.tabs.sendMessage(tabId, {
+  type: 'getSubtitleTracksAPI'
+});
+
+// Step 5.2: 智能选择源语言
+const sourceLang = selectBestSourceLanguage(
+  apiTracks,
+  userPreferences.targetLang,
+  lastSelectedLanguage
+);
+
+// Step 5.3: 通过API设置字幕语言
+await chrome.tabs.sendMessage(tabId, {
+  type: 'setSubtitleTrackAPI',
+  langCode: sourceLang  // ISO 639-1
+});
+
+// Step 6: 根据结果设置最终状态
+if (success) {
+  await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
+} else {
+  await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
+}
+```
 
 ### 2.4 语言冲突解决策略
 
@@ -194,30 +281,62 @@ flowchart TD
 7. **缓存与复用**  
    - 后台缓存 videoId + 最终 targetLang 和 sourceLang，下次直接使用，无需再次触发降级提示
 
-### 2.5 语言匹配与轨道选择
+### 2.4 统一的源语言选择规则系统
 
-- 从存储中读取用户设置的源语言和目标语言首选项
-- 调用`findBestMatchingTrack`查找最匹配源语言的字幕轨道
-- 同样检查是否有匹配目标语言的轨道
-- 确定是否需要翻译或可以使用原生字幕轨道
-- 其中合理匹配像中文、中文简体、中文繁体等的同一语言种类的变种问题（西班牙语、英语等可以后期考虑完善）
+系统采用统一的源语言选择规则，使用ISO 639-1标准代码：
+
+**规则优先级：**
+1. **用户历史选择** - 优先使用用户上次选择的源语言
+2. **英语优先原则** - 非英语目标时优先选择英语（en）
+3. **手动字幕优先** - kind !== 'asr'的轨道优先
+4. **降级策略** - 选择第一个可用轨道
 
 ```typescript
-// 伪代码示例 - 查找最匹配的轨道
-function findBestMatchingTrack(tracks, langCode) {
-  // 1. 精确匹配
-  let track = tracks.find(t => t.languageCode === langCode);
-  if (track) return track;
+// 实际代码 - service-worker.ts中的源语言选择
+function selectBestSourceLanguage(
+  tracks: Array<{ languageCode: string; kind?: string }>,
+  targetLang: string,
+  lastSelectedLanguage?: string
+): string {
+  // 规则1: 用户历史选择
+  if (lastSelectedLanguage) {
+    const found = tracks.find(t => t.languageCode === lastSelectedLanguage);
+    if (found) return lastSelectedLanguage;
+  }
   
-  // 2. 基础语言匹配
-  const baseLang = langCode.split('-')[0];
-  track = tracks.find(t => t.languageCode === baseLang);
-  if (track) return track;
+  // 准备数据
+  const manualTracks = tracks.filter(t => t.kind !== 'asr');
+  const asrTracks = tracks.filter(t => t.kind === 'asr');
   
-  // 3. 前缀匹配
-  return tracks.find(t => t.languageCode.startsWith(baseLang + '-'));
+  // 规则2+3: 英语优先 + 手动字幕优先
+  if (!targetLang.startsWith('en')) {
+    // 查找英语轨道
+    const englishManual = manualTracks.find(t => 
+      t.languageCode === 'en' || t.languageCode === 'en-US'
+    );
+    if (englishManual) return englishManual.languageCode;
+    
+    const englishAsr = asrTracks.find(t => 
+      t.languageCode === 'en' || t.languageCode === 'en-US'
+    );
+    if (englishAsr) return englishAsr.languageCode;
+  }
+  
+  // 规则3: 手动字幕优先
+  if (manualTracks.length > 0) {
+    return manualTracks[0].languageCode;
+  }
+  
+  // 规则4: 降级到第一个可用轨道
+  return tracks[0]?.languageCode || 'en';
 }
 ```
+
+#### 2.5.2 目标语言匹配
+
+- 检查是否有匹配目标语言的原生轨道
+- 如果有，可以直接使用原生字幕，无需翻译
+- 处理语言变体（如 zh-CN、zh-TW 都视为中文）
 
 ### 2.6 统一缓存消息接口
 
@@ -485,7 +604,13 @@ function handleSubtitleUpdate(currentTime) {
 
 ---
 
-**📋 文档维护**: 2025-05-28  
-**🔄 版本**: v1.1.0-dev  
-**📍 状态**: 翻译流程文档完整  
-**🔄 流程版本**: 基于三层缓存架构的完整翻译流程 
+**📋 文档维护**: 2025-09-02  
+**🔄 版本**: v3.0.0  
+**📍 状态**: 翻译流程文档已更新  
+**🔄 流程版本**: 基于3状态系统和YouTube Player API的完整翻译流程  
+**✨ 主要更新**:  
+- 使用MessageBus替代EventBus
+- 集成YouTube Player API (ISO 639-1)
+- 3状态系统 (INACTIVE/PENDING/ACTIVE)
+- PENDING状态5秒超时机制
+- 智能源语言选择规则 

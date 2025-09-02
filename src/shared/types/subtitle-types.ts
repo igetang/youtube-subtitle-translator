@@ -13,9 +13,34 @@
 import { LanguageCode } from './core-types';
 import type { CaptionTrack } from './youtube-types';
 
-// === 简化字幕轨道格式（用于缓存和存储）===
+// === 字幕轨道元数据（用于长期缓存）===
 
 /**
+ * 字幕轨道元数据 - 只包含稳定信息，不包含会过期的URL
+ * 用于长期缓存和UI显示
+ */
+export interface TrackMetadata {
+  /** 语言代码 */
+  languageCode: string;
+  /** 显示名称（如：德语, 法语, English）*/
+  name: string;
+  /** 轨道类型（可选）*/
+  kind?: 'asr' | 'forced' | undefined;
+}
+
+/**
+ * 带URL的字幕轨道 - 包含临时的baseUrl
+ * 仅在需要获取字幕内容时使用，不存储
+ */
+export interface TrackWithUrl extends TrackMetadata {
+  /** 字幕文件URL（临时，会过期）*/
+  baseUrl: string;
+}
+
+// === 简化字幕轨道格式（已废弃，向后兼容）===
+
+/**
+ * @deprecated 请使用 TrackMetadata 或 TrackWithUrl
  * 简化字幕轨道接口 - 用于内存缓存和本地存储
  * 提取核心信息，减少存储开销
  */
@@ -70,6 +95,38 @@ export interface CaptionTrackResult {
 // === 转换工具函数 ===
 
 /**
+ * 将CaptionTrack转换为TrackMetadata（不含URL）
+ * 用于长期缓存存储
+ * 
+ * @param track 原始字幕轨道
+ * @returns 轨道元数据
+ */
+export function extractTrackMetadata(track: CaptionTrack): TrackMetadata {
+  return {
+    languageCode: track.languageCode,
+    name: track.name.simpleText,
+    kind: track.kind as 'asr' | 'forced' | undefined
+  };
+}
+
+/**
+ * 将CaptionTrack转换为TrackWithUrl（包含URL）
+ * 用于临时使用
+ * 
+ * @param track 原始字幕轨道
+ * @returns 带URL的轨道
+ */
+export function trackToTrackWithUrl(track: CaptionTrack): TrackWithUrl {
+  return {
+    baseUrl: track.baseUrl,
+    languageCode: track.languageCode,
+    name: track.name.simpleText,
+    kind: track.kind as 'asr' | 'forced' | undefined
+  };
+}
+
+/**
+ * @deprecated 请使用 extractTrackMetadata
  * 将CaptionTrack转换为SimplifiedCaptionTrack
  * 用于内存缓存存储时的数据简化
  * 

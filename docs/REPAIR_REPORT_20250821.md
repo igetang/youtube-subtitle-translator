@@ -19,7 +19,7 @@
 - **SidePanel → Popup迁移**: 15处
 - **EventBus → MessageBus迁移**: 4处
 - **action字段 → type字段**: 2处
-- **Boolean translateActive → 4状态枚举**: 1处
+- **Boolean translateActive → 3状态枚举**: 1处
 - **方法名修正**: 2处
 
 ## 🔧 详细修复内容
@@ -74,7 +74,7 @@
 - [x] 所有SidePanel引用已更新为Popup
 - [x] 所有EventBus引用已更新为MessageBus
 - [x] 所有action字段引用已标记为废弃
-- [x] 所有布尔translateActive已更新为4状态枚举
+- [x] 所有布尔translateActive已更新为3状态枚举
 - [x] 所有方法名与新架构保持一致
 
 ### 文档完整性

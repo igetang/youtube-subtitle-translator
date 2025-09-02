@@ -31,7 +31,7 @@ export default defineConfig(({ command, mode }) => {
         outDir: 'dist',
         rollupOptions: {
           input: {
-            'content-script': path.resolve(__dirname, 'src/content-scripts/content-script-new.ts'),
+            'content-script': path.resolve(__dirname, 'src/content-scripts/content-script.ts'),
           },
           output: {
             entryFileNames: '[name].js',

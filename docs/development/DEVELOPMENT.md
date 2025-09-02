@@ -1,7 +1,7 @@
 # YouTube字幕翻译助手 - 开发指南
 
-> **最后更新**: 2025-08-21  
-> **当前版本**: v3.0.0 (**Popup架构版本**)  
+> **最后更新**: 2025-09-02  
+> **当前版本**: v3.0.0  
 > **架构状态**: ✅ **Popup架构已完成** - 从SidePanel迁移到Popup，采用MessageBus通信
 
 本文档提供扩展项目的开发环境设置、工作流程和贡献指南，帮助开发者参与v3.0.0 Popup架构的项目开发。
@@ -9,16 +9,19 @@
 ## 🎯 **v3.0.0 Popup架构开发指导**
 
 ### 核心架构原则
-- **Popup优先**: 使用Popup替代Popup，提供更好的兼容性
-- **MessageBus通信**: 统一的消息总线替代EventBus，简化组件通信
-- **4状态翻译系统**: 精确的翻译状态管理（inactive/pending/active/intent_only）
+- **Popup优先**: 使用Popup替代SidePanel，提供更好的兼容性
+- **MessageBus通信**: 统一的消息总线，已完全替代EventBus
+- **3状态翻译系统**: 简化的翻译状态管理（INACTIVE/PENDING/ACTIVE）
+- **YouTube Player API**: 集成官方API直接控制字幕（ISO 639-1标准）
 - **Chrome官方最佳实践**: 严格遵循 Manifest V3 规范
 
 ### 重要设计决策
-- ✅ **Popup架构**: 从Popup迁移到Popup，提供更稳定的用户体验
+- ✅ **Popup架构**: 从SidePanel迁移到Popup，提供更稳定的用户体验
 - ✅ **MessageBus系统**: 统一消息通信，使用type字段替代action字段
 - ✅ **状态分离**: RuntimeState与UserPreferences分离，清晰的职责划分
 - ✅ **缓存优先策略**: 三层缓存架构，减少API调用
+- ✅ **Player API集成**: 直接控制YouTube字幕，不受界面语言影响
+- ✅ **PENDING超时机制**: 5秒超时保护，防止状态卡死
 
 ## 开发环境设置
 
@@ -161,10 +164,11 @@ npm ls
 - **设计理念**: 使用Popup提供更稳定的用户体验
 
 #### 📦 存储管理统一架构
-- **UserPreferencesManager**: 用户偏好设置管理
-- **RuntimeStateManager**: 运行时状态管理
-- **VideoSourceLanguageCache**: 视频源语言缓存
-- **MemoryCache**: 内存缓存管理
+- **UserPreferencesManager**: 用户偏好设置管理（全局唯一）
+- **RuntimeStateManager**: 运行时状态管理（session存储）
+- **VideoSourceLanguageData**: 视频源语言数据（分散存储，含完整列表）
+- **TranslationCacheData**: 翻译缓存（分散存储，含原始字幕）
+- **MemoryCache**: 内存缓存管理（Service Worker内存）
 - **统一入口**: `src/shared/storage/index.ts`
 
 #### 🔄 MessageBus 通信系统
@@ -332,15 +336,14 @@ interface GlobalSettings {
 #### 2. **RuntimeState** - 运行时状态
 ```typescript
 interface RuntimeState {
-  translateActive: TranslateActiveState;        // 翻译状态（4状态枚举）
+  translateActive: TranslateActiveState;        // 翻译状态（3状态枚举）
   popupOpen: boolean;                           // Popup打开状态
 }
 
 enum TranslateActiveState {
   INACTIVE = 'inactive',      // 翻译关闭
   PENDING = 'pending',         // 翻译执行中（过渡状态）
-  ACTIVE = 'active',           // 翻译激活（有字幕并显示翻译）
-  INTENT_ONLY = 'intent_only'  // 仅有意图（用户想翻译但无字幕）
+  ACTIVE = 'active'            // 翻译激活（有字幕并显示翻译）
 }
 ```
 - **存储位置**: `chrome.storage.local`

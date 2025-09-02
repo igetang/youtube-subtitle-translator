@@ -20,10 +20,10 @@ const prefs = await manager.getAllPreferences();
 ```typescript
 // 存储键：专用键（不使用StorageKeys中的前缀）
 // - 'runtime_state_translateActive'
-// - 'runtime_state_settingPanelOpen'  
+// - 'runtime_state_popupOpen'  
 // - 'runtime_state_version'
 // - 'runtime_state_lastUpdated'
-// 存储区域：chrome.storage.local
+// 存储区域：chrome.storage.session（跨标签页共享）
 // 管理器：RuntimeStateManager
 
 import { RuntimeStateManager } from '@shared/storage';
@@ -31,26 +31,49 @@ const manager = RuntimeStateManager.getInstance();
 const state = await manager.getAllState();
 ```
 
-### 3. VideoSourceLanguageCache - 视频源语言缓存
+### 3. VideoSourceLanguageData - 视频源语言数据
 ```typescript
-// 存储键：StorageKeys.VIDEO_SOURCE_LANGUAGE_CACHE = 'video_source_language_cache'
-// 存储区域：chrome.storage.local
-// 管理器：VideoSourceLanguageCacheManager
+// 存储键：StorageKeys.VIDEO_SOURCE_PREFIX + videoId = 'video_source_' + videoId
+// 存储区域：chrome.storage.local（分散存储）
+// 管理器：VideoSourceLanguageDataManager
+// 包含：完整的源语言列表 + 用户选择记录
 
-import { VideoSourceLanguageCacheManager } from '@shared/storage';
-const manager = VideoSourceLanguageCacheManager.getInstance();
-const sourceLang = await manager.getSourceLanguage(videoId);
+import { VideoSourceLanguageDataManager } from '@shared/storage';
+const manager = VideoSourceLanguageDataManager.getInstance();
+const data = await manager.getVideoSourceData(videoId);
+// data.availableSourceLanguages - 完整列表
+// data.lastSelectedLanguage - 用户选择
 ```
 
-### 4. OriginalSubtitleData - 原字幕数据
+### 4. TranslationCacheData - 翻译缓存
 ```typescript
-// 存储键模板：StorageKeys.SESSION_SUBTITLES_PREFIX + videoId
-// 实际键：'session_subtitles_' + videoId
-// 存储区域：chrome.storage.session
-// 数据类型：OriginalSubtitleData
+// 存储键：'translation_' + videoId + '_' + srcLang + '_' + tgtLang + '_' + serviceType[_model][_temperature]
+// 存储区域：chrome.storage.local（分散存储）
+// 包含：originalSubtitles + translatedSubtitles
 
-const storageKey = `${StorageKeys.SESSION_SUBTITLES_PREFIX}${videoId}`;
-await chrome.storage.session.set({ [storageKey]: subtitleData });
+import { TranslationCacheManager } from '@shared/storage';
+const manager = TranslationCacheManager.getInstance();
+
+// 获取完全匹配的缓存
+const cache = await manager.getTranslation(videoId, srcLang, tgtLang, service);
+
+// 查找可复用的原始字幕（相同源语言）
+const partialCaches = await manager.findByVideoAndSourceLang(videoId, srcLang);
+if (partialCaches.length > 0) {
+  const originalSubtitles = partialCaches[0].originalSubtitles;
+  // 可以复用原始字幕，只需重新翻译
+}
+```
+
+### 5. MemoryCache - 内存缓存（Service Worker）
+```typescript
+// 存储位置：Service Worker内存（非chrome.storage）
+// 数据类型：Map<videoId, OriginalSubtitleData>
+// 用途：临时缓存字幕轨道信息，避免重复API调用
+
+// 在Service Worker中管理
+const memoryCache = new Map();
+memoryCache.set(videoId, subtitleData);
 ```
 
 ## 🗑️ 已弃用的存储键
@@ -70,11 +93,12 @@ await chrome.storage.session.set({ [storageKey]: subtitleData });
 ### 从旧架构迁移
 ```typescript
 // ❌ 旧方式
-const sourceLang = await chrome.storage.local.get('settings.sourceLang');
+const sourceLang = await chrome.storage.local.get('video_source_language_cache');
 
 // ✅ 新方式
-const manager = VideoSourceLanguageCacheManager.getInstance();
-const sourceLang = await manager.getSourceLanguage(videoId);
+const manager = VideoSourceLanguageDataManager.getInstance();
+const data = await manager.getVideoSourceData(videoId);
+const sourceLang = data.lastSelectedLanguage;
 
 // ❌ 旧方式
 const translateActive = await chrome.storage.local.get('settings.translateActive');

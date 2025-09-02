@@ -51,7 +51,8 @@ export class StateManager {
    * @param value 状态值
    */
   async updateState(key: string, value: any): Promise<void> {
-    console.log(`[StateManager] 🔄 更新状态: ${key} = ${value}`);
+    // 注释掉开始日志，避免链路冗余
+    // console.log(`[StateManager] 🔄 更新状态: ${key} = ${value}`);
 
     try {
       // 发送状态更新到background
@@ -67,9 +68,10 @@ export class StateManager {
         // 只做状态变化通知
         this.notifyStateChange(key, value);
         
-        console.log(`[StateManager] ✅ 状态更新成功: ${key}`);
+        // 只在成功时输出一条简洁日志
+        console.log(`[StateManager] ✅ ${key}: ${value}`);
       } else {
-        console.error(`[StateManager] ❌ 状态更新失败: ${key}`, result?.error);
+        console.error(`[StateManager] ✗ ${key}: ${result?.error}`);
       }
     } catch (error) {
       console.error(`[StateManager] ❌ 状态更新出错: ${key}`, error);
@@ -77,27 +79,42 @@ export class StateManager {
   }
 
   /**
-   * 批量更新状态
-   * @param newRuntimeState 新的运行时状态
-   * @param newUserPreferences 新的用户偏好设置
+   * 批量更新运行时状态
+   * @param updates 要更新的状态键值对
    */
-  async updateStates(newRuntimeState?: any, newUserPreferences?: any): Promise<void> {
-    console.log('[StateManager] 🔄 批量更新状态');
+  async updateStates(updates: Record<string, any>): Promise<void> {
+    // 注释掉开始和结束日志，避免前后确认型冗余
+    // console.log('[StateManager] 🔄 批量更新状态');
 
-    if (newRuntimeState) {
-      this.runtimeState = { ...this.runtimeState, ...newRuntimeState };
+    try {
+      // 批量发送状态更新到background
+      for (const [key, value] of Object.entries(updates)) {
+        const result = await chrome.runtime.sendMessage({
+          type: 'setRuntimeState',
+          data: { stateKey: key, value }
+        });
+        
+        if (result && result.success) {
+          this.runtimeState[key] = value;
+        }
+      }
+
+      // 批量通知UI更新 - 一次性传递所有更新
+      if (this.coordinator) {
+        this.coordinator.handleUserAction('stateChange', {
+          updates,  // 传递整个更新对象
+          timestamp: Date.now()
+        });
+      }
+
+      // 只输出关键信息
+      const keys = Object.keys(updates);
+      if (keys.length > 0) {
+        console.log(`[StateManager] ✅ 批量更新: ${keys.join(', ')}`);
+      }
+    } catch (error) {
+      console.error(`[StateManager] ✗ 批量更新失败:`, error);
     }
-    if (newUserPreferences) {
-      this.userPreferences = { ...this.userPreferences, ...newUserPreferences };
-    }
-
-    // 通知协调器状态已批量更新
-    this.notifyStateChange('batch_update', {
-      runtimeState: this.runtimeState,
-      userPreferences: this.userPreferences
-    });
-
-    console.log('[StateManager] ✅ 批量状态更新完成');
   }
 
   /**
@@ -106,7 +123,8 @@ export class StateManager {
    * @param value 偏好值
    */
   async updateUserPreference(key: string, value: any): Promise<void> {
-    console.log(`[StateManager] 🔄 更新用户偏好: ${key} = ${value}`);
+    // 注释掉开始日志，避免链路冗余
+    // console.log(`[StateManager] 🔄 更新用户偏好: ${key} = ${value}`);
 
     try {
       const result = await chrome.runtime.sendMessage({
@@ -117,9 +135,10 @@ export class StateManager {
       if (result && result.success) {
         this.userPreferences[key] = value;
         this.notifyStateChange(key, value);
-        console.log(`[StateManager] ✅ 用户偏好更新成功: ${key}`);
+        // 简化成功日志
+        console.log(`[StateManager] ✅ 偏好设置: ${key}=${value}`);
       } else {
-        console.error(`[StateManager] ❌ 用户偏好更新失败: ${key}`, result?.error);
+        console.error(`[StateManager] ✗ 偏好设置失败: ${key}`, result?.error);
       }
     } catch (error) {
       console.error(`[StateManager] ❌ 用户偏好更新出错: ${key}`, error);
@@ -230,10 +249,10 @@ export class StateManager {
   }
 
   /**
-   * 检查设置面板是否打开
+   * 检查Popup是否打开
    */
-  isSettingPanelOpen(): boolean {
-    return this.runtimeState.settingPanelOpen === true;
+  isPopupOpen(): boolean {
+    return this.runtimeState.popupOpen === true;
   }
 
   /**

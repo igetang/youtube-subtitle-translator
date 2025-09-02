@@ -94,7 +94,7 @@ export type ControlPanelStateChangeHandler = (event: ControlPanelStateChangeEven
  * 管理YouTube页面UI控件的注入和状态
  * 
  * 📝 设计说明：
- * - 与RuntimeState分离：translateActive和settingPanelOpen通过RuntimeStateManager管理
+ * - 与RuntimeState分离：translateActive和popupOpen通过RuntimeStateManager管理
  * - 专注UI控件：控件注入、叠加层创建、错误处理
  * - 状态同步：与RuntimeState保持同步，但不直接依赖
  */
@@ -110,8 +110,8 @@ export interface UIManagerState {
   // === 运行时状态引用（通过RuntimeStateManager获取） ===
   /** 翻译激活状态 - 从RuntimeState同步 */
   translateActive: TranslateActiveState;
-  /** 设置面板打开状态 - 从RuntimeState同步 */
-  settingPanelOpen: boolean;
+  /** Popup打开状态 - 从RuntimeState同步 */
+  popupOpen: boolean;
   
   // === UI特有状态 ===
   /** 最后发生的错误 */
@@ -133,7 +133,7 @@ export const DEFAULT_UI_MANAGER_STATE: UIManagerState = {
   
   // 运行时状态（初始值，实际值从RuntimeState获取）
   translateActive: TranslateActiveState.INACTIVE,
-  settingPanelOpen: false,
+  popupOpen: false,
   
   // UI特有状态
   lastError: null,

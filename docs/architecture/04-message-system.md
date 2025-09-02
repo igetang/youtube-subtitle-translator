@@ -1,111 +1,118 @@
-# VTC 5.24 架构设计文档 - Part 4 (翻译服务架构)
+# VTC 5.24 架构设计文档 - Part 4 (消息系统架构)
 
-> **文档更新**: 2025-07-16  
-> **版本**: v5.24.7+ (**当前统一版本**)  
-> **当前方案**: ✅ **Popup Fallback** (已实施完成)
+> **文档更新**: 2025-09-02  
+> **版本**: v3.0.0  
+> **当前方案**: ✅ **MessageBus统一消息系统** (已实施完成)
 
-## 🚨 **方案变更说明**
+## 🚨 **架构更新说明**
 
-### **✅ 当前采用方案: Popup Fallback**
-- **翻译服务**: 完全适配Popup架构，支持双重界面调用
-- **消息通信**: 简化的翻译请求流程，移除SidePanel专用消息
-- **服务管理**: 统一的翻译服务管理，支持Popup和ContentScript调用
+### **✅ 当前消息系统: MessageBus统一架构**
+- **消息系统**: MessageBus作为唯一的消息通信实现
+- **消息格式**: 使用`type`字段，废弃`action`字段
+- **通信流**: Content Script ↔ Service Worker ↔ Popup
+- **状态同步**: 通过`chrome.storage.session`自动同步
 
-### **❌ 已放弃方案: SidePanel**
+### **❌ 已废弃方案: EventBus**
 
-**放弃原因**:
-1. **兼容性问题**: Chrome 114+限制，排除约30%用户
-2. **权限复杂性**: 需要scripting权限，用户授权困难
-3. **用户体验不一致**: "死按钮"问题，非YouTube页面无响应
-4. **开发维护成本**: 复杂的动态状态管理和Port连接处理
-5. **实际用户反馈**: 用户对动态逻辑感到困惑，偏好一致性体验
+**废弃原因**:
+1. **复杂性问题**: EventBus增加不必要的抽象层
+2. **调试困难**: 事件流不透明，难以跟踪
+3. **内存管理**: 容易造成事件监听器泄漏
+4. **与Chrome原生API不协调**: 需要额外的转换层
 
-**放弃影响**:
-1. **消息类型清理**: 移除`OPEN_SIDEPANEL`等SidePanel专用消息
-2. **通信简化**: 移除SidePanel源类型的消息路由
-3. **服务调用优化**: 统一为Popup和ContentScript的调用方式
-
-> **📚 保留说明**: SidePanel相关翻译服务调用保留作为历史记录和技术参考
+**迁移收益**:
+1. **代码量减少**: 移除EventBus抽象层
+2. **调试更简单**: Chrome DevTools原生支持
+3. **性能提升**: 减少消息序列化/反序列化
+4. **维护性提高**: 遵循Chrome扩展最佳实践
 
 ---
 
-## 第8章 翻译服务架构
+## 第8章 消息系统架构
 
 > **架构依赖**：
 > - **数据结构定义**：见 [第7章 数据结构设计规范](#7-数据结构设计规范)
 > - **缓存策略**：见 [第6章 存储与缓存架构](#6-存储与缓存架构) 
 > - **性能优化**：见 [第10章 性能优化策略](#10-性能优化策略)
 
-### 8.1 翻译服务架构概述
+### 8.1 消息系统架构概述
 
-翻译服务是扩展的核心功能模块，负责将YouTube视频字幕从源语言翻译为目标语言。该模块采用插件化架构，支持多种翻译服务提供商的无缝集成。
+MessageBus是扩展的核心通信模块，负责在Content Script、Service Worker和Popup之间传递消息。该系统基于Chrome原生API，提供简单可靠的消息传递机制。
 
 **架构设计原则**：
-- **服务解耦**: 翻译逻辑与具体服务实现分离
-- **智能调度**: 基于[三层缓存架构](#62-三层缓存架构)的智能调度策略
-- **容错设计**: 多级故障处理和自动恢复机制
-- **性能优化**: 集成[限流管理](#84-限流策略集成)和批处理机制
+- **统一消息格式**: 使用`type`字段作为消息标识
+- **单例模式**: 确保全局唯一的MessageBus实例
+- **Service Worker中心化**: 所有消息通过Service Worker路由
+- **类型安全**: TypeScript类型约束确保消息格式正确
 
-**支持的翻译服务**：
-- **免费服务**: Google Free、Microsoft Free
-- **付费API**: OpenAI、Google Gemini、DeepSeek、通义千问
-- **扩展支持**: 可插件化添加新的翻译服务
+**核心组件**：
+- **MessageBus**: 统一消息总线
+- **MessageHandlers**: 消息处理器集合
+- **MessageType**: 消息类型枚举
+- **Chrome Runtime API**: 底层通信机制
 
-> **📋 类型定义**：翻译服务的完整类型定义请参见 [第7章 7.1.1 UserPreferences](#711-userpreferences---持久化用户偏好设置) 中的 `TranslationServiceComplete` 接口定义。
+### 8.2 MessageBus实现架构
 
-### 8.2 翻译服务注册与发现机制
-
-#### 8.2.1 服务注册架构
+#### 8.2.1 MessageBus核心实现
 
 ```typescript
 /**
- * 翻译服务工厂 - 管理所有翻译服务实例
+ * MessageBus - 统一消息总线
  */
-interface TranslationServiceFactory {
-  /**
-   * 注册新的翻译服务
-   * @param serviceType - 服务类型（必须在TranslationServiceType枚举中定义）
-   * @param serviceImpl - 服务实现类
-   */
-  register(serviceType: string, serviceImpl: TranslationServiceProvider): void;
+export class MessageBus {
+  private static instance: MessageBus | null = null;
+  private initialized = false;
+  private routes = new Map<string, MessageHandler>();
   
   /**
-   * 获取翻译服务实例
-   * @param config - 完整的翻译服务配置（来自UserPreferences）
+   * 获取单例实例
    */
-  getService(config: TranslationServiceComplete): Promise<TranslationServiceProvider>;
+  static getInstance(): MessageBus {
+    if (!MessageBus.instance) {
+      MessageBus.instance = new MessageBus();
+    }
+    return MessageBus.instance;
+  }
   
   /**
-   * 获取所有可用服务列表
+   * 初始化消息系统
    */
-  getAvailableServices(): Array<{ type: string; name: string; requiresApiKey: boolean }>;
+  initialize(): void {
+    if (this.initialized) return;
+    this.setupMessageListener();
+    this.initialized = true;
+    console.log('[MessageBus] ✅ 消息系统初始化完成（单例模式）');
+  }
+  
+  /**
+   * 注册消息路由
+   */
+  registerRoute(type: string, handler: MessageHandler): void {
+    this.routes.set(type, handler);
+  }
+  
+  /**
+   * 发送消息
+   */
+  async sendMessage(message: Message): Promise<any> {
+    return chrome.runtime.sendMessage(message);
+  }
 }
 
 /**
- * 翻译服务提供者接口 - 所有翻译服务必须实现
+ * 消息格式定义
  */
-interface TranslationServiceProvider {
-  /**
-   * 翻译文本数组
-   * @param texts - 待翻译文本数组
-   * @param sourceLang - 源语言代码
-   * @param targetLang - 目标语言代码
-   * @returns 翻译结果数组，与输入数组一一对应
-   */
-  translate(texts: string[], sourceLang: string, targetLang: string): Promise<string[]>;
-  
-  /**
-   * 验证服务配置
-   * @param config - 服务配置
-   * @returns 配置验证结果
-   */
-  validateConfig(config: TranslationServiceComplete): Promise<{ valid: boolean; error?: string }>;
-  
-  /**
-   * 获取服务限制信息
-   */
-  getLimits(): { rpm?: number; tpm?: number; maxBatchSize?: number };
+interface Message {
+  type: string;           // 消息类型（使用type字段，不用action）
+  data?: any;            // 消息数据
+  source?: string;       // 消息来源
+  target?: string;       // 消息目标
 }
+
+/**
+ * 消息处理器类型
+ */
+type MessageHandler = (message: Message, sender: chrome.runtime.MessageSender) => Promise<any> | any;
 ```
 
 #### 8.2.2 服务模板配置
@@ -167,7 +174,7 @@ graph TD
 **关键检查点**：
 - **权限检查**: 验证用户是否有翻译权限
 - **配置验证**: 确保翻译服务配置完整有效  
-- **缓存检查**: 基于[三层缓存架构](#62-三层缓存架构)的智能缓存查询
+- **缓存检查**: 基于[两层缓存架构](#62-两层缓存架构)的智能缓存查询
 - **限流控制**: 集成[第10章性能优化](#10-性能优化策略)的限流策略
 - **错误处理**: 多级故障恢复机制，详见[8.5节](#85-多级错误处理与恢复机制)
 
@@ -274,7 +281,7 @@ interface RateLimitIntegration {
 
 **智能缓存策略**：
 - **多维度缓存键**: 基于videoId、sourceLang、targetLang、service构建精确缓存键
-- **LRU清理策略**: 自动清理最少使用的翻译缓存，详见[第6章缓存架构](#62-三层缓存架构)
+- **LRU清理策略**: 自动清理最少使用的翻译缓存，详见[第6章缓存架构](#62-两层缓存架构)
 - **持久化存储**: 翻译结果持久化到chrome.storage.local，跨会话复用
 - **缓存预热**: 基于用户历史行为预测并预加载可能需要的翻译
 
@@ -462,8 +469,7 @@ enum MessageType {
   TRANSLATION_RESPONSE = 'TRANSLATION_RESPONSE',
   
   // 设置相关
-  OPEN_SIDEPANEL = 'OPEN_SIDEPANEL',  // 📚 已废弃：SidePanel专用消息
-  SETTINGS_UPDATE = 'SETTINGS_UPDATE',
+  SETTINGS_UPDATE = 'SETTINGS_UPDATE',  // 用户设置更新
   
   // 状态同步
   STATE_SYNC = 'STATE_SYNC',
@@ -586,7 +592,7 @@ class BackgroundService {
     // 注册各类消息处理器
     this.messageRouter.register(MessageType.REQUEST_RAW_TRACKS, this.handleRawTracksRequest);
     this.messageRouter.register(MessageType.TRANSLATION_REQUEST, this.handleTranslationRequest);
-    this.messageRouter.register(MessageType.OPEN_SIDEPANEL, this.handleOpenSidePanel);  // 📚 已废弃：SidePanel处理器
+    // Popup直接调用chrome.action.openPopup()，无需消息处理器
     
     // 监听消息
     chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {

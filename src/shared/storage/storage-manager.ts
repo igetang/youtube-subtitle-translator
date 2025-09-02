@@ -275,11 +275,11 @@ export class StorageManager {
    * @returns 包含所有请求键的对象
    */
   public async getBatch(keys: string | string[] | null, area: StorageArea = 'local'): Promise<Record<string, any>> {
-    console.log(`[storage-manager] 准备从 ${area} 区域批量获取存储键:`, keys);
     const storage = this.getStorageArea(area);
     try {
       const result = await storage.get(keys);
-      console.log(`[storage-manager] ✅ 成功从 ${area} 区域获取存储:`, result);
+      // 合并前后确认日志
+      console.log(`[storage-manager] ✅ getBatch ${area}:`, { keys, result });
       return result;
     } catch (error) {
       console.error(`[storage-manager] ❌ 从 ${area} 区域批量获取存储键失败:`, error);
@@ -320,13 +320,11 @@ export class StorageManager {
       area = 'local';
     }
 
-    // 🔥 关键修复：添加session存储的日志记录，确保能追踪到存储过程
-    console.log(`[storage-manager] 准备设置存储键 ${key} 到 ${area} 区域:`, value);
-
     const storage = this.getStorageArea(area);
     try {
       await storage.set({ [key]: value });
-      console.log(`[storage-manager] ✅ 成功设置存储键 ${key} 到 ${area} 区域`);
+      // 合并前后确认为一行
+      console.log(`[storage-manager] ✅ ${key} → ${area}:`, value);
     } catch (error) {
       console.error(`[storage-manager] ❌ 设置存储键 ${key} 到 ${area} 区域失败:`, error);
       

@@ -805,7 +805,7 @@ export class TranslationDispatcher {
    * @throws 如果翻译失败则抛出错误
    */
   public async getTranslation(context: TranslationContext): Promise<ProcessedSubtitleEvent[]> {
-    console.log(`[translation-dispatcher] 开始直接翻译流程: videoId=${context.videoId}, targetLang=${context.targetLang}`);
+    // 简化日志，避免重复输出 - 调用方已经有日志
     
     try {
       // 1. 检查VTT缓存

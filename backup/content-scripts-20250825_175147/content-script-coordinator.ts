@@ -178,6 +178,16 @@ export class ContentScriptCoordinator {
       }
     });
     
+    // 监听来自Service Worker的翻译结果消息
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message.type === 'DISPLAY_TRANSLATION') {
+        console.log('[content-script-coordinator] 收到翻译结果消息');
+        this.displayTranslatedSubtitles(message.data);
+        sendResponse({ success: true });
+        return false;
+      }
+    });
+    
     console.log('[content-script-coordinator] 组件间通信设置完成');
   }
 
@@ -467,7 +477,7 @@ export class ContentScriptCoordinator {
         console.log('[content-script-coordinator] ✓ openPopup: 成功');
         // 直接更新UI状态，无需等待消息通知
         if (this.uiRenderer) {
-          this.uiRenderer.update({ settingPanelOpen: true });
+          this.uiRenderer.update({ popupOpen: true });
           console.log('[content-script-coordinator] UI状态已更新: 打开');
         }
       } else {
@@ -570,8 +580,8 @@ export class ContentScriptCoordinator {
         if (data.runtimeState.translateActive !== undefined) {
           changes.translateActive = data.runtimeState.translateActive;
         }
-        if (data.runtimeState.settingPanelOpen !== undefined) {
-          changes.settingPanelOpen = data.runtimeState.settingPanelOpen;
+        if (data.runtimeState.popupOpen !== undefined) {
+          changes.popupOpen = data.runtimeState.popupOpen;
         }
       }
     }
@@ -607,7 +617,7 @@ export class ContentScriptCoordinator {
             this.lastPopupCloseTime = Date.now();
             console.log(`[content-script-coordinator] 记录popup关闭时间: ${this.lastPopupCloseTime}`);
           }
-          this.uiRenderer.update({ settingPanelOpen: message.isOpen });
+          this.uiRenderer.update({ popupOpen: message.isOpen });
           console.log(`[content-script-coordinator] 按钮状态更新: ${message.isOpen ? '已打开' : '已关闭'} (${message.source})`);
         }
         break;
@@ -615,7 +625,7 @@ export class ContentScriptCoordinator {
       case 'SIDEPANEL_STATE_CHANGED':
         // 🔧 向后兼容：保持对旧消息格式的支持
         if (message.isOpen !== undefined && this.uiRenderer) {
-          this.uiRenderer.update({ settingPanelOpen: message.isOpen });
+          this.uiRenderer.update({ popupOpen: message.isOpen });
           console.log(`[content-script-coordinator] 状态变化 (兼容模式): ${message.isOpen ? '已打开' : '已关闭'}`);
         }
         break;
@@ -639,19 +649,19 @@ export class ContentScriptCoordinator {
       });
       
       if (result && result.success && this.uiRenderer) {
-        this.uiRenderer.update({ settingPanelOpen: result.isOpen });
+        this.uiRenderer.update({ popupOpen: result.isOpen });
         console.log(`[content-script-coordinator] ✓ getPopupState: ${result.isOpen ? '已打开' : '已关闭'}`);
       } else {
         console.warn('[content-script-coordinator] ✗ getPopupState: 使用默认状态');
         if (this.uiRenderer) {
-          this.uiRenderer.update({ settingPanelOpen: false });
+          this.uiRenderer.update({ popupOpen: false });
         }
       }
     } catch (error) {
       console.error('[content-script-coordinator] ✗ initializePopupState:', error);
       // 降级到默认状态
       if (this.uiRenderer) {
-        this.uiRenderer.update({ settingPanelOpen: false });
+        this.uiRenderer.update({ popupOpen: false });
       }
     }
   }

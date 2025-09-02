@@ -3,7 +3,7 @@
  * Responsible for accessing page-level APIs like getPlayerResponse()
  * and communicating back to the content script via postMessage.
  */
-console.log('[Main World] 脚本开始加载');
+// 简化初始化日志
 
 // 字幕拦截器初始化标志
 let subtitleInterceptorInitialized = false;
@@ -97,6 +97,140 @@ const MessageTypesConst: MessageTypesInterface = {
   UI_INJECTION_FAILED: 'ui.injectionFailed'
 };
 
+// YouTube Player API字幕控制器类
+class SubtitleAPIController {
+  private player: any;
+  private captionsModule: string | null = null;
+  
+  constructor() {
+    this.player = document.getElementById('movie_player');
+    this.detectModule();
+  }
+  
+  /**
+   * 检测可用的字幕模块（captions或cc）
+   */
+  private detectModule(): void {
+    if (!this.player) return;
+    
+    try {
+      // 加载字幕模块
+      if (typeof this.player.loadModule === 'function') {
+        this.player.loadModule("captions"); // HTML5播放器
+        this.player.loadModule("cc");       // AS3/Flash播放器
+      }
+      
+      // 检测哪个模块可用
+      if (typeof this.player.getOptions === 'function') {
+        const options = this.player.getOptions();
+        if (options && options.includes('captions')) {
+          this.captionsModule = 'captions';
+          console.log('[SubtitleAPIController] 使用captions模块');
+        } else if (options && options.includes('cc')) {
+          this.captionsModule = 'cc';
+          console.log('[SubtitleAPIController] 使用cc模块');
+        }
+      }
+    } catch (error) {
+      console.error('[SubtitleAPIController] 检测模块失败:', error);
+    }
+  }
+  
+  /**
+   * 获取可用的字幕轨道列表（使用ISO 639-1语言代码）
+   */
+  async getAvailableTracks(): Promise<any[]> {
+    if (!this.player || !this.captionsModule) {
+      console.warn('[SubtitleAPIController] 播放器或模块未就绪');
+      return [];
+    }
+    
+    try {
+      // 获取字幕轨道列表
+      const tracks = this.player.getOption(this.captionsModule, 'tracklist');
+      
+      if (tracks && Array.isArray(tracks)) {
+        console.log(`[SubtitleAPIController] 获取到 ${tracks.length} 个字幕轨道`);
+        // 返回包含ISO 639-1语言代码的轨道信息
+        return tracks.map(track => ({
+          languageCode: track.languageCode,      // ISO 639-1代码 (如: en, fr, de, zh)
+          languageName: track.languageName || track.displayName || '',
+          kind: track.kind || '',
+          isDefault: track.is_default || false,
+          isTranslatable: track.is_translateable || track.is_translatable || false,
+          vssId: track.vss_id || track.vssId || ''
+        }));
+      }
+      
+      return [];
+    } catch (error) {
+      console.error('[SubtitleAPIController] 获取字幕轨道失败:', error);
+      return [];
+    }
+  }
+  
+  /**
+   * 设置字幕语言（使用ISO 639-1语言代码）
+   * @param langCode ISO 639-1语言代码，如: en, fr, de, zh, ja, ko等
+   */
+  async setSubtitleTrack(langCode: string): Promise<boolean> {
+    if (!this.player || !this.captionsModule) {
+      console.error('[SubtitleAPIController] 播放器或模块未就绪');
+      return false;
+    }
+    
+    try {
+      console.log(`[SubtitleAPIController] 尝试切换到语言: ${langCode}`);
+      
+      // 设置字幕轨道（使用ISO 639-1标准）
+      this.player.setOption(this.captionsModule, 'track', {
+        "languageCode": langCode
+      });
+      
+      // 如果使用的是旧模块，也尝试设置
+      if (this.captionsModule === 'captions') {
+        this.player.setOption('cc', 'track', {"languageCode": langCode});
+      } else {
+        this.player.setOption('captions', 'track', {"languageCode": langCode});
+      }
+      
+      // 确保字幕按钮开启
+      const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLButtonElement;
+      if (subtitleBtn && subtitleBtn.getAttribute('aria-pressed') !== 'true') {
+        subtitleBtn.click();
+        console.log('[SubtitleAPIController] 已开启字幕显示');
+      }
+      
+      console.log(`[SubtitleAPIController] ✓ 成功切换到语言: ${langCode}`);
+      return true;
+      
+    } catch (error) {
+      console.error('[SubtitleAPIController] 设置字幕语言失败:', error);
+      return false;
+    }
+  }
+  
+  /**
+   * 获取当前字幕语言
+   */
+  getCurrentTrack(): string | null {
+    if (!this.player || !this.captionsModule) {
+      return null;
+    }
+    
+    try {
+      const currentTrack = this.player.getOption(this.captionsModule, 'track');
+      return currentTrack?.languageCode || null;
+    } catch (error) {
+      console.error('[SubtitleAPIController] 获取当前字幕失败:', error);
+      return null;
+    }
+  }
+}
+
+// 全局字幕API控制器实例
+let subtitleAPIController: SubtitleAPIController | null = null;
+
 // 字幕拦截器类
 class SubtitleInterceptor {
   private static instance: SubtitleInterceptor;
@@ -116,7 +250,7 @@ class SubtitleInterceptor {
       return;
     }
 
-    console.log('[SubtitleInterceptor] 🎯 开始初始化字幕拦截器');
+    // 简化初始化日志
 
     // 劫持fetch
     const originalFetch = window.fetch;
@@ -161,7 +295,7 @@ class SubtitleInterceptor {
   private async processSubtitleResponse(response: Response, url: string): Promise<void> {
     try {
       const text = await response.text();
-      console.log('[SubtitleInterceptor] 正在处理字幕响应，长度:', text.length);
+      // 移除中间步骤日志
       
       // 尝试解析为JSON
       try {
@@ -187,7 +321,7 @@ class SubtitleInterceptor {
 
   private processXHRResponse(responseText: string, url: string): void {
     try {
-      console.log('[SubtitleInterceptor] 正在处理XHR字幕响应，长度:', responseText.length);
+      // 移除中间步骤日志
       
       // 尝试解析为JSON
       try {
@@ -367,10 +501,11 @@ window.addEventListener('message', (event: MessageEvent) => {
   
   // 仅处理来自content-script的消息
   if (data.source === 'content-script') {
+    const { type } = data;  // 解构出type属性，修复未定义错误
     // 🔥 架构重构：移除就绪状态请求处理，不再需要ready消息机制
     
     // 处理字幕捕获请求
-    if (data.type === 'REQUEST_SUBTITLE_CAPTURE') {
+    if (type === 'REQUEST_SUBTITLE_CAPTURE') {
       console.log('[Main World] 收到字幕捕获请求，初始化拦截器...');
       const interceptor = SubtitleInterceptor.getInstance();
       interceptor.initialize();
@@ -378,7 +513,7 @@ window.addEventListener('message', (event: MessageEvent) => {
     }
     
     // 处理轨道请求
-    if (data.type === 'REQUEST_CAPTION_TRACKS') {
+    if (type === 'REQUEST_CAPTION_TRACKS') {
       console.log('[Main World] 收到字幕轨道请求');
       const requestId = data._requestId; // 🔧 新增：获取requestId
       
@@ -389,7 +524,7 @@ window.addEventListener('message', (event: MessageEvent) => {
           const captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
 
           if (captionTracks && captionTracks.length > 0) {
-            console.log(`[Main World] 从API获取到${captionTracks.length}条字幕轨道，保存到memory cache:`, captionTracks);
+            console.log(`[Main World] 从API获取到${captionTracks.length}条字幕轨道:`, captionTracks);
           } else {
             console.log('[Main World] API返回空的字幕轨道数据');
           }
@@ -417,11 +552,84 @@ window.addEventListener('message', (event: MessageEvent) => {
         console.error('[Main World] 访问getPlayerResponse时出错:', error);
         window.postMessage({
           source: 'main-world',
-          type: 'CAPTION_TRACKS_RESPONSE',
+            type: 'CAPTION_TRACKS_RESPONSE',
           error: error instanceof Error ? error.message : '未知错误',
           _requestId: requestId  // 🔧 新增：异常时也携带requestId
         }, '*');
       }
+    }
+    
+    // 方法1（REQUEST_SUBTITLE_DATA）已被移除
+    // 原因：主动API调用方式频繁失败，已完全迁移到方法2（字幕拦截器）
+    // 详见：/docs/guides/decision-log.md #23
+    
+    // 处理Player API字幕控制消息
+    if (type === 'GET_SUBTITLE_TRACKS_API') {
+      const requestId = data._requestId;
+      console.log('[Main World] 收到获取字幕轨道API请求');
+      
+      // 初始化API控制器（如果还没有）
+      if (!subtitleAPIController) {
+        subtitleAPIController = new SubtitleAPIController();
+      }
+      
+      // 获取可用轨道
+      subtitleAPIController.getAvailableTracks().then(tracks => {
+        window.postMessage({
+          source: 'main-world',
+          type: 'SUBTITLE_TRACKS_API_RESPONSE',
+          payload: {
+            tracks: tracks,
+            success: true
+          },
+          _requestId: requestId
+        }, '*');
+      }).catch(error => {
+        window.postMessage({
+          source: 'main-world',
+          type: 'SUBTITLE_TRACKS_API_RESPONSE',
+          payload: {
+            success: false,
+            error: error.message
+          },
+          _requestId: requestId
+        }, '*');
+      });
+    }
+    
+    // 处理设置字幕语言消息
+    if (type === 'SET_SUBTITLE_TRACK_API') {
+      const { langCode } = data;
+      const requestId = data._requestId;
+      console.log(`[Main World] 收到设置字幕语言API请求: ${langCode}`);
+      
+      // 初始化API控制器（如果还没有）
+      if (!subtitleAPIController) {
+        subtitleAPIController = new SubtitleAPIController();
+      }
+      
+      // 设置字幕语言（使用ISO 639-1标准）
+      subtitleAPIController.setSubtitleTrack(langCode).then(success => {
+        window.postMessage({
+          source: 'main-world',
+          type: 'SET_SUBTITLE_TRACK_API_RESPONSE',
+          payload: {
+            success: success,
+            langCode: langCode
+          },
+          _requestId: requestId
+        }, '*');
+      }).catch(error => {
+        window.postMessage({
+          source: 'main-world',
+          type: 'SET_SUBTITLE_TRACK_API_RESPONSE',
+          payload: {
+            success: false,
+            error: error.message
+          },
+          _requestId: requestId
+        }, '*');
+      });
     }
   }
 });
@@ -431,4 +639,7 @@ window.addEventListener('load', () => {
   console.log('[Main World] 页面加载完成');
 });
 
-// 🔥 架构重构：彻底移除就绪消息机制 
+// 🔥 架构重构：彻底移除就绪消息机制
+
+// 导出空对象以满足TypeScript的isolatedModules要求
+export {}; 

@@ -10,7 +10,12 @@
       "Bash(mv:*)",
       "Bash(find:*)",
       "Bash(mkdir:*)",
-      "Bash(rmdir:*)"
+      "Bash(rmdir:*)",
+      "Read(//mnt/e/picture/**)",
+      "Read(//mnt/e/picture/**)",
+      "Read(//mnt/e/picture/**)",
+      "Read(//mnt/e/picture/**)",
+      "WebSearch"
     ],
     "deny": []
   }

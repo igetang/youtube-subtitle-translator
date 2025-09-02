@@ -31,6 +31,10 @@ const storageManager = StorageManager.getInstance();
 const translationCacheManager = TranslationCacheManager.getInstance();
 const videoSourceLanguageCacheManager = VideoSourceLanguageCacheManager.getInstance();
 
+// === PENDING 状态超时管理 ===
+const PENDING_TIMEOUT = 5000; // 5秒超时
+const pendingTimeouts = new Map<string, NodeJS.Timeout>(); // key: tabId_videoId，管理各个标签页的超时定时器
+
 // === 站点特定 SidePanel 功能 ===
 
 /**
@@ -639,6 +643,15 @@ async function routeMessage(
     
     // === 字幕数据处理 ===
     case 'SUBTITLE_DATA':
+      // 清除 PENDING 超时定时器
+      const timeoutKey = `${sender.tab?.id}_${data.videoId}`;
+      const timeoutId = pendingTimeouts.get(timeoutKey);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        pendingTimeouts.delete(timeoutKey);
+        console.log('[service-worker] 已清除PENDING超时定时器');
+      }
+      
       // 处理字幕数据并检查是否需要继续翻译流程
       const subtitleResult = await handleSubtitleData(data);
       
@@ -2054,6 +2067,15 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     
     // 更新运行时状态
     if (!newState) {
+      // 清除可能存在的超时定时器
+      const timeoutKey = `${sender.tab?.id}_${videoId}`;
+      const timeoutId = pendingTimeouts.get(timeoutKey);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        pendingTimeouts.delete(timeoutKey);
+        console.log('[service-worker] 关闭翻译时清除了PENDING超时定时器');
+      }
+      
       // 关闭翻译 - 直接设置为INACTIVE（不经过PENDING）
       await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
       return { 
@@ -2175,20 +2197,28 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
         preferences
       );
       
-      // 保存到缓存
-      await cacheManager.set({
-        videoId,
-        sourceLang,
-        targetLang: preferences.targetLang,
-        translationService: preferences.translationService,
-        originalSubtitles,
-        translatedSubtitles: translatedResult.translatedSubtitles,
-        createdAt: Date.now(),
-        lastUsed: Date.now(),
-        dataHash: ''
+      // 先设置状态并返回结果给用户（优先响应）
+      await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
+      
+      // 异步保存到缓存（不阻塞用户）
+      Promise.resolve().then(async () => {
+        try {
+          await cacheManager.set({
+            videoId,
+            sourceLang,
+            targetLang: preferences.targetLang,
+            translationService: preferences.translationService,
+            originalSubtitles,
+            translatedSubtitles: translatedResult.translatedSubtitles,
+            lastUsed: Date.now(),
+            dataHash: ''
+          });
+          console.log('[service-worker] ✓ 翻译结果已异步缓存');
+        } catch (err) {
+          console.error('[service-worker] 异步缓存保存失败:', err);
+        }
       });
       
-      await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
       return {
         success: true,
         action: 'translated',
@@ -2205,25 +2235,144 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
       await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
       return {
         success: false,
+        action: 'error',
         error: '无法获取标签页信息'
       };
     }
     
+    const tabId = sender.tab.id;
+    const timeoutKey = `${tabId}_${videoId}`;
+    
     try {
-      // 直接使用方法2：触发字幕拦截器
-      // 方法1（GET_SUBTITLE_DATA）已被移除，详见：/docs/guides/decision-log.md #23
-      console.log('[service-worker] 触发字幕拦截器');
+      // Step 5.1: 获取轨道信息（如果需要）
+      let needFetchTracks = sourceLang === 'auto' || !sourceData;
+      if (needFetchTracks) {
+        console.log('[service-worker] Step 5.1: 获取轨道信息');
+        
+        try {
+          // 优先尝试使用Player API获取轨道（更可靠，返回ISO 639-1标准代码）
+          let trackResponse = null;
+          
+          // 先尝试Player API方式
+          try {
+            const apiResponse = await chrome.tabs.sendMessage(tabId, {
+              type: 'getSubtitleTracksAPI'
+            });
+            
+            if (apiResponse && apiResponse.success && apiResponse.tracks) {
+              console.log(`[service-worker] ✓ 通过Player API获取到${apiResponse.tracks.length}条轨道`);
+              trackResponse = {
+                success: true,
+                tracks: apiResponse.tracks
+              };
+            }
+          } catch (apiErr) {
+            console.log('[service-worker] Player API不可用，尝试原方式');
+          }
+          
+          // 如果API方式失败，回退到原方式
+          if (!trackResponse) {
+            trackResponse = await chrome.tabs.sendMessage(tabId, {
+              type: 'getVideoTrackData',
+              videoId: videoId
+            });
+          }
+          
+          if (trackResponse && trackResponse.success && trackResponse.tracks) {
+            console.log(`[service-worker] 获取到${trackResponse.tracks.length}条轨道信息`);
+            
+            // Step 5.2: 选择最佳源语言
+            if (sourceLang === 'auto') {
+              sourceLang = selectBestSourceLanguage(
+                trackResponse.tracks,
+                preferences.targetLang,
+                sourceData?.lastSelectedLanguage
+              );
+              console.log('[service-worker] Step 5.2: 选择源语言:', sourceLang);
+            }
+            
+            // Step 5.3: 通过Player API设置字幕语言（使用ISO 639-1标准）
+            if (sourceLang && sourceLang !== 'auto') {
+              try {
+                console.log(`[service-worker] Step 5.3: 通过API设置字幕语言: ${sourceLang}`);
+                const setResult = await chrome.tabs.sendMessage(tabId, {
+                  type: 'setSubtitleTrackAPI',
+                  langCode: sourceLang  // 使用ISO 639-1语言代码
+                });
+                
+                if (setResult && setResult.success) {
+                  console.log(`[service-worker] ✓ 成功通过API切换到语言: ${sourceLang}`);
+                } else {
+                  console.warn('[service-worker] API设置字幕语言失败，将依赖拦截器');
+                }
+              } catch (apiError) {
+                console.warn('[service-worker] API调用失败，回退到拦截器方案:', apiError);
+              }
+            }
+            
+            // Step 5.4: 异步缓存轨道元数据（不阻塞流程）
+            if (!sourceData) {
+              Promise.resolve().then(async () => {
+                try {
+                  const trackMetadata = trackResponse.tracks.map((track: any) => ({
+                    languageCode: track.languageCode,
+                    name: track.name,
+                    kind: track.kind
+                    // 不保存 baseUrl（6小时过期）
+                  }));
+                  
+                  await videoSourceLanguageCacheManager.set(videoId, {
+                    videoId: videoId,
+                    availableSourceLanguages: trackMetadata,
+                    lastSelectedLanguage: sourceLang,
+                    lastUpdated: Date.now()
+                  });
+                  
+                  console.log('[service-worker] ✓ 轨道元数据已异步缓存');
+                } catch (err) {
+                  console.error('[service-worker] 轨道缓存失败:', err);
+                }
+              });
+            }
+          }
+        } catch (error) {
+          console.warn('[service-worker] 获取轨道信息失败，继续使用拦截器:', error);
+        }
+      }
       
-      // 触发字幕拦截器
-      await chrome.tabs.sendMessage(sender.tab.id, {
+      // Step 5.4: 设置 PENDING 超时定时器（5秒）
+      const timeoutId = setTimeout(async () => {
+        console.warn(`[service-worker] PENDING超时（5秒）: ${timeoutKey}`);
+        
+        const currentState = await runtimeStateManager.getTranslateState();
+        if (currentState === TranslateActiveState.PENDING) {
+          await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
+          
+          // 通知用户
+          chrome.tabs.sendMessage(tabId, {
+            type: 'SHOW_ERROR_MESSAGE',
+            data: '字幕获取超时，请重试'
+          }).catch(() => {});
+        }
+        
+        pendingTimeouts.delete(timeoutKey);
+      }, PENDING_TIMEOUT);
+      
+      pendingTimeouts.set(timeoutKey, timeoutId);
+      
+      // Step 5.5: 触发字幕拦截器
+      console.log('[service-worker] Step 5.5: 触发字幕拦截器');
+      await chrome.tabs.sendMessage(tabId, {
         type: 'REQUEST_SUBTITLE_CAPTURE',
-        data: { videoId }
+        data: { 
+          videoId,
+          sourceLang // 传递选定的源语言
+        }
       }).catch(error => {
         console.log('[service-worker] 触发字幕拦截器失败:', error);
       });
       
-      // 保持PENDING状态，等待字幕数据
-      // PENDING状态已在前面设置（第2067行）
+      // 返回 needFetch 状态
       return {
         success: true,
         action: 'needFetch',
@@ -2231,14 +2380,19 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
         config: preferences
       };
       
-      // 注意：实际字幕数据将通过拦截器异步获取
-      // 后续处理流程在handleSubtitleCaptured中完成
-      
     } catch (error) {
-      console.error('[service-worker] 触发字幕拦截器失败:', error);
+      // 清理定时器
+      const timeoutId = pendingTimeouts.get(timeoutKey);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        pendingTimeouts.delete(timeoutKey);
+      }
+      
+      console.error('[service-worker] Step 5 失败:', error);
       await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
       return {
         success: false,
+        action: 'error',
         error: '无法触发字幕加载'
       };
     }
@@ -2260,7 +2414,7 @@ async function continueTranslationWithSubtitles(data: any): Promise<any> {
   try {
     console.log('[service-worker] 继续翻译流程，处理字幕数据');
     
-    const { videoId, subtitles } = data;
+    const { videoId, subtitles, sourceLang: passedSourceLang } = data;
     
     if (!videoId || !subtitles || subtitles.length === 0) {
       console.error('[service-worker] 字幕数据无效或无字幕');
@@ -2301,15 +2455,25 @@ async function continueTranslationWithSubtitles(data: any): Promise<any> {
     // 获取或推断源语言
     const videoSourceManager = VideoSourceLanguageCacheManager.getInstance();
     const sourceData = await videoSourceManager.get(videoId);
-    let sourceLang = sourceData?.lastSelectedLanguage || 'auto';
     
-    // 如果源语言是auto，尝试从字幕中检测
+    // 优先使用传递的源语言，其次缓存，最后默认值
+    let sourceLang = passedSourceLang || sourceData?.lastSelectedLanguage || 'auto';
+    
+    // 记录源语言的来源
+    if (passedSourceLang) {
+      console.log(`[service-worker] 使用传递的源语言: ${passedSourceLang}`);
+    } else if (sourceData?.lastSelectedLanguage) {
+      console.log(`[service-worker] 使用缓存的源语言: ${sourceData.lastSelectedLanguage}`);
+    }
+    
+    // 如果源语言还是auto，尝试从可用语言列表中选择
     if (sourceLang === 'auto' && sourceData?.availableSourceLanguages?.length > 0) {
       sourceLang = selectBestSourceLanguage(
         sourceData.availableSourceLanguages,
         preferences.targetLang,
         sourceData.lastSelectedLanguage
       );
+      console.log(`[service-worker] 智能选择源语言: ${sourceLang}`);
     }
     
     console.log('[service-worker] 开始翻译字幕:', {
@@ -2317,6 +2481,13 @@ async function continueTranslationWithSubtitles(data: any): Promise<any> {
       sourceLang,
       targetLang: preferences.targetLang,
       subtitleCount: subtitles.length
+    });
+    
+    // 调试：打印完整的preferences
+    console.log('[DEBUG] preferences内容:', {
+      targetLang: preferences.targetLang,
+      translationService: preferences.translationService,
+      subtitleMode: preferences.subtitleMode
     });
     
     // 执行翻译
@@ -2379,11 +2550,26 @@ async function continueTranslationWithSubtitles(data: any): Promise<any> {
  */
 async function executeTranslation(subtitleData: SubtitleData, preferences: UserPreferences): Promise<any> {
   try {
+    console.log('[DEBUG] executeTranslation开始，接收参数:', {
+      subtitleData: {
+        videoId: subtitleData.videoId,
+        subtitleCount: subtitleData.subtitles?.length,
+        url: subtitleData.url
+      },
+      preferences: {
+        targetLang: preferences.targetLang,
+        translationService: preferences.translationService,
+        subtitleMode: preferences.subtitleMode
+      }
+    });
+    
     const { subtitles, videoId, url } = subtitleData;
     const { targetLang, translationService, subtitleMode } = preferences;
     
     // 从字幕数据中检测源语言（默认为英语）
     const sourceLang = detectSourceLanguage(subtitles) || 'en';
+    
+    console.log('[DEBUG] detectSourceLanguage返回:', sourceLang);
     
     console.log('[service-worker] 执行翻译:', {
       subtitleCount: subtitles.length,
@@ -2405,6 +2591,13 @@ async function executeTranslation(subtitleData: SubtitleData, preferences: UserP
       console.log(`[service-worker] 翻译批次 ${Math.floor(i/batchSize) + 1}/${Math.ceil(textsToTranslate.length/batchSize)}`);
       
       // 调用翻译API
+      console.log('[DEBUG] 调用translateBatch前的参数:', {
+        batchSize: batch.length,
+        sourceLang: sourceLang || 'auto',
+        targetLang: targetLang,
+        serviceType: translationService.type || translationService
+      });
+      
       const translatedBatch = await translateBatch(
         batch,
         sourceLang || 'auto',
@@ -2457,31 +2650,39 @@ async function executeTranslation(subtitleData: SubtitleData, preferences: UserP
  * 检测字幕的源语言
  */
 function detectSourceLanguage(subtitles: any[]): string {
+  console.log('[DEBUG] detectSourceLanguage开始检测，字幕数量:', subtitles?.length);
+  
   // 简单的语言检测逻辑
   // 可以根据字幕文本的字符特征判断语言
   if (!subtitles || subtitles.length === 0) {
+    console.log('[DEBUG] 无字幕，返回默认语言: en');
     return 'en'; // 默认英语
   }
   
   // 取前几条字幕进行检测
   const sampleTexts = subtitles.slice(0, 5).map(s => s.text).join(' ');
+  console.log('[DEBUG] 用于检测的样本文本:', sampleTexts.substring(0, 100));
   
   // 检测是否包含中文字符
   if (/[\u4e00-\u9fa5]/.test(sampleTexts)) {
+    console.log('[DEBUG] 检测到中文字符，返回: zh');
     return 'zh';
   }
   
   // 检测是否包含日文字符
   if (/[\u3040-\u309f\u30a0-\u30ff]/.test(sampleTexts)) {
+    console.log('[DEBUG] 检测到日文字符，返回: ja');
     return 'ja';
   }
   
   // 检测是否包含韩文字符
   if (/[\uac00-\ud7af]/.test(sampleTexts)) {
+    console.log('[DEBUG] 检测到韩文字符，返回: ko');
     return 'ko';
   }
   
   // 默认返回英语
+  console.log('[DEBUG] 未检测到特殊字符，默认返回: en');
   return 'en';
 }
 
@@ -2494,6 +2695,14 @@ async function translateBatch(
   targetLang: string,
   service: any
 ): Promise<string[]> {
+  console.log('[DEBUG] translateBatch接收参数:', {
+    textsCount: texts.length,
+    sourceLang: sourceLang,
+    targetLang: targetLang,
+    service: service,
+    serviceType: service.type || service
+  });
+  
   try {
     // 根据翻译服务类型调用不同的API
     const serviceType = service.type || service;
@@ -2534,6 +2743,13 @@ async function translateWithGoogle(
   sourceLang: string, 
   targetLang: string
 ): Promise<string[]> {
+  console.log('[DEBUG] translateWithGoogle接收参数:', {
+    textsCount: texts.length,
+    sourceLang: sourceLang,
+    targetLang: targetLang,
+    firstText: texts[0]?.substring(0, 50) // 打印第一条文本的前50个字符
+  });
+  
   try {
     // 使用Google Translate免费API
     const apiUrl = 'https://translate.googleapis.com/translate_a/single';
@@ -2548,6 +2764,13 @@ async function translateWithGoogle(
       tl: targetLang,
       dt: 't',
       q: combinedText
+    });
+    
+    console.log('[DEBUG] Google API请求参数:', {
+      sl: params.get('sl'),
+      tl: params.get('tl'),
+      textLength: combinedText.length,
+      url: `${apiUrl}?${params.toString().substring(0, 100)}...` // 打印部分URL
     });
     
     const response = await fetch(`${apiUrl}?${params}`, {

@@ -18,6 +18,14 @@ console.log('[content-script-new] 🚀 新架构Content Script开始初始化...
 let coordinator: ContentScriptCoordinator | null = null;
 
 /**
+ * 获取当前视频ID
+ */
+function getVideoId(): string | null {
+  const urlParams = new URLSearchParams(window.location.search);
+  return urlParams.get('v');
+}
+
+/**
  * 统一初始化入口 - 简化版本，直接创建和初始化
  * 🔥 架构重构：移除等待机制，实现立即初始化
  */
@@ -174,6 +182,81 @@ function setupMessageHandlers(): void {
       return true; // 异步响应
     }
     
+    // 🔧 处理GET_SUBTITLE_DATA消息
+    if (messageType === 'GET_SUBTITLE_DATA') {
+      console.log('[content-script-new] 处理GET_SUBTITLE_DATA请求:', message.data);
+      
+      const { videoId, sourceLang } = message.data || {};
+      const requestId = `subtitle_${Date.now()}`;
+      
+      // 创建Promise来管理异步响应
+      const handleRequest = new Promise((resolve) => {
+        let responded = false;
+        
+        // 等待主世界脚本返回数据
+        const handleSubtitleResponse = (event: MessageEvent) => {
+          if (event.data && event.data.source === 'main-world' && 
+              event.data.type === 'SUBTITLE_DATA_RESPONSE' &&
+              event.data._requestId === requestId) {
+            window.removeEventListener('message', handleSubtitleResponse);
+            
+            if (!responded) {
+              responded = true;
+              console.log('[content-script-new] 收到字幕数据响应');
+              
+              // 返回字幕数据
+              if (event.data.error) {
+                resolve({
+                  success: false,
+                  error: event.data.error
+                });
+              } else {
+                resolve({
+                  success: true,
+                  data: {
+                    subtitles: event.data.subtitles || [],
+                    tracks: event.data.tracks || [],
+                    detectedLanguage: event.data.detectedLanguage,
+                    url: event.data.url,
+                    videoId: event.data.videoId
+                  }
+                });
+              }
+            }
+          }
+        };
+        
+        window.addEventListener('message', handleSubtitleResponse);
+        
+        // 向主世界脚本请求字幕数据
+        console.log('[content-script-new] 向main-world发送字幕请求，requestId:', requestId);
+        window.postMessage({
+          source: 'content-script',
+          type: 'REQUEST_SUBTITLE_DATA',
+          videoId: videoId || getVideoId(),
+          sourceLang: sourceLang,
+          _requestId: requestId
+        }, '*');
+        
+        // 设置超时（4秒）
+        setTimeout(() => {
+          window.removeEventListener('message', handleSubtitleResponse);
+          if (!responded) {
+            responded = true;
+            console.warn('[content-script-new] 字幕请求超时，requestId:', requestId);
+            resolve({
+              success: false,
+              error: '获取字幕超时（4秒）'
+            });
+          }
+        }, 4000);
+      });
+      
+      // 异步发送响应
+      handleRequest.then(sendResponse);
+      return true; // 保持消息通道开放
+    }
+    
     // 其他消息转发给协调器处理
     if (coordinator && coordinator.isInitialized()) {
       coordinator.handleUserAction('chromeMessage', {
@@ -184,7 +267,8 @@ function setupMessageHandlers(): void {
       });
     }
     
-    return true; // 保持消息通道开放
+    // 返回false，让其他监听器有机会处理消息
+    return false;
   });
 
   console.log('[content-script-new] 消息处理器设置完成');

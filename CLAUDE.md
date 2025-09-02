@@ -11,18 +11,18 @@
 - **目标：** 为YouTube视频提供实时字幕翻译功能，支持多种翻译服务
 - **用户价值：** 帮助用户跨语言观看YouTube视频，提升学习和娱乐体验
 - **架构：** Chrome Extension Manifest V3 + TypeScript
-- **截图保存路径：** E:\picture\
+# - **调试截图保存路径：** E:\picture\  # macOS可以通过对话框发送图片，无需固定路径
 
 ### 核心功能
 1. **实时字幕翻译** - 捕获YouTube字幕并实时翻译
 2. **多翻译服务支持** - 支持OpenAI、Google翻译等
-3. **智能缓存** - 三层缓存架构，提升性能
+3. **智能缓存** - 两层缓存架构，提升性能
 4. **状态管理** - 分离运行时状态和用户偏好设置
 
 ## 项目目录结构
 
 ```
-/mnt/e/chrome/8.19/
+/Users/lizhe/vtc/8.19/
 ├── src/                        # 【新架构代码】主要开发目录
 │   ├── background/             # Service Worker（原Background Script）
 │   │   ├── service-worker.ts  # 核心后台服务，消息处理中心
@@ -104,52 +104,71 @@
 
 ### 核心模块
 
-#### 1. 翻译系统（4状态机制）
+#### 1. 翻译系统（3状态机制）
 ```typescript
 enum TranslateActiveState {
   INACTIVE = 'inactive',      // 翻译关闭
-  PENDING = 'pending',         // 翻译执行中（过渡状态）
-  ACTIVE = 'active',           // 翻译激活（有字幕并显示翻译）
-  INTENT_ONLY = 'intent_only'  // 仅有意图（用户想翻译但无字幕）
+  PENDING = 'pending',         // 翻译执行中（过渡状态，5秒超时保护）
+  ACTIVE = 'active'            // 翻译激活（有字幕并显示翻译）
 }
 ```
 
-#### 2. 缓存系统（三层架构）
-- **内存缓存** - 最快，容量有限
+**PENDING状态超时机制：**
+- 设置5秒超时保护，防止状态卡死
+- 超时后自动回退到INACTIVE状态
+- 确保系统始终可恢复
+
+#### 2. 缓存系统（两层架构）
 - **本地存储** - 持久化，容量较大
 - **API缓存** - 减少重复API调用
 
-#### 3. 状态管理（分离设计）
-- **RuntimeState** - 运行时状态（临时、标签页级别）
-  - translateActive（翻译状态）
-  - settingPanelOpen（面板状态）
-- **UserPreferences** - 用户偏好（持久化、全局共享）
+#### 3. 状态管理（三层分离设计）
+- **RuntimeState** - 运行时状态（session存储、跨标签页共享）
+  - translateActive（3状态翻译系统）
+  - popupOpen（Popup开关状态）
+- **UserPreferences** - 用户偏好（local存储、持久化）
   - targetLang（目标语言）
-  - translationService（翻译服务配置）
+  - subtitleMode（字幕显示模式）
+  - translationService（翻译服务完整配置）
+- **VideoSourceLanguageData** - 视频源语言数据（local存储、按视频分散）
+  - availableSourceLanguages（可用源语言列表）
+  - lastSelectedLanguage（用户选择记录）
+- **TranslationCacheData** - 翻译缓存（local存储、按翻译分散）
+  - originalSubtitles（原始字幕）
+  - translatedSubtitles（翻译结果）
 
 #### 4. 消息通信
-- **MessageBus** - 统一消息总线
+- **MessageBus** - 统一消息总线（已完全替代EventBus）
 - **消息格式** - 使用 `type` 字段，废弃 `action`
 - **通信流** - Content Script ↔ Service Worker ↔ Popup
+
+#### 5. YouTube Player API集成
+- **SubtitleAPIController** - 直接控制YouTube字幕
+- **ISO 639-1标准** - 使用国际标准语言代码（en, fr, de, zh等）
+- **API方法**：
+  - `getAvailableTracks()` - 获取可用字幕轨道
+  - `setSubtitleTrack(langCode)` - 设置字幕语言
+  - `getCurrentTrack()` - 获取当前字幕语言
+- **智能降级** - API失败时自动回退到拦截器方案
 
 ## 架构决策记录
 
 ### 关键技术决策
 
-1. **为什么选择4状态系统？**
-   - 精确表达翻译的不同阶段
-   - 区分"无字幕"和"翻译中"状态
-   - 提供更好的用户反馈
+1. **为什么选择3状态系统？**
+   - 简化状态管理复杂度
+   - 通过消息处理错误情况
+   - 提供更清晰的用户体验
 
 2. **为什么使用缓存优先策略？**
    - 减少API调用，降低成本
    - 提升响应速度，改善用户体验
    - 支持离线查看已翻译内容
 
-3. **为什么分离RuntimeState和UserPreferences？**
-   - RuntimeState：标签页级别，不持久化
-   - UserPreferences：全局共享，持久化存储
-   - 避免状态混淆，提升代码可维护性
+3. **为什么采用三层存储架构？**
+   - RuntimeState：会话级别，跨标签页共享
+   - UserPreferences：全局设置，持久化存储
+   - VideoSourceLanguageData + TranslationCacheData：按视频分散存储，优化性能
 
 4. **为什么选择Popup方案？**
    - 兼容性最好，所有Chrome版本支持
@@ -159,7 +178,7 @@ enum TranslateActiveState {
 ## 开发进度
 
 ### ✅ 已完成
-- [x] 4状态翻译系统实现
+- [x] 3状态翻译系统实现
 - [x] 缓存优先的翻译流程
 - [x] MessageBus统一消息系统
 - [x] Popup作为设置界面
@@ -188,6 +207,12 @@ enum TranslateActiveState {
 - 减少 service worker 中的冗余消息调用
 - 修复日志重复打印问题
 - 优化tabs.onUpdated避免重复执行
+- 实现统一的源语言选择规则系统
+- 修复异步响应错误问题
+- **移除baseUrl存储**：不再缓存会过期的YouTube字幕URL，改为实时获取
+- **集成YouTube Player API**：使用官方API直接控制字幕，支持ISO 639-1标准
+- **实现PENDING超时机制**：5秒超时保护，确保状态不会卡死
+- **修复`type is not defined`错误**：解决main-world.ts中的变量解构问题
 
 ## 代码规范
 
@@ -257,6 +282,64 @@ console.log(`[translation-cache-manager] 缓存命中: 42条字幕`);
 - **敏感信息：** 不记录API密钥、用户隐私数据等敏感信息
 - **性能优化：** 对于可能重复触发的事件（如tabs.onUpdated），添加适当的条件判断避免重复执行
 
+### 日志优化规范（2025.08更新）
+
+#### 1. 避免前后确认型冗余
+```javascript
+// ❌ 不好的做法
+console.log(`[storage-manager] 准备设置存储键 ${key} 到 ${area} 区域:`, value);
+await storage.set({ [key]: value });
+console.log(`[storage-manager] ✅ 成功设置存储键 ${key} 到 ${area} 区域`);
+
+// ✅ 推荐做法 - 只在操作完成后输出一条
+await storage.set({ [key]: value });
+console.log(`[storage-manager] ✅ ${key} → ${area}:`, value);
+```
+
+#### 2. 避免操作链路型冗余
+```javascript
+// ❌ 不好的做法 - 每个环节都打印
+await runtimeStateManager.setPopupState(true);  // 内部打印: 状态变更日志
+console.log('[service-worker] ✓ popupOpened: 状态已更新');
+console.log('[service-worker] ✓ Popup已打开');
+return { success: true, status: 'opened' };  // 外部再打印响应
+
+// ✅ 推荐做法 - 合并相关操作日志
+await runtimeStateManager.setPopupState(true);  // 内部打印一条状态变更
+// 外部通用响应日志自动处理，无需重复
+```
+
+#### 3. 简化中间层日志
+```javascript
+// ❌ 不好的做法 - 每层都详细输出
+[video-source-cache] ✓ 缓存命中[Local/VideoSourceLanguageData]: XJ6JhB8wOPU, 6个轨道
+[service-worker] ✓ 缓存命中[Local Storage]: 6个轨道
+
+// ✅ 推荐做法 - 中间层静默或注释，只在最终层输出
+// [video-source-cache] 内部日志注释掉
+[service-worker] ✓ 缓存命中[Local Storage]: 6个轨道
+```
+
+#### 4. 智能响应日志
+```javascript
+// 对于简单成功响应，只输出状态
+if (response && response.success === true && response.status) {
+  console.log(`[service-worker] ✓ ${message.type}: ${response.status}`);
+} else {
+  console.log(`[service-worker] ✓ ${message.type}:`, response);
+}
+```
+
+#### 5. 单行数据展示
+```javascript
+// ❌ 不好的做法 - 数据分行显示
+console.log('[runtime-state-manager] ✓ 保存到session:');
+console.log(storageData);
+
+// ✅ 推荐做法 - 数据内联显示
+console.log(`[runtime-state-manager] ✓ 保存到session:`, storageData);
+```
+
 ## 常见问题和解决方案
 
 ### 问题1：tabs.onUpdated重复触发
@@ -291,6 +374,46 @@ console.log(`[translation-cache-manager] 缓存命中: 42条字幕`);
 1. 翻译缓存：使用 `TranslationCacheManager`
 2. 遵循缓存键规则：`videoId + sourceLang + targetLang + service`
 3. 先查缓存，miss时才调用API
+
+### 翻译开关执行流程（10步骤）
+点击翻译按钮后的完整执行流程：
+
+1. **用户点击** → ControlPanel发送`toggleTranslate`消息
+2. **状态转换** → Service Worker设置PENDING状态（5秒超时保护）
+3. **获取偏好** → 从UserPreferencesManager获取用户设置
+4. **获取字幕** → 优先从缓存，否则从YouTube
+5. **API控制** → 五个子步骤：
+   - 5.1: 通过Player API获取轨道列表（ISO 639-1）
+   - 5.2: 智能选择源语言（用户历史/英语优先/手动优先）
+   - 5.3: 通过API设置字幕语言
+   - 5.4: 异步缓存轨道信息
+   - 5.5: API失败时降级到拦截器
+6. **执行翻译** → 优先使用缓存，否则调用翻译API
+7. **保存缓存** → 两层缓存架构
+8. **状态更新** → 成功设PENDING→ACTIVE，失败设PENDING→INACTIVE
+9. **显示字幕** → 实时同步双语字幕
+10. **错误处理** → 超时回退、智能降级、用户提示
+
+### Popup数据获取流程
+点击翻译设置按钮后的数据获取流程：
+
+1. **用户偏好设置** - 直接从`chrome.storage.local`读取
+   - 键：`user_preferences`
+   - 内容：targetLang, subtitleMode, translationService
+
+2. **视频上下文** - 通过消息向Background获取
+   - 消息：`{type: 'getPopupInitData'}`
+   - 返回：videoId, tabId, isYouTube
+
+3. **源语言列表** - 两层缓存机制
+   - L1缓存：`chrome.storage.local.get('video_source_${videoId}')`
+   - L2获取：`{type: 'getVideoTrackData'}` → Content Script → YouTube API
+   
+4. **初始化顺序**
+   - 步骤1：初始化DOM元素
+   - 步骤2：并行获取三类数据（Promise.all）
+   - 步骤3：渲染UI组件
+   - 步骤4：设置事件监听器
 
 ### 如何调试
 1. 查看Service Worker控制台：chrome://extensions → 查看视图

@@ -1,6 +1,6 @@
 /**
  * [popup] YouTube字幕翻译助手 - Popup界面
- * 基于sidepanel.ts的完整功能实现，支持Fallback模式
+ * YouTube字幕翻译助手 - Popup设置界面
  */
 
 // === 导入相同的依赖 ===
@@ -13,26 +13,12 @@ import {
   UserPreferencesManager
 } from '../shared/storage';
 import { SubtitleMode, TranslationServiceType, UserPreferences } from '../shared/types/user-preferences-types';
-import { SimplifiedCaptionTrack } from '../shared/types/subtitle-types';
+import { SimplifiedCaptionTrack, TrackMetadata } from '../shared/types/subtitle-types';
 
-const videoSourceLanguageCacheManager = new VideoSourceLanguageCacheManager();
+const videoSourceLanguageCacheManager = VideoSourceLanguageCacheManager.getInstance();
 const userPreferencesManager = UserPreferencesManager.getInstance();
 
-// === 步骤2：源语言缓存数据结构 ===
-interface VideoSourceLanguageItem {
-  videoId: string;
-  // 该视频所有可用的源语言列表
-  availableSourceLanguages: SimplifiedCaptionTrack[];
-  // 用户选中的具体源语言轨道
-  selectedSourceTrack: SimplifiedCaptionTrack | null;
-}
-
-interface VideoSourceLanguageCache {
-  items: VideoSourceLanguageItem[];
-  maxSize: number; // 固定为10，FIFO策略
-}
-
-console.log('[popup] 初始化开始...');
+// 简化初始化日志
 
 // 状态更新已通过Port连接机制自动处理，无需发送消息
 
@@ -1307,13 +1293,9 @@ function addEventListeners(): void {
  * 初始化YouTube功能界面
  */
 async function initializeYouTubeUI(): Promise<void> {
-  console.log('[popup] 初始化YouTube功能界面...');
-  
   try {
     // 步骤4：统一初始化流程
     await initializeUnifiedStorage();
-    
-    console.log('[popup] YouTube功能界面初始化完成');
     
   } catch (error) {
     console.error('[popup] YouTube界面初始化失败:', error);
@@ -1325,11 +1307,10 @@ async function initializeYouTubeUI(): Promise<void> {
  * 步骤4：统一初始化流程 - 整合两套存储的读取和UI更新
  */
 async function initializeUnifiedStorage(): Promise<void> {
-  console.log('[popup] 🔄 步骤4：开始统一初始化流程...');
+  // 简化初始化流程日志
   
   try {
     // 1. 基础设置
-    console.log('[popup] 1/6 - 初始化DOM元素和事件监听器');
     initializeDOMElements();
     addEventListeners();
     
@@ -1355,7 +1336,7 @@ async function initializeUnifiedStorage(): Promise<void> {
     console.log('[popup] 6/6 - 设置统一事件监听器');
     setupUnifiedSettingsListener();
     
-    console.log('[popup] ✓ 统一初始化流程完成');
+    console.log('[popup] ✓ 初始化完成');
     
   } catch (error) {
     console.error('[popup] ✗ 统一初始化流程失败:', error);
@@ -1474,8 +1455,19 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
       return;
     }
     
-    // 使用步骤2的源语言缓存机制获取可用语言列表
-    const availableLanguages = await getAvailableSourceLanguages(currentVideoId);
+    // 优先使用 popupContext 中的数据，如果没有则从本地缓存获取
+    let availableLanguages = [];
+    
+    // 先尝试使用 popupContext 中的数据
+    if (popupContext && popupContext.availableSourceLanguages && popupContext.availableSourceLanguages.length > 0) {
+      availableLanguages = popupContext.availableSourceLanguages;
+      console.log('[popup] 使用 PopupContext 中的源语言数据:', availableLanguages);
+    } else {
+      // 如果 popupContext 中没有数据，则从本地缓存获取
+      availableLanguages = await getAvailableSourceLanguages(currentVideoId);
+      console.log('[popup] 从本地缓存获取源语言数据:', availableLanguages);
+    }
+    
     if (availableLanguages.length > 0) {
       // 转换为UI格式，并添加"自动检测"选项
       uiTrackData = [
@@ -1540,16 +1532,25 @@ async function handleDetectedSourceLanguage(detectedLang: string): Promise<void>
     // 使用与loadSourceLanguageData相同的检查机制
     const savedSourceTrack = await getSelectedSourceTrack(currentVideoId || '');
     
-    if (!savedSourceTrack) {
-      console.log('[popup] 自动设置检测到的源语言:', detectedLang);
-      await saveSourceLanguage(detectedLang, 'auto');
-      // 更新全局变量
-      currentSourceLang = detectedLang;
-      currentSourceTrackKind = 'auto';
-      // 重新填充源语言选择器以更新选中状态
-      populateSourceLanguages();
-      updateSourceLanguageDisplay(detectedLang, 'auto');
-    } else {
+    if (!savedSourceTrack && detectedLang !== 'auto') {
+      // 在uiTrackData中查找对应的轨道
+      const detectedTrack = uiTrackData.find(track => track.languageCode === detectedLang);
+      
+      if (detectedTrack) {
+        console.log('[popup] 自动设置智能选择的源语言:', detectedLang);
+        const trackKind = detectedTrack.kind || 'standard';
+        
+        await saveSourceLanguage(detectedLang, trackKind);
+        // 更新全局变量
+        currentSourceLang = detectedLang;
+        currentSourceTrackKind = trackKind;
+        // 重新填充源语言选择器以更新选中状态
+        populateSourceLanguages();
+        updateSourceLanguageDisplay(detectedLang, trackKind);
+      } else {
+        console.warn('[popup] 智能选择的语言不在可用轨道列表中:', detectedLang);
+      }
+    } else if (savedSourceTrack) {
       console.log('[popup] 用户已选择源语言，跳过自动设置:', savedSourceTrack);
     }
     
@@ -1765,17 +1766,17 @@ async function saveSourceLanguage(languageCode: string, trackKind: string): Prom
     );
     
     if (selectedTrack) {
-      // 将uiTrackData格式转换为SimplifiedCaptionTrack格式
-      const simplifiedTrack: SimplifiedCaptionTrack = {
-        baseUrl: '', // 自动检测和其他选项不需要baseUrl
+      // 将uiTrackData格式转换为TrackMetadata格式（不含baseUrl）
+      const trackMetadata: TrackMetadata = {
         languageCode: selectedTrack.languageCode,
         name: selectedTrack.languageName,
         kind: selectedTrack.kind as 'asr' | 'forced' | undefined
+        // 注意：不包含 baseUrl
       };
       
-      // 保存轨道信息
-      await saveSelectedSourceTrack(currentVideoId, simplifiedTrack);
-      console.log('[popup] 源语言设置已保存:', simplifiedTrack);
+      // 保存轨道信息（只保存元数据）
+      await saveSelectedSourceTrack(currentVideoId, trackMetadata);
+      console.log('[popup] 源语言设置已保存:', trackMetadata);
     } else {
       console.warn('[popup] 未找到匹配的源语言轨道:', { languageCode, trackKind, uiTrackData });
     }
@@ -1942,8 +1943,9 @@ async function handleTranslationServiceChange(): Promise<void> {
 
 /**
  * 获取视频的可用源语言列表（Local Storage → API）
+ * 只返回元数据，不包含baseUrl
  */
-async function getAvailableSourceLanguages(videoId: string): Promise<SimplifiedCaptionTrack[]> {
+async function getAvailableSourceLanguages(videoId: string): Promise<TrackMetadata[]> {
   try {
     // 1. 检查Local Storage缓存
     const result = await chrome.storage.local.get('video_source_language_cache');
@@ -1970,15 +1972,15 @@ async function getAvailableSourceLanguages(videoId: string): Promise<SimplifiedC
     });
     
     if (response && response.success && Array.isArray(response.trackData)) {
-      // 3. 转换为SimplifiedCaptionTrack格式
-      const availableSourceLanguages: SimplifiedCaptionTrack[] = response.trackData.map((track: any) => ({
-        baseUrl: track.baseUrl || '',
+      // 3. 转换为TrackMetadata格式（不含baseUrl）
+      const availableSourceLanguages: TrackMetadata[] = response.trackData.map((track: any) => ({
         languageCode: track.languageCode || 'unknown',
         name: track.languageName || 'Unknown',
         kind: track.kind
+        // 注意：不存储 baseUrl
       }));
       
-      // 4. 存储到缓存
+      // 4. 存储到缓存（只存储元数据）
       await saveVideoSourceLanguageCache(videoId, availableSourceLanguages, null);
       
       console.log('[popup] API获取源语言列表成功:', availableSourceLanguages);
@@ -1996,8 +1998,9 @@ async function getAvailableSourceLanguages(videoId: string): Promise<SimplifiedC
 
 /**
  * 获取用户选择的源语言轨道
+ * 只返回元数据，不包含baseUrl
  */
-async function getSelectedSourceTrack(videoId: string): Promise<SimplifiedCaptionTrack | null> {
+async function getSelectedSourceTrack(videoId: string): Promise<TrackMetadata | null> {
   try {
     const result = await chrome.storage.local.get('video_source_language_cache');
     const cache: VideoSourceLanguageCache = result.video_source_language_cache || { items: [], maxSize: 10 };
@@ -2015,11 +2018,12 @@ async function getSelectedSourceTrack(videoId: string): Promise<SimplifiedCaptio
 
 /**
  * 保存源语言缓存（FIFO策略）
+ * 只存储元数据，不包含baseUrl
  */
 async function saveVideoSourceLanguageCache(
   videoId: string, 
-  availableSourceLanguages: SimplifiedCaptionTrack[], 
-  selectedSourceTrack: SimplifiedCaptionTrack | null
+  availableSourceLanguages: TrackMetadata[], 
+  selectedSourceTrack: TrackMetadata | null
 ): Promise<void> {
   try {
     const result = await chrome.storage.local.get('video_source_language_cache');
@@ -2057,8 +2061,9 @@ async function saveVideoSourceLanguageCache(
 
 /**
  * 保存用户选择的源语言轨道
+ * 只保存元数据，不包含baseUrl
  */
-async function saveSelectedSourceTrack(videoId: string, selectedTrack: SimplifiedCaptionTrack): Promise<void> {
+async function saveSelectedSourceTrack(videoId: string, selectedTrack: TrackMetadata): Promise<void> {
   try {
     // 获取当前缓存
     const availableLanguages = await getAvailableSourceLanguages(videoId);
@@ -2076,8 +2081,6 @@ async function saveSelectedSourceTrack(videoId: string, selectedTrack: Simplifie
  * 初始化Popup UI
  */
 async function initializePopupUI(): Promise<void> {
-  console.log('[popup] 开始初始化UI组件...');
-  
   try {
     // 1. 获取当前标签页信息
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -2103,8 +2106,6 @@ async function initializePopupUI(): Promise<void> {
       // 显示使用说明界面
       showUsageGuide();
     }
-    
-    console.log('[popup] UI组件初始化完成');
     
   } catch (error) {
     console.error('[popup] UI初始化失败:', error);
@@ -2233,7 +2234,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
   
-  console.log('[popup] 🎯 开始初始化...');
+  console.log('[popup] 初始化...');
   sidePanelInitialized = true;
   
   try {

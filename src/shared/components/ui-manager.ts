@@ -179,7 +179,7 @@ export class UIManager {
       console.error('[ui-manager] 初始状态加载失败:', error);
       // 设置默认状态
       this.state.translateActive = TranslateActiveState.INACTIVE;
-      this.state.settingPanelOpen = false;
+      this.state.popupOpen = false;
     }
   }
 
@@ -255,9 +255,9 @@ export class UIManager {
         }
         
         // 更新设置面板状态
-        if (fullState.settingPanelOpen !== undefined) {
-          const settingOpen = !!fullState.settingPanelOpen;
-          this.state.settingPanelOpen = settingOpen;
+        if (fullState.popupOpen !== undefined) {
+          const settingOpen = !!fullState.popupOpen;
+          this.state.popupOpen = settingOpen;
           this.updateSettingsButtonState(settingOpen);
           console.log(`[ui-manager] ✓ 设置面板状态已刷新: ${settingOpen}`);
         }
@@ -316,18 +316,18 @@ export class UIManager {
         console.log(`[ui-manager] 🎯 SidePanel状态检测结果: ${isEnabled}`);
         
         // 更新设置按钮状态
-        this.state.settingPanelOpen = isEnabled;
+        this.state.popupOpen = isEnabled;
         this.updateSettingsButtonState(isEnabled);
       } else {
         console.warn('[ui-manager] SidePanel状态检测失败:', response?.error);
         // 检测失败时假设未启用
-        this.state.settingPanelOpen = false;
+        this.state.popupOpen = false;
         this.updateSettingsButtonState(false);
       }
     } catch (error) {
       console.error('[ui-manager] 检查SidePanel状态失败:', error);
       // 出错时假设未启用
-      this.state.settingPanelOpen = false;
+      this.state.popupOpen = false;
       this.updateSettingsButtonState(false);
     } finally {
       this.isLoadingState = false;
@@ -417,7 +417,7 @@ export class UIManager {
       const response = await new Promise<any>((resolve, reject) => {
         chrome.runtime.sendMessage({
           type: 'getRuntimeState',
-          data: { stateKey: 'settingPanelOpen' }
+          data: { stateKey: 'popupOpen' }
         }, (response) => {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
@@ -429,17 +429,17 @@ export class UIManager {
       
       if (response && response.success) {
         const open = !!response.state;
-        this.state.settingPanelOpen = open;
+        this.state.popupOpen = open;
         this.updateSettingsButtonState(open);
         console.log(`[ui-manager] ✓ loadSettingPanelOpenState: ${open}`);
       } else {
         console.error(`[ui-manager] 获取设置面板状态响应异常: ${response?.error || '未知错误'}`);
-        this.state.settingPanelOpen = false;
+        this.state.popupOpen = false;
         this.updateSettingsButtonState(false);
       }
     } catch (error) {
       console.error('[ui-manager] 从RuntimeStateManager获取设置面板状态失败:', error);
-      this.state.settingPanelOpen = false;
+      this.state.popupOpen = false;
       this.updateSettingsButtonState(false);
     } finally {
       this.isLoadingState = false;
@@ -503,12 +503,12 @@ export class UIManager {
         // 🚀 使用统一状态刷新机制，一次获取所有状态
         await this.refreshAllStates();
         
-        console.log(`[ui-manager] ✓ 导航状态刷新完成: isVideoPage=${this.state.isVideoPage}, translateActive=${this.state.translateActive}, settingPanelOpen=${this.state.settingPanelOpen}`);
+        console.log(`[ui-manager] ✓ 导航状态刷新完成: isVideoPage=${this.state.isVideoPage}, translateActive=${this.state.translateActive}, popupOpen=${this.state.popupOpen}`);
       } catch (error) {
         console.error('[ui-manager] 页面导航状态刷新失败:', error);
         // 设置默认状态
         this.state.translateActive = TranslateActiveState.INACTIVE;
-        this.state.settingPanelOpen = false;
+        this.state.popupOpen = false;
       }
     }, 100); // 100ms延迟，确保页面导航完成
   }
@@ -1131,10 +1131,10 @@ export class UIManager {
       // 1. 创建设置按钮
       const { button: settingsButton, icon: settingsIcon } = this.createControlButton(
         'vid-translate-settings-button',
-        this.state.settingPanelOpen ? '关闭翻译设置' : '翻译设置',
-        this.state.settingPanelOpen ? this.ACTIVE_SETTING_ICON_URL : this.SETTING_ICON_URL,
+        this.state.popupOpen ? '关闭翻译设置' : '翻译设置',
+        this.state.popupOpen ? this.ACTIVE_SETTING_ICON_URL : this.SETTING_ICON_URL,
         () => {
-          const newState = !this.state.settingPanelOpen;
+          const newState = !this.state.popupOpen;
           console.log(`[ui-manager] 设置按钮点击，切换状态为: ${newState}`);
           
           // 🔥 关键修复：使用同步函数保持用户手势上下文
@@ -1145,7 +1145,7 @@ export class UIManager {
       // 保存设置图标引用
       this.settingToggleButtonIcon = settingsIcon;
       // 设置数据属性以供CSS选择器使用
-      settingsButton.dataset.tooltipText = this.state.settingPanelOpen ? '关闭翻译设置' : '翻译设置';
+      settingsButton.dataset.tooltipText = this.state.popupOpen ? '关闭翻译设置' : '翻译设置';
       
       // 2. 创建翻译按钮
       // 🔧 修复：使用 isActiveState 方法正确判断翻译状态
@@ -1210,21 +1210,9 @@ export class UIManager {
         console.log(`[ui-manager] 翻译状态未激活(${this.state.translateActive})，不自动开始翻译`);
       }
       
-      // 🔧 修复：只在设置面板激活时才打开侧边栏，不强制关闭
-      // 初始化时不应该强制发送关闭消息，避免干扰用户的其他侧边栏使用
-      if (this.state.settingPanelOpen) {
-        console.log('[ui-manager] 设置面板已激活，打开侧边栏');
-        console.log('[ui-manager] 即将发送 openSidePanel 消息');
-        chrome.runtime.sendMessage({ 
-          type: 'openSidePanel'
-        }, (response) => {
-          console.log('[ui-manager] openSidePanel 回调，lastError =', chrome.runtime.lastError, ', response =', response);
-          if (chrome.runtime.lastError) {
-            console.error('[ui-manager] 打开侧边栏出错:', chrome.runtime.lastError.message);
-          }
-        });
-      } else {
-        console.log('[ui-manager] 设置面板未激活，跳过侧边栏操作');
+      // Popup会在用户点击时打开，不需要自动打开逻辑
+      if (this.state.popupOpen) {
+        console.log('[ui-manager] Popup状态已激活');
       }
       
       return true;
@@ -1274,32 +1262,42 @@ export class UIManager {
     });
     
     // ✅ C7-C9: 根据翻译状态发出相应事件
+    // 获取当前视频ID
+    const videoId = this.getVideoId();
+    
     if (this.isActiveState(targetState)) {
       console.log('[ui-manager] 翻译已激活，发出translation:start_requested事件');
       // ✅ C9: 发出 translation:start_requested
-      if (this.messageBus) {
-        this.messageBus.sendMessage({
-          type: MessageType.TRANSLATION_TOGGLE,
-          data: {
-            active: true,
-            source: 'ui_button',
-            timestamp: Date.now()
-          }
-        });
-      }
+      // 直接发送给Service Worker
+      chrome.runtime.sendMessage({
+        type: MessageType.TRANSLATION_TOGGLE,
+        data: {
+          videoId: videoId,
+          newState: true,
+          source: 'ui_button',
+          timestamp: Date.now()
+        }
+      }).then(response => {
+        console.log('[ui-manager] Service Worker响应:', response);
+      }).catch(error => {
+        console.error('[ui-manager] 发送消息失败:', error);
+      });
     } else {
       console.log('[ui-manager] 翻译已停用，发出translation:stop_requested事件');
       // ✅ C8: 发出 translation:stop_requested  
-      if (this.messageBus) {
-        this.messageBus.sendMessage({
-          type: MessageType.TRANSLATION_TOGGLE,
-          data: {
-            active: false,
-            source: 'ui_button',
-            timestamp: Date.now()
-          }
-        });
-      }
+      chrome.runtime.sendMessage({
+        type: MessageType.TRANSLATION_TOGGLE,
+        data: {
+          videoId: videoId,
+          newState: false,
+          source: 'ui_button',
+          timestamp: Date.now()
+        }
+      }).then(response => {
+        console.log('[ui-manager] Service Worker响应:', response);
+      }).catch(error => {
+        console.error('[ui-manager] 发送消息失败:', error);
+      });
     }
   }
   
@@ -1328,7 +1326,7 @@ export class UIManager {
    * 更新设置按钮状态
    */
   private updateSettingsButtonState(open: boolean): void {
-    this.state.settingPanelOpen = open;
+    this.state.popupOpen = open;
     if (this.settingToggleButtonIcon) {
       this.settingToggleButtonIcon.src = open ? this.ACTIVE_SETTING_ICON_URL : this.SETTING_ICON_URL;
       
@@ -1350,49 +1348,42 @@ export class UIManager {
    * @param source - 触发此更改的来源
    */
   public setSettingPanelOpen(open: boolean, source: string = 'user-action'): void {
-    console.log(`[ui-manager] 用户操作：切换设置面板到 ${open}, 来源: ${source}`);
+    console.log(`[ui-manager] 用户操作：Popup ${open ? '打开' : '关闭'}, 来源: ${source}`);
     
-    // 🔥 关键修复：同步发送消息，保持用户手势上下文
-    console.log('[ui-manager] 同步发送 togglePopup 消息');
+    if (!open) {
+      // Popup会自动关闭，只需更新状态
+      this.state.popupOpen = false;
+      this.updateSettingsButtonState(false);
+      return;
+    }
     
-    // 直接使用 chrome.runtime.sendMessage，不经过 sendMessageWithFallback 的异步包装
-    chrome.runtime.sendMessage({
-      type: 'togglePopup',
-      data: { source: source === 'user-action' ? 'translation-button' : source },
-      timestamp: Date.now()
-    }, (response) => {
-      if (response && response.success) {
-        const responseAny = response as any;
-        const isOpen = responseAny.state?.isOpen ?? responseAny.status === 'opened';
-        console.log(`[ui-manager] ✅ Popup toggle 成功，新状态: ${isOpen}`);
-        
-        // 🎯 根据实际结果更新UI状态
-        this.state.settingPanelOpen = isOpen;
-        this.updateSettingsButtonState(isOpen);
-        
-        // 显示操作反馈
-        const action = isOpen ? '打开' : '关闭';
+    // 直接打开Popup
+    if (chrome.action && chrome.action.openPopup) {
+      chrome.action.openPopup().then(() => {
+        console.log('[ui-manager] ✅ Popup打开成功');
+        this.state.popupOpen = true;
+        this.updateSettingsButtonState(true);
         this.showTooltip(
           this.settingToggleButtonIcon?.parentElement || document.body,
-          `设置面板已${action}`,
+          '设置面板已打开',
           2000
         );
-        
-      } else {
-        console.warn('[ui-manager] ✗ SidePanel toggle 失败，尝试降级处理');
-        
-        // 🎯 保留降级处理机制
-        const responseAny = response as any;
-        if (responseAny?.fallback === 'popup') {
-          this.fallbackToPopup().catch(error => {
-            console.error('[ui-manager] Popup降级失败:', error);
-            this.handleFinalFallbackFailure();
-          });
-        } else {
-          this.handleFinalFallbackFailure();
-        }
-      }
-    });
+      }).catch(error => {
+        console.error('[ui-manager] ✗ Popup打开失败:', error);
+        this.showTooltip(
+          this.settingToggleButtonIcon?.parentElement || document.body,
+          '无法打开设置面板',
+          2000
+        );
+      });
+    } else {
+      console.error('[ui-manager] chrome.action.openPopup API不可用');
+      this.showTooltip(
+        this.settingToggleButtonIcon?.parentElement || document.body,
+        '无法打开设置面板',
+        2000
+      );
+    }
   }
 
   /**
@@ -1457,7 +1448,7 @@ export class UIManager {
     console.error('[ui-manager] 所有降级策略均失败，显示最终错误提示');
     
     // 确保UI状态正确
-    this.state.settingPanelOpen = false;
+    this.state.popupOpen = false;
     this.updateSettingsButtonState(false);
     
     // 显示详细错误信息和解决建议
@@ -1742,8 +1733,8 @@ export class UIManager {
     if (data.translateActive !== undefined) {
       this.setTranslateActive(data.translateActive);
     }
-    if (data.settingPanelOpen !== undefined) {
-      this.updateSettingsButtonState(data.settingPanelOpen);
+    if (data.popupOpen !== undefined) {
+      this.updateSettingsButtonState(data.popupOpen);
     }
   }
 

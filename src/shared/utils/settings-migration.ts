@@ -417,10 +417,12 @@ export async function checkMigrationNeeded(): Promise<boolean> {
 
     const hasOldSettings = Object.keys(result).some(key => result[key] !== undefined);
     
-    console.log('[settings-migration] 迁移检查结果:', {
-      hasOldSettings,
-      foundKeys: Object.keys(result).filter(key => result[key] !== undefined)
-    });
+    // 只有在发现旧设置时才记录
+    if (hasOldSettings) {
+      console.log('[settings-migration] 发现旧设置需要迁移:', {
+        foundKeys: Object.keys(result).filter(key => result[key] !== undefined)
+      });
+    }
 
     return hasOldSettings;
 

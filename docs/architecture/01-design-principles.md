@@ -2,14 +2,15 @@
 
 > **最后更新**: 2025-07-16  
 > **版本**: v5.24.7+ (**当前统一版本**)  
-> **当前方案**: ✅ **Popup Fallback** (已实施完成)
+> **当前方案**: ✅ **Popup直接调用** (已实施完成)
 
 ## 🚨 **方案变更记录**
 
-### **✅ 当前采用方案: Popup Fallback**
+### **✅ 当前采用方案: Popup直接调用架构**
 - **实施状态**: 已完成并部署到生产环境
 - **适用范围**: 全页面通用，无兼容性限制
 - **核心优势**: 统一用户体验，简化架构复杂度
+- **技术特点**: Content Script直接调用`chrome.action.openPopup()`，无需Background中转
 
 ### **❌ 已放弃方案: SidePanel**
 
@@ -686,7 +687,7 @@ export class StorageManager {
 **第三层：实现细节** 🔧
 - [6. 存储与缓存架构](#6-存储与缓存架构) - 数据持久化策略 ⭐ 性能关键
   - [6.1 存储设计原则](#61-存储设计原则)
-  - [6.2 三层缓存架构](#62-三层缓存架构)
+  - [6.2 两层缓存架构](#62-两层缓存架构)
   - [6.3 缓存处理流程](#63-缓存处理流程)
   - [6.4 缓存数据结构](#64-缓存数据结构)
   - [6.5 数据管理策略](#65-数据管理策略)
@@ -694,9 +695,7 @@ export class StorageManager {
   - [7.1 存储分层架构设计](#71-存储分层架构设计)
     - [7.1.1 UserPreferences - 持久化用户偏好设置](#711-userpreferences---持久化用户偏好设置)
     - [7.1.2 RuntimeState - 运行时状态](#712-runtimestate---运行时状态)
-    - [7.1.3 OriginalSubtitleData - 视频原始字幕内存缓存](#713-originalsubtitledata---视频原始字幕内存缓存)
-    - [7.1.4 VideoSourceLanguageCache - 视频源语言缓存](#714-videosourcelanguagecache---视频源语言缓存)
-    - [7.1.5 MemoryCache - 字幕轨道信息临时缓存](#715-memorycache---字幕轨道信息临时缓存)
+    - [7.1.3 VideoSourceLanguageData - 视频源语言数据](#713-videosourcelanguagedata---视频源语言数据)
     - [7.1.6 TranslationCacheData - 翻译缓存数据](#716-translationcachedata---翻译缓存数据)
   - [7.2 Hash验证机制规范](#72-hash验证机制规范)
   - [7.3 管理器架构规范](#73-管理器架构规范)
@@ -867,7 +866,6 @@ YouTube的字幕API只能在页面的主执行环境中访问，ContentScript运
 - **UserPreferences**：用户偏好设置（目标语言、字幕模式等）
 - **RuntimeState**：运行时状态（翻译开关、面板状态等）  
 - **VideoSpecificData**：翻译结果缓存和视频特定配置
-- **Memory Cache**：字幕轨道信息临时缓存
 
 ### 2.5 UI Layer（双重界面系统）⭐ **核心创新**
 
@@ -1066,37 +1064,119 @@ sequenceDiagram
 
 ---
 
-### 3.3 翻译请求流程
+### 3.3 翻译请求流程（翻译开关数据获取）
 
 > 详细的翻译流程文档请参阅 [翻译流程文档](translation-flow.md)
 
+#### 3.3.1 翻译开关点击后的数据获取流程
+
+基于新的存储架构（TranslationCacheData包含originalSubtitles），翻译开关的数据获取流程优化如下：
+
+**核心优化**：原始字幕只需获取一次，后续切换服务或语言都能复用
+
+```typescript
+async function startTranslation(videoId: string, targetLang: string, service: TranslationService) {
+  // 步骤1: 获取用户选择的源语言
+  const sourceData = await VideoSourceLanguageDataManager.get(videoId);
+  let sourceLang: string;
+  
+  if (!sourceData) {
+    const tracks = await fetchYouTubeAPI(videoId);
+    await VideoSourceLanguageDataManager.save(videoId, tracks);
+    sourceLang = await selectSourceLanguage(tracks);
+  } else {
+    sourceLang = sourceData.lastSelectedLanguage || 
+                 await selectSourceLanguage(sourceData.availableSourceLanguages);
+  }
+
+  // 步骤2: 生成完整的缓存键（包含所有服务参数）
+  const cacheKey = generateCacheKey(videoId, sourceLang, targetLang, service);
+  
+  // 步骤3: 检查完全缓存命中
+  const fullCache = await TranslationCacheManager.get(cacheKey);
+  if (fullCache && !isExpired(fullCache)) {
+    return { // P0: 完美命中
+      originalSubtitles: fullCache.originalSubtitles,
+      translatedSubtitles: fullCache.translatedSubtitles,
+      source: 'full-cache'
+    };
+  }
+
+  // 步骤4: 查找相同源语言的原始字幕（关键：必须sourceLang匹配）
+  const partialCaches = await TranslationCacheManager.findByVideoAndSourceLang(videoId, sourceLang);
+  if (partialCaches.length > 0) {
+    // P1: 找到相同源语言的原始字幕，只需重新翻译
+    const originalSubtitles = partialCaches[0].originalSubtitles;
+    const translatedSubtitles = await translateWithService(
+      originalSubtitles, sourceLang, targetLang, service
+    );
+    
+    await TranslationCacheManager.save(cacheKey, {
+      videoId, sourceLang, targetLang,
+      translationService: service,
+      originalSubtitles, translatedSubtitles,
+      createdAt: Date.now(), lastUsed: Date.now()
+    });
+    
+    return { originalSubtitles, translatedSubtitles, source: 'partial-cache-translate' };
+  }
+
+  // 步骤5: 没有可复用的原始字幕，需要从YouTube获取
+  const originalSubtitles = await fetchSubtitles(videoId, sourceLang);
+  const translatedSubtitles = await translateWithService(
+    originalSubtitles, sourceLang, targetLang, service
+  );
+  
+  // 步骤6: 保存完整缓存
+  await TranslationCacheManager.save(cacheKey, {
+    videoId, sourceLang, targetLang,
+    translationService: service,
+    originalSubtitles, translatedSubtitles,
+    createdAt: Date.now(), lastUsed: Date.now()
+  });
+
+  return { originalSubtitles, translatedSubtitles, source: 'api-fetch' };
+}
 ```
-┌────────────────┐     ┌────────────────┐     ┌────────────────┐
-│  ContentScript │     │  Background    │     │  Translation   │
-│                 │     │  Script        │     │  API           │
-└────────┬────────┘     └────────┬───────┘     └───────┬────────┘
-         │                       │                     │
-         │ 1. Send texts         │                     │
-         │ to translate          │                     │
-         ├──────────────────────►│                     │
-         │                       │                     │
-         │                       │ 2. Translate API    │
-         │                       │ request             │
-         │                       ├────────────────────►│
-         │                       │                     │
-         │                       │ 3. API response     │
-         │                       │◄────────────────────┤
-         │                       │                     │
-         │ 4. Return             │                     │
-         │ translations          │                     │
-         │◄──────────────────────┤                     │
-         │                       │                     │
-         │ 5. Process &          │                     │
-         │ display subtitles     │                     │
-         ├─────┐                 │                     │
-         │     │                 │                     │
-         │◄────┘                 │                     │
-         │                       │                     │
+
+#### 3.3.2 缓存键生成策略（完整版）
+
+```typescript
+function generateCacheKey(
+  videoId: string,
+  sourceLang: string, 
+  targetLang: string,
+  service: TranslationService
+): string {
+  // 基础部分
+  let key = `translation_${videoId}_${sourceLang}_${targetLang}_${service.type}`;
+  
+  // 根据服务类型添加特定参数
+  switch (service.type) {
+    case 'openai':
+      // OpenAI需要模型和temperature
+      key += `_${service.model}_${service.temperature}`;
+      break;
+    case 'google':
+      // Google翻译无额外参数
+      break;
+    case 'deepl':
+      // DeepL可能有formality参数
+      if (service.formality) key += `_${service.formality}`;
+      break;
+  }
+  
+  return key;
+}
+```
+
+#### 3.3.3 数据获取优先级
+
+```
+P0: TranslationCacheData完全命中 → 直接返回
+P1: TranslationCacheData部分命中（有originalSubtitles） → 仅需翻译
+P2: VideoSourceLanguageData命中 → 获取字幕并翻译
+P3: 完全未命中 → 从YouTube API获取所有数据
 ```
 
 ### 3.4 按钮交互完整流程设计
@@ -1231,11 +1311,16 @@ sequenceDiagram
 基于架构简化要求，采用**智能全局状态同步**模式，简化复杂的状态持久化机制。
 
 **📋 流程概述**：
-1. **用户点击设置按钮** → 发送`openSidePanel`消息
-2. **Background处理** → 调用`chrome.sidePanel.open()`
-3. **SidePanel初始化** → 加载用户设置和视频数据
-4. **数据传输** → 发送`PopupContext`到界面
-5. **UI更新** → 显示设置界面和状态信息
+1. **用户点击设置按钮** → Content Script直接调用`chrome.action.openPopup()`
+2. **Popup打开** → 通过Port连接通知Background更新状态
+3. **Popup初始化** → 执行6步数据获取流程：
+   - 初始化DOM元素
+   - 从`chrome.storage.local`读取用户偏好
+   - 更新用户偏好设置UI
+   - 获取PopupContext（通过消息从Background获取）
+   - 加载源语言数据（三层缓存机制）
+   - 设置事件监听器
+4. **UI渲染** → 显示设置界面和状态信息
 
 **⚡ 简化优势**：
 - 代码量减少85%+ (从~200行降至~50行)
@@ -1273,11 +1358,12 @@ UI Layer (Popup/SidePanel) ←[消息]→ BackgroundScript ←[管理器]→ Chr
 ```
 
 **缓存类型分工**：
-- **Memory Cache**（Background内存）：字幕轨道信息，生命周期为标签页会话
 - **Local Storage**（chrome.storage.local）：
   - UserPreferences：用户偏好设置（targetLang、subtitleMode、translationService等）
-  - RuntimeState：运行时状态（translateActive）
+  - VideoSourceLanguageData：视频源语言选择记录和字幕轨道信息
   - TranslationCacheData：翻译结果缓存和视频特定配置
+- **Session Storage**（chrome.storage.session）：
+  - RuntimeState：运行时状态（translateActive、popupOpen等）
 
 #### 3.4.6 统一数据管理消息接口
 
@@ -1288,10 +1374,6 @@ UI Layer (Popup/SidePanel) ←[消息]→ BackgroundScript ←[管理器]→ Chr
 
 // VideoSpecificData缓存检查  
 { type: 'checkVideoSpecificData', data: { videoId: string, params: TranslationParams } }
-
-// Memory Cache操作
-{ type: 'saveTrackMemoryCache', data: { videoId: string, tracks: CaptionTrack[] } }
-{ type: 'getTrackMemoryCache', data: { videoId: string } }
 
 // VideoSpecificData保存
 { type: 'saveVideoSpecificData', data: { videoId: string, params: TranslationParams, result: TranslationResult } }
@@ -1306,7 +1388,7 @@ BackgroundScript (background.ts)
 ├── UserPreferencesManager (用户偏好管理)
 ├── RuntimeStateManager (运行时状态管理)  
 ├── VideoSpecificDataManager (视频数据管理)
-├── MemoryCacheManager (内存缓存管理)
+├── VideoSourceLanguageCacheManager (视频源语言缓存管理)
 ├── 语言冲突处理 (LanguageConflictResolver)  
 ├── SidePanel初始化 (SidePanelInitializer)
 └── 翻译API调用 (TranslationService)
@@ -1328,10 +1410,8 @@ SidePanel (SidePanel.ts)
 为提升性能并减少不必要的API调用，当用户请求翻译时，系统将优先从缓存中检索结果。
 
 **🎯 核心流程**：
-1.  **检查内存缓存 (MemoryCache)**：首先检查是否存在当前视频的、有效期内的内存缓存。
-2.  **检查会话缓存 (SessionCache)**：如果内存缓存未命中，则查找会话缓存。
-3.  **检查持久化缓存 (StorageCache)**：如果前两者都未命中，则在`chrome.storage.local`中查找持久化缓存。
-4.  **执行翻译**：如果所有缓存都未命中，则启动翻译流程，并将新结果存入缓存。
+1.  **检查持久化缓存 (Local Storage)**：首先在`chrome.storage.local`中查找翻译结果缓存。
+2.  **执行翻译**：如果缓存未命中，则启动翻译流程，并将新结果存入缓存。
 
 **✨ 核心优势**：
 - **性能提升**：用户几乎可以立即看到已翻译过的内容。
@@ -1360,10 +1440,10 @@ flowchart TD
     I -->|是| J[C29: 直接显示缓存翻译结果 ✨]
     I -->|否| K[C27: 翻译local storage未完全匹配]
     
-    %% 🔥 有设置参数时检查Memory Cache
-    K --> L[检查Memory Cache字幕轨道]
-    L --> M{内存缓存有轨道数据?}
-    M -->|有| N[使用内存缓存轨道数据 ⚡]
+    %% 🔥 有设置参数时检查Local Storage
+    K --> L[检查Local Storage字幕轨道]
+    L --> M{Local Storage有轨道数据?}
+    M -->|有| N[使用缓存轨道数据]
     M -->|无| O[C31: 调用API获取字幕轨道]
     
     %% �� 无设置参数直接调用API
@@ -1371,7 +1451,7 @@ flowchart TD
     
     %% 🔥 关键点：O有两个来源，都需要执行翻译流程
     N --> P[执行翻译流程]
-    O --> Q[保存轨道到Memory Cache]
+    O --> Q[保存轨道到Local Storage]
     Q --> R[调用翻译API]
     R --> P
     
@@ -1397,19 +1477,10 @@ interface TranslationResultCache {
   [subtitleId: string]: string; // 字幕ID → 翻译文本映射
 }
 
-// Memory Cache结构 (全局变量) - 更新后的设计
-interface MemoryCacheItem {
-  /** 视频ID */
-  videoId: string;
-  /** 是否有字幕 */
-  hasSubtitles: boolean;
-  /** 简化的字幕轨道信息 */
-  captionTracks: SimplifiedCaptionTrack[];
-}
-
-interface MemoryCache {
-  /** 缓存项映射表 videoId -> MemoryCacheItem */
-  items: Map<string, MemoryCacheItem>;
+// VideoSourceLanguageCache结构 - 存储在Local Storage
+interface VideoSourceLanguageCache {
+  /** 缓存项数组，按FIFO顺序排列 */
+  items: VideoSourceLanguageData[];
   /** 最大缓存数量 */
   maxSize: number; // 固定为10
 }
@@ -1440,7 +1511,7 @@ class LanguageVariantMatcher {
 
 **1. 缓存生命周期管理**
 - **Local Storage**: 持久化存储，手动清理或过期清理
-- **Memory Cache**: 页面会话级别，页面刷新或导航时清空
+- **Session Storage**: 会话级别，浏览器关闭时清空
 
 **2. 缓存命中率优化**
 - **场景1**: 点击翻译设置 → 内存有轨道 → 再点翻译开关 → 100%命中
@@ -1452,7 +1523,7 @@ class LanguageVariantMatcher {
 基于精确触发条件的存储管理，避免不必要的存储操作，提高性能：
 
 - **触发条件1: 首次获取数据后保存**
-  - 首次获取字幕轨道信息后保存到Memory Cache
+  - 首次获取字幕轨道信息后保存到Local Storage
   - 首次初始化后的翻译设置保存参数到Local Storage
   - 首次翻译完成后保存翻译结果到Local Storage
   - 避免重复API调用，提供数据持久性
@@ -1474,8 +1545,8 @@ class LanguageVariantMatcher {
   - 管理存储空间，移除过期缓存
 
 **4. API调用减少策略**
-- **翻译设置按钮**: 获取轨道信息时同步保存到内存缓存
-- **翻译开关按钮**: 优先使用内存缓存，避免重复API调用
+- **翻译设置按钮**: 获取轨道信息时同步保存到Local Storage
+- **翻译开关按钮**: 优先使用Local Storage缓存，避免重复API调用
 - **语言变种**: 统一处理逻辑，避免重复匹配计算
 
 ##### **实际应用场景**
@@ -1504,13 +1575,13 @@ class LanguageVariantMatcher {
 ```
 用户点击设置按钮 
 → 调用API获取轨道信息 
-→ 保存到内存缓存
+→ 保存到Local Storage缓存
 → 用户调整设置并关闭侧边栏
 → 用户点击翻译开关 
 → 有Local设置缓存 
 → 检查翻译结果缓存 (未命中)
-→ 检查内存轨道缓存 (命中!) ⚡
-→ 直接使用内存数据执行翻译
+→ 检查Local Storage轨道缓存 (命中!) ⚡
+→ 直接使用缓存数据执行翻译
 ```
 
 **场景D: 最优缓存命中**
@@ -1528,10 +1599,13 @@ class LanguageVariantMatcher {
 > **📌 简化说明**：本节为按钮交互的概述，详细的SidePanel参数加载和初始化流程请参见 **[5.4 参数加载与初始化流程](#54-参数加载与初始化流程)**。
 
 **核心流程概览**：
-1. **用户点击设置按钮** → 发送`openSidePanel`消息
-2. **Background处理** → 调用`chrome.sidePanel.open()`
-3. **SidePanel初始化** → 加载用户设置和视频数据
-4. **数据传输** → 发送`PopupContext`到界面
+1. **用户点击设置按钮** → Content Script直接调用`chrome.action.openPopup()`
+2. **Popup生命周期管理** → Port连接自动管理打开/关闭状态
+3. **数据获取（重要）** → 
+   - 用户偏好：直接从`chrome.storage.local`读取
+   - 视频上下文：通过消息从Background获取
+   - 源语言列表：两层缓存（Local Storage→Content Script API）
+4. **状态同步** → 通过`chrome.storage.session`共享内存自动同步
 5. **UI渲染** → 显示设置界面和状态信息
 
 详细的数据加载流程、缓存策略、语言冲突处理等内容，请参考第5章的完整SidePanel架构设计。

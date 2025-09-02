@@ -48,6 +48,7 @@ export class TranslationCacheManager {
         model: data.translationService.model,
         temperature: data.translationService.temperature,
       },
+      originalSubtitles: data.originalSubtitles,
       translatedSubtitles: data.translatedSubtitles,
     };
 
@@ -121,11 +122,11 @@ export class TranslationCacheManager {
     try {
       const result = await chrome.storage.local.get(key);
       if (result[key]) {
-        console.log(`[translation-cache-manager] ✓ get: cache hit`);
+        console.log(`[translation-cache-manager] ✓ 缓存命中[Local/TranslationCacheData]: ${key}`);
         const data = result[key] as TranslationCacheData;
 
         if (!this._validateData(data)) {
-          console.log(`[translation-cache-manager] ✗ get: invalid cache data, deleting`);
+          console.log(`[translation-cache-manager] ✗ 缓存无效[Local/TranslationCacheData]: ${key}, 删除中`);
           // Don't await, just fire and forget
           chrome.storage.local.remove(key);
           return null;
@@ -136,7 +137,7 @@ export class TranslationCacheManager {
         return data;
       }
       // logger.log(`[translation-cache-manager] Cache miss for key: ${key}`);
-      console.log(`[translation-cache-manager] get: cache miss`);
+      console.log(`[translation-cache-manager] 缓存未命中[Local/TranslationCacheData]: ${key}`);
       return null;
     } catch (error) {
       // logger.error('[translation-cache-manager] Error getting cache item:', error);
@@ -158,6 +159,55 @@ export class TranslationCacheManager {
     } catch (error) {
       // logger.error(`[translation-cache-manager] Failed to update lastUsed for key ${key}:`, error);
       console.error(`[translation-cache-manager] ✗ _updateLastUsed:`, error);
+    }
+  }
+
+  /**
+   * 根据视频ID和源语言查找缓存项（用于原始字幕复用）
+   * 符合architecture.md设计：支持P1级缓存复用
+   * @param {string} videoId - 视频ID
+   * @param {string} sourceLang - 源语言
+   * @returns {Promise<TranslationCacheData[]>} 匹配的缓存项数组
+   */
+  public async findByVideoAndSourceLang(
+    videoId: string,
+    sourceLang: string
+  ): Promise<TranslationCacheData[]> {
+    try {
+      const allItems = await chrome.storage.local.get(null);
+      const matchedItems: TranslationCacheData[] = [];
+      
+      // 遍历所有缓存项
+      for (const [key, value] of Object.entries(allItems)) {
+        if (key.startsWith(CACHE_KEY_PREFIX)) {
+          const data = value as TranslationCacheData;
+          
+          // 匹配videoId和sourceLang
+          if (data.videoId === videoId && 
+              data.sourceLang === sourceLang && 
+              data.originalSubtitles) {
+            
+            // 验证数据完整性
+            if (this._validateData(data)) {
+              matchedItems.push(data);
+            }
+          }
+        }
+      }
+      
+      // 按lastUsed降序排序，最近使用的在前
+      matchedItems.sort((a, b) => b.lastUsed - a.lastUsed);
+      
+      if (matchedItems.length > 0) {
+        console.log(`[translation-cache-manager] ✓ 缓存查找[Local/TranslationCacheData]: 找到${matchedItems.length}个匹配项 (videoId=${videoId}, sourceLang=${sourceLang})`);
+      } else {
+        console.log(`[translation-cache-manager] 缓存查找[Local/TranslationCacheData]: 未找到匹配项 (videoId=${videoId}, sourceLang=${sourceLang})`);
+      }
+      
+      return matchedItems;
+    } catch (error) {
+      console.error('[translation-cache-manager] ✗ findByVideoAndSourceLang:', error);
+      return [];
     }
   }
 

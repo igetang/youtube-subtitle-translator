@@ -2,14 +2,15 @@
 
 > **文档更新**: 2025-07-16  
 > **版本**: v5.24.7+ (**当前统一版本**)  
-> **当前方案**: ✅ **Popup Fallback** (已实施完成)
+> **当前方案**: ✅ **Popup直接调用** (已实施完成)
 
 ## 🚨 **方案变更说明**
 
-### **✅ 当前采用方案: Popup Fallback**
+### **✅ 当前采用方案: Popup直接调用架构**
 - **实施状态**: 已完成并部署到生产环境
 - **数据结构**: 新增Popup专用数据结构
 - **兼容性**: 保留通用数据结构，确保功能完整性
+- **技术特点**: Content Script直接调用Chrome API，无需消息中转
 
 ### **❌ 已放弃方案: SidePanel**
 
@@ -749,21 +750,19 @@ async function selectUIStrategy(): Promise<'popup' | 'sidepanel'> {
 
 **1. 用户操作 (在 `content/content-script.ts` 中的 `UIManager`)**:
 - 用户点击"翻译设置"按钮。
-- `UIManager` 根据当前侧边栏的打开/关闭状态，向后台脚本发送相应的消息：
-  - 先查询状态：`chrome.runtime.sendMessage({ type: 'getSidePanelStatus' })`
-  - 若要打开：`chrome.runtime.sendMessage({ type: 'openSidePanel' })`
-  - 若要关闭：`chrome.runtime.sendMessage({ type: 'closeSidePanel' })`
+- `UIManager` 直接操作Popup：
+  - 打开Popup：`chrome.action.openPopup()`
+  - 状态管理：通过`chrome.storage.session`共享内存自动同步
+  - 生命周期：通过Port连接自动管理
 
-**2. 后台处理 (在 `background/background.ts`中)**:
-- **`getSidePanelStatus` 消息处理器**:
-  - 使用 `runtimeStateManager.getSettingPanelState()` 从存储读取状态（高性能）
-  - 返回 `{ success: true, isEnabled: storageState }`
-- **`openSidePanel` 消息处理器**:
-  - 先调用 `chrome.sidePanel.setOptions({ tabId, path: 'src/sidepanel/sidepanel.html', enabled: true })`
-  - 然后调用 `chrome.sidePanel.open({ tabId })`
-  - 最后调用 `initializeSidePanel(tabId)` 初始化数据
-- **`closeSidePanel` 消息处理器**:
-  - 调用 `chrome.sidePanel.setOptions({ tabId, enabled: false })` 来关闭侧边栏
+**2. 后台处理 (在 `background/service-worker.ts`中)**:
+- **Port连接管理**:
+  - 监听`popup-lifecycle` Port连接
+  - 连接建立时设置`popupOpen: true`
+  - 连接断开时设置`popupOpen: false`
+- **状态同步**:
+  - 使用`chrome.storage.session`共享内存
+  - 无需消息传递，各组件直接读写
   - 广播状态变化到对应标签页：`broadcastSidePanelStateChange(tabId, false)`
 
 通过上述机制，确保了侧边栏的打开和关闭行为符合预期，并遵循了 `chrome.sidePanel` API 的相关限制和要求。

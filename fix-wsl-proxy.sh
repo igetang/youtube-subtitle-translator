@@ -1,6 +1,7 @@
 #!/bin/bash
 
-echo "=== 修复 WSL 代理设置 ==="
+# 注意：此脚本仅适用于 WSL 环境，在 macOS 上不需要使用
+echo "=== 修复 WSL 代理设置 (仅适用于 WSL 环境) ==="
 
 # 方法1：尝试从 ip route 获取 Windows 主机 IP
 WIN_HOST=$(ip route | grep default | awk '{print $3}')

@@ -60,41 +60,48 @@ SharedMessageSystem (统一初始化和管理)
 - ✅ **术语统一**：完全移除"Event"字样，统一使用"Message"术语
 - ✅ **代码清理**：清理所有`eventType`/`eventData`残留，统一使用`messageType`/`messageData`
 
-### 🔥 2025-01-XX - 架构清理：EventBus完全移除 + 全局单例消息系统
+### 🔥 2025-09-02 - YouTube Player API集成 + 3状态系统完善
+
+**新增功能**：
+- ✅ **YouTube Player API集成**：直接控制YouTube字幕，不受界面语言影响
+- ✅ **ISO 639-1标准支持**：使用国际标准语言代码（en, fr, de, zh等）
+- ✅ **PENDING状态5秒超时机制**：防止状态卡死，确保系统可恢复
+- ✅ **智能源语言选择**：用户历史/英语优先/手动优先的智能规则
+
+**技术实现**：
+- 🎯 **SubtitleAPIController类**：封装YouTube Player API调用
+- 🔄 **智能降级机制**：API失败时自动回退到拦截器方案
+- ⏱️ **超时保护机制**：PENDING状态5秒后自动回退到INACTIVE
+- 🌐 **跨语言界面支持**：日文、韩文界面下也能正常工作
+
+### 🔥 2025-01-XX - 架构清理：MessageBus统一 + 消息系统优化
 
 **问题解决**：
 - ✅ **根本解决重复日志问题**：MessageBus重复注册路由导致的大量重复日志
-- ✅ **彻底清理EventBus系统**：移除所有EventBus相关代码和日志
+- ✅ **统一消息系统**：MessageBus作为唯一的消息系统实现
 - ✅ **架构设计改进**：实现真正的全局单例消息系统
 - ✅ **性能优化**：避免重复初始化，减少资源消耗
 
-**技术改进**：
-- 🎯 **MessageBus单例优化**：实现真正的单例模式，确保消息系统只初始化一次
-- 🗑️ **移除EventBus系统**：将main-world中复杂的EventBus简化为MainWorldMessenger
-- 🔧 **重构组件初始化**：UI管理器和控制面板不再重复初始化消息系统
-- 📊 **幂等性设计**：多次调用初始化函数不会产生副作用
-- 📝 **完善错误处理**：增加初始化状态检查和错误恢复机制
-- 🔧 **代码清理**：移除所有EventBus相关导出和引用
-
 **日志改进**：
 ```
-// 之前：重复3次 + EventBus日志混乱
+// 之前：重复日志和混乱的消息系统
 [MessageBus] 注册消息路由 ▶ {type: 'subtitle_detected'}
 [MessageBus] 注册消息路由 ▶ {type: 'subtitle_detected'}  
 [MessageBus] 注册消息路由 ▶ {type: 'subtitle_detected'}
-[Main World] EventBus实例已创建，时间戳: 1644567890123
 
 // 现在：清洁简洁
 [MessageBus] ✅ 消息系统初始化完成（单例模式）
-[ui-manager] ✅ 已获取全局消息系统实例
-[control-panel] ✅ 已获取全局消息系统实例
-[Main World] MainWorldMessenger实例已创建，时间戳: 1644567890123
+[service-worker] Step 5.1: 获取轨道信息
+[service-worker] ✓ 通过Player API获取到17条轨道
+[service-worker] Step 5.2: 选择源语言: en
+[service-worker] Step 5.3: 通过API设置字幕语言: en
 ```
 
 **架构文件**：
-- 📁 已移除 `src/shared/messages/global-message-system.ts` - 全局单例消息系统实现（功能整合到MessageBus）
-- 🔧 `src/shared/components/ui-manager.ts` - 移除重复初始化
-- 🔧 `src/shared/components/control-panel.ts` - 移除重复初始化（重命名自control-panel-new.ts）
+- 🆕 `src/content-scripts/main-world.ts` - 新增SubtitleAPIController类
+- 🔧 `src/background/service-worker.ts` - Step 5优化，集成Player API
+- 🔧 `src/content-scripts/content-script.ts` - 新增API消息处理
+- 📁 `src/shared/messages/message-bus.ts` - 统一消息系统实现
 
 ### 🎯 2025-01-XX - 播放器控制栏功能完成
 

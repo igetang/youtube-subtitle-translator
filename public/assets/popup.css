@@ -1,10 +1,13 @@
+/* Popup专用样式 - 基于sidepanel.css优化 */
 body {
     background-color: #1a1a1a; /* 深色背景 */
     color: #ffffff; /* 白色文字 */
     font-family: 'YouTube Noto', Roboto, Arial, Helvetica, sans-serif;
     padding: 15px;
     margin: 0;
-    height: 100vh; /* 尝试占满侧边栏高度 */
+    width: 400px; /* Popup固定宽度 */
+    min-height: 500px;
+    max-height: 600px;
     box-sizing: border-box;
     overflow-y: auto; /* 添加滚动条，确保所有内容可见 */
 }
@@ -49,6 +52,7 @@ select {
 .custom-select-container {
     position: relative; /* Crucial for panel positioning */
     flex-grow: 1;
+    max-width: 100%; /* 确保适合Popup宽度 */
 }
 
 .custom-select-trigger {
@@ -99,8 +103,8 @@ select {
     border: 1px solid #444; /* Updated border to match theme */
     border-top: none; /* Avoid double border */
     border-radius: 0 0 4px 4px;
-    max-height: 400px; /* Removed !important for consistency */
-    overflow-y: auto;
+    max-height: 300px !important; /* Popup中限制高度 */
+    overflow-y: auto !important;
     z-index: 10; /* Ensure it appears above other elements */
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
 }
@@ -140,9 +144,14 @@ select {
 }
 
 .custom-select-option.disabled {
-    color: #777;
-    cursor: not-allowed;
-    background-color: transparent !important; /* Override hover */
+    opacity: 0.5;
+    color: #999 !important;
+    cursor: not-allowed !important;
+    background-color: #f5f5f5 !important;
+}
+
+.custom-select-option.disabled:hover {
+    background-color: #f5f5f5 !important;
 }
 /* --- End Custom Select Styles --- */
 
@@ -251,7 +260,7 @@ input[type="text"], textarea {
 }
 
 textarea {
-    height: 80px;
+    max-height: 100px; /* Popup中限制高度 */
     font-family: monospace;
     resize: vertical;
 }
@@ -268,6 +277,9 @@ textarea {
 .test-button-container {
     width: 100%;
     margin-bottom: 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
 }
 
 .test-result-container {
@@ -311,6 +323,13 @@ textarea {
 
 .test-result.error {
     color: #f44336;
+}
+
+.test-tip {
+    font-size: 0.8em;
+    color: #888;
+    margin: 0;
+    text-align: center;
 }
 
 .api-info {
@@ -452,9 +471,9 @@ input[type="password"] {
 }
 
 .social-login-container {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
     width: 100%;
     margin-bottom: 15px;
 }
@@ -462,8 +481,9 @@ input[type="password"] {
 .social-login-btn {
     display: flex;
     align-items: center;
-    justify-content: center;
-    padding: 8px 5px;
+    justify-content: flex-start;
+    width: 100%;
+    padding: 8px 12px;
     border-radius: 4px;
     border: 1px solid #555;
     background-color: #333;
@@ -479,7 +499,7 @@ input[type="password"] {
 }
 
 .social-login-btn svg {
-    margin-right: 5px;
+    margin-right: 8px;
 }
 
 .social-login-btn span {
@@ -524,7 +544,7 @@ input[type="password"] {
     justify-content: space-between;
     align-items: center;
     padding: 5px 0;
-    border-bottom: 1px solid #e0e0e0;
+    border-bottom: 1px solid #444;
 }
 
 .toggle-btn {
@@ -562,12 +582,12 @@ input[type="password"] {
 .advanced-setting-item {
     margin-bottom: 15px;
     padding-left: 10px;
-    border-left: 2px solid #e0e0e0;
+    border-left: 2px solid #555;
 }
 
 .setting-description {
     font-size: 12px;
-    color: #666;
+    color: #888;
     margin-top: 2px;
 }
 
@@ -595,21 +615,21 @@ input[type="password"] {
 .ratelimit-panel {
     margin-top: 15px;
     padding: 10px;
-    background-color: #f8f9fa;
+    background-color: #2a2a2a;
     border-radius: 6px;
-    border: 1px solid #e0e0e0;
+    border: 1px solid #444;
 }
 
 .ratelimit-panel h3 {
     margin-top: 0;
     margin-bottom: 10px;
     font-size: 14px;
-    color: #333;
+    color: #ddd;
 }
 
 .ratelimit-info {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+    display: flex;
+    flex-direction: column;
     gap: 8px;
 }
 
@@ -622,13 +642,13 @@ input[type="password"] {
 }
 
 .ratelimit-label {
-    color: #555;
+    color: #999;
     font-weight: 500;
 }
 
 .ratelimit-value {
     font-weight: 600;
-    color: #1a73e8;
+    color: #3ea6ff;
     font-family: 'Roboto Mono', monospace;
 }
 
@@ -696,7 +716,7 @@ input[type="password"] {
 /* 新增：深色滚动条样式 */
 body::-webkit-scrollbar,
 .custom-select-panel::-webkit-scrollbar {
-    width: 10px;
+    width: 8px;
 }
 body::-webkit-scrollbar-track,
 .custom-select-panel::-webkit-scrollbar-track {
@@ -712,4 +732,4 @@ body::-webkit-scrollbar-thumb,
 body::-webkit-scrollbar-thumb:hover,
 .custom-select-panel::-webkit-scrollbar-thumb:hover {
     background-color: #aaa;
-} 
+}

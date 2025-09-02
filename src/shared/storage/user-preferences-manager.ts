@@ -39,13 +39,12 @@ interface VideoSettings {
 
 /**
  * 用户偏好设置管理器
- * 管理用户偏好设置的存取、缓存和变更通知
+ * 管理用户偏好设置的存取和变更通知
  */
 export class UserPreferencesManager {
   private static instance: UserPreferencesManager;
   private storageManager: StorageManager;
   private changeHandlers: Map<UserPreferenceChangeEvent, Set<UserPreferenceChangeHandler>>;
-  private preferencesMemoryCache: UserPreferences | null = null;
   private initialized: boolean = false;
 
   /**
@@ -82,9 +81,6 @@ export class UserPreferencesManager {
       Object.keys(changes).forEach((key) => {
         if (key.startsWith(userPrefsKey)) {
           console.log('[user-preferences-manager] 检测到UserPreferences存储变更:', key);
-          
-          // 清除缓存，强制下次获取时重新读取
-          this.preferencesMemoryCache = null;
           
           // 触发变更事件
           this.triggerPreferencesChangeEvent(changes[key].newValue, changes[key].oldValue);
@@ -233,13 +229,10 @@ export class UserPreferencesManager {
   public async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    console.log('[user-preferences-manager] 初始化开始...');
-
     try {
       // 检查并执行从UserSettings到UserPreferences的迁移
       const migrationNeeded = await checkMigrationNeeded();
       if (migrationNeeded) {
-        console.log('[user-preferences-manager] 需要进行数据迁移...');
         // const legacySettings = await LegacySettingsManager.getAllSettings(); // 🔴 废弃的调用
         // const migratedPreferences = convertUserSettingsToUserPreferences(legacySettings);
         
@@ -247,9 +240,6 @@ export class UserPreferencesManager {
         // 暂时跳过基于旧管理器的自动迁移，以避免错误。
         // 如果需要保留迁移，应提供一个独立的、不依赖旧文件的数据转换函数。
         console.warn('[user-preferences-manager] LegacySettingsManager 已移除，暂时跳过旧数据迁移。');
-
-      } else {
-        console.log('[user-preferences-manager] 无需数据迁移');
       }
 
       // 确保默认偏好设置存在
@@ -284,44 +274,21 @@ export class UserPreferencesManager {
    * 获取完整的用户偏好设置
    */
   public async getUserPreferences(): Promise<UserPreferences> {
-    console.log('[user-preferences-manager] ===== getUserPreferences 开始 =====');
-    
-    // 如果有缓存，直接返回
-    if (this.preferencesMemoryCache) {
-      console.log('[user-preferences-manager] 返回内存缓存的数据:', {
-        hasTranslationService: !!this.preferencesMemoryCache.translationService,
-        translationServiceType: this.preferencesMemoryCache.translationService?.type,
-        fullCache: this.preferencesMemoryCache
-      });
-      return this.preferencesMemoryCache;
-    }
-
     try {
       const storageKey = `${StorageKeys.USER_PREFERENCES_PREFIX}main`;
-      console.log('[user-preferences-manager] 从存储读取数据，key:', storageKey);
+      console.log('[user-preferences-manager] 从Local Storage读取偏好设置, key:', storageKey);
       const data = await this.storageManager.get<UserPreferences | null>(storageKey, null);
       
-      console.log('[user-preferences-manager] 从存储读取的原始数据:', {
-        hasData: !!data,
-        dataType: typeof data,
-        hasTranslationService: data ? !!data.translationService : false,
-        translationServiceType: data?.translationService ? typeof data.translationService : 'N/A',
-        translationServiceValue: data?.translationService,
-        fullData: data
-      });
-
       if (data) {
         // 验证数据完整性
         const validation = this.validateUserPreferences(data);
-        console.log('[user-preferences-manager] 数据验证结果:', {
-          isValid: validation.isValid,
-          errors: validation.errors,
-          warnings: validation.warnings
-        });
         
         if (validation.isValid) {
-          this.preferencesMemoryCache = data;
-          console.log('[user-preferences-manager] 验证通过，返回存储的数据');
+          console.log('[user-preferences-manager] ✓ 读取成功:', {
+            targetLang: data.targetLang,
+            subtitleMode: data.subtitleMode,
+            translationServiceType: data.translationService?.type
+          });
           return data;
         } else {
           console.warn('[user-preferences-manager] 存储的偏好设置数据无效:', validation.errors);
@@ -330,13 +297,6 @@ export class UserPreferencesManager {
 
       // 如果没有找到有效数据，返回默认设置
       console.log('[user-preferences-manager] 使用默认偏好设置');
-      console.log('[user-preferences-manager] DEFAULT_USER_PREFERENCES 内容:', {
-        hasTranslationService: !!DEFAULT_USER_PREFERENCES.translationService,
-        translationServiceType: DEFAULT_USER_PREFERENCES.translationService?.type,
-        fullDefault: DEFAULT_USER_PREFERENCES
-      });
-      
-      this.preferencesMemoryCache = DEFAULT_USER_PREFERENCES;
       return DEFAULT_USER_PREFERENCES;
 
     } catch (error) {
@@ -371,9 +331,6 @@ export class UserPreferencesManager {
       // 保存到存储
       const storageKey = `${StorageKeys.USER_PREFERENCES_PREFIX}main`;
       await this.storageManager.set(storageKey, finalPreferences);
-
-      // 更新缓存
-      this.preferencesMemoryCache = finalPreferences;
 
       console.log('[user-preferences-manager] ✓ setUserPreferences: 成功');
 
@@ -479,12 +436,10 @@ export class UserPreferencesManager {
    */
   public getStatus(): {
     initialized: boolean;
-    hasCachedPreferences: boolean;
     changeListenersCount: number;
   } {
     return {
       initialized: this.initialized,
-      hasCachedPreferences: this.preferencesMemoryCache !== null,
       changeListenersCount: Array.from(this.changeHandlers.values()).reduce((total, set) => total + set.size, 0)
     };
   }

@@ -18,7 +18,7 @@
 #### 技术架构基准
 - **UI方案**: Popup Fallback（非SidePanel）
 - **消息系统**: MessageBus（基于Chrome原生API，非EventBus）
-- **状态管理**: 4状态枚举（`TranslateActiveState`：INACTIVE/PENDING/ACTIVE/INTENT_ONLY）
+- **状态管理**: 3状态枚举（`TranslateActiveState`：INACTIVE/PENDING/ACTIVE）
 - **存储架构**: 三层缓存 + 统一对象存储
 - **数据结构**: TypeScript类型安全，完整接口定义
 
@@ -133,7 +133,7 @@
 2. **历史文档已明确标注其历史性质**
 3. **消息格式统一使用type字段和MessageType枚举**
 4. **UI方案统一为Popup，SidePanel仅作为历史参考**
-5. **状态管理统一使用4状态枚举系统**
+5. **状态管理统一使用3状态枚举系统**
 
 ## 📝 后续建议
 

@@ -1,10 +1,12 @@
-# UI按钮注入机制分析 - 重构前完整流程
+# UI按钮注入机制分析
 
-> 本文档总结了组件重构前src目录下播放器按钮的完整创建逻辑，用于指导重构后的修复工作
+> **更新日期**: 2025-09-02  
+> **当前版本**: v3.0.0  
+> 本文档描述当前播放器按钮的完整创建逻辑和消息通信机制
 
 ## 概述
 
-重构前的播放器按钮注入采用了完善的DOM观察器机制和自动恢复策略，确保在YouTube动态界面中稳定显示翻译和设置按钮。
+播放器按钮注入采用DOM观察器机制和自动恢复策略，结合MessageBus消息系统和3状态翻译管理，确保在YouTube动态界面中稳定显示翻译和设置按钮。
 
 ## 1. 入口和调用链
 
@@ -20,7 +22,7 @@ initializeEventSystem()
 ### 详细流程：
 1. **消息系统初始化**：设置MessageBus和消息处理
 2. **主世界脚本注入**：注入main-world.js到页面
-3. **等待就绪信号**：监听`main-world:ready`事件
+3. **等待就绪信号**：监听`MAIN_WORLD_READY`消息
 4. **UI管理器初始化**：启动按钮注入流程
 
 ## 2. UIManager初始化
@@ -31,16 +33,17 @@ function initializeUIManager() {
   const uiManager = UIManager.getInstance(); // 单例模式
   uiManager.setupObserver(); // 🔑 关键：DOM观察器
   
-  // 事件监听
-  eventBus.on('translation:start_requested', handleTranslationStartRequest);
-  eventBus.on('translation:stop_requested', handleTranslationStopRequest);
+  // 消息监听（通过MessageBus）
+  // 翻译状态变化通过chrome.runtime.onMessage处理
+  // 参见MessageHandlers中的translateStateChanged处理
 }
 ```
 
 ### 关键点：
 - **单例模式**：确保全局唯一的UI管理器实例
 - **DOM观察器**：`setupObserver()`是核心机制
-- **消息驱动**：通过MessageBus响应翻译状态变化
+- **消息驱动**：通过MessageBus和chrome.runtime API响应状态变化
+- **3状态系统**：INACTIVE/PENDING/ACTIVE翻译状态管理
 
 ## 3. UIManager类结构
 
@@ -375,12 +378,57 @@ private waitForAutoplayButton(): Promise<HTMLElement | null> {
 4. **完善按钮结构**：恢复边框图像装饰
 5. **优化插入时机**：确保在正确时机按正确顺序插入
 
+## YouTube Player API集成
+
+### 新增功能：SubtitleAPIController
+
+系统现在集成了YouTube Player API来直接控制字幕：
+
+```typescript
+// src/content-scripts/main-world.ts
+class SubtitleAPIController {
+  // 获取可用字幕轨道（ISO 639-1标准）
+  async getAvailableTracks(): Promise<any[]> {
+    const tracks = this.player.getOption('captions', 'tracklist');
+    return tracks.map(track => ({
+      languageCode: track.languageCode,  // en, fr, de, zh等
+      languageName: track.languageName,
+      kind: track.kind,  // 'asr'表示自动生成
+      isDefault: track.is_default
+    }));
+  }
+  
+  // 设置字幕语言
+  async setSubtitleTrack(langCode: string): Promise<boolean> {
+    this.player.setOption('captions', 'track', {
+      languageCode: langCode
+    });
+    return true;
+  }
+}
+```
+
+### API消息处理流程
+
+1. **Service Worker发起请求**
+   - 发送`getSubtitleTracksAPI`或`setSubtitleTrackAPI`消息
+
+2. **Content Script中转**
+   - 接收Service Worker消息
+   - 通过window.postMessage发送到main-world
+
+3. **Main World执行API调用**
+   - SubtitleAPIController调用YouTube Player API
+   - 返回结果给Content Script
+
+4. **Content Script响应**
+   - 将结果返回给Service Worker
+
 ## 总结
 
-重构前的按钮注入系统是一个完整的、自适应的UI管理方案，具备：
+当前按钮注入系统是一个完整的、自适应的UI管理方案，具备：
 - **自动检测**：智能识别YouTube界面状态
 - **自动恢复**：处理动态内容更新和按钮丢失
 - **用户体验**：提供一致的视觉反馈和交互
 - **兼容性**：与YouTube原生控制栏完美融合
-
-重构时应保持这些核心特性，确保新架构在简化组件职责的同时不丢失关键功能。
+- **API集成**：通过YouTube Player API直接控制字幕，不受界面语言影响

@@ -193,10 +193,10 @@ function handleOpenSidePanel(sender) {
 #### **问题分析**
 ```typescript
 // ❌ 错误逻辑: 乐观更新过早执行
-setSettingPanelOpen(newState: boolean) {
+setPopupOpen(newState: boolean) {
   // 立即更新状态 - 问题所在！
-  this.isSettingPanelOpen = newState;
-  chrome.storage.local.set({ settingPanelOpen: newState });
+  this.isPopupOpen = newState;
+  chrome.storage.session.set({ popupOpen: newState });
   
   // 然后才发送请求
   chrome.runtime.sendMessage({ action: 'openSidePanel' }, (response) => {
@@ -211,31 +211,21 @@ setSettingPanelOpen(newState: boolean) {
 #### **解决方案**
 ```typescript
 // ✅ 正确逻辑: 操作成功后再更新状态
-setSettingPanelOpen(newState: boolean) {
+setPopupOpen(newState: boolean) {
   if (newState) {
-    // 先发送请求
-    chrome.runtime.sendMessage(
-      { action: 'openSidePanel' },
-      (response) => {
-        if (response?.success) {
-          // 成功后才更新状态
-          this.setSettingPanelOpen(true, 'message-success');
-        } else {
-          // 失败时触发降级
-          chrome.runtime.sendMessage({ action: 'openPopupFallback' }); // 现在使用type字段
-        }
-      }
-    );
+    // 直接调用Chrome API（Popup架构）
+    chrome.action.openPopup();
+    // Popup打开后会自动更新状态
   }
 }
 
-private setSettingPanelOpen(isOpen: boolean, source?: string) {
-  this.isSettingPanelOpen = isOpen;
+private updatePopupState(isOpen: boolean, source?: string) {
+  this.isPopupOpen = isOpen;
   this.updateSettingButtonState(isOpen);
   
-  // 只在操作真正成功时才存储
-  if (source === 'message-success' || source === 'popup') {
-    chrome.storage.local.set({ settingPanelOpen: isOpen });
+  // 使用session存储跨标签页共享状态
+  if (source === 'popup-opened' || source === 'popup-closed') {
+    chrome.storage.session.set({ runtime_state_popupOpen: isOpen });
   }
 }
 ```

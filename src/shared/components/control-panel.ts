@@ -113,9 +113,9 @@ export class ControlPanel {
     );
     
     this.runtimeStateManager.addChangeListener(
-      RuntimeStateChangeEvent.SETTING_PANEL_CHANGED,
+      RuntimeStateChangeEvent.POPUP_STATE_CHANGED,
       (newValue, oldValue) => {
-        console.log('[control-panel] 状态变更: settingPanelOpen [', oldValue, '→', newValue, ']');
+        console.log('[control-panel] 状态变更: popupOpen [', oldValue, '→', newValue, ']');
       }
     );
   }
@@ -275,13 +275,13 @@ export class ControlPanel {
         }));
       }
       
-      if (updates.settingPanelOpen !== undefined) {
+      if (updates.popupOpen !== undefined) {
         promises.push(new Promise<void>((resolve, reject) => {
           chrome.runtime.sendMessage({
             type: 'setRuntimeState',
             data: {
-              stateKey: 'settingPanelOpen',
-              value: updates.settingPanelOpen
+              stateKey: 'popupOpen',
+              value: updates.popupOpen
             }
           }, (response) => {
             if (chrome.runtime.lastError) {

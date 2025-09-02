@@ -41,10 +41,11 @@ private MAX_CACHE_ITEMS = 1000;
       });
       
       const localStorageData = storageData[cacheKey] || {};
-      console.log(`[TranslationLocalStorage] 从本地存储加载了 ${Object.keys(localStorageData).length} 条记录`);
+      // 简化加载日志
+      // console.log(`[TranslationLocalStorage] 加载: ${Object.keys(localStorageData).length} 条`);
       return localStorageData;
     } catch (error) {
-      console.error('[TranslationLocalStorage] 读取本地存储失败:', error);
+      console.error('[TranslationLocalStorage] ✗ 读取失败');
       return {};
     }
   }
@@ -67,9 +68,10 @@ private MAX_CACHE_ITEMS = 1000;
       await new Promise<void>((resolve) => {
         chrome.storage.local.set({ [cacheKey]: localStorageData }, () => resolve());
       });
-      console.log(`[TranslationLocalStorage] 已更新本地存储，现包含 ${Object.keys(localStorageData).length} 条记录`);
+      // 简化更新日志
+      // console.log(`[TranslationLocalStorage] 更新: ${Object.keys(localStorageData).length} 条`);
     } catch (error) {
-      console.error('[TranslationLocalStorage] 更新本地存储失败:', error);
+      console.error('[TranslationLocalStorage] ✗ 更新失败');
     }
   }
   
@@ -80,7 +82,8 @@ private MAX_CACHE_ITEMS = 1000;
     const localStorageSize = Object.keys(localStorageData).length;
     
     if (localStorageSize > this.MAX_CACHE_ITEMS) {
-      console.log(`[TranslationLocalStorage] 本地存储过大 (${localStorageSize} > ${this.MAX_CACHE_ITEMS})，清理旧条目...`);
+      // 简化清理日志
+      // console.log(`[TranslationLocalStorage] 清理: ${localStorageSize} > ${this.MAX_CACHE_ITEMS}`);
       
       // 获取本地存储键并按创建时间排序（这里简化为按键的字母顺序）
       const keys = Object.keys(localStorageData).sort();
@@ -94,7 +97,8 @@ private MAX_CACHE_ITEMS = 1000;
         delete localStorageData[key];
       });
       
-      console.log(`[TranslationLocalStorage] 已移除 ${removeCount} 条旧存储条目`);
+      // 简化移除日志
+      // console.log(`[TranslationLocalStorage] 移除: ${removeCount} 条`);
     }
   }
   
@@ -108,9 +112,10 @@ private MAX_CACHE_ITEMS = 1000;
       await new Promise<void>((resolve) => {
         chrome.storage.local.remove(cacheKey, () => resolve());
       });
-      console.log(`[TranslationLocalStorage] 已清空本地存储: ${cacheKey}`);
+      // 注释掉清空日志
+      // console.log(`[TranslationLocalStorage] 清空: ${cacheKey}`);
     } catch (error) {
-      console.error('[TranslationLocalStorage] 清空本地存储失败:', error);
+      console.error('[TranslationLocalStorage] ✗ 清空失败');
     }
   }
   
@@ -155,7 +160,7 @@ private MAX_CACHE_ITEMS = 1000;
       
       return stats;
     } catch (error) {
-      console.error('[TranslationLocalStorage] 获取本地存储统计失败:', error);
+      console.error('[TranslationLocalStorage] ✗ 统计失败');
       return {
         totalItems: 0,
         totalSize: 0,

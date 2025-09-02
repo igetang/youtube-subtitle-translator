@@ -39,7 +39,8 @@ export class OpenAITranslator {
     sourceLang: string,
     targetLang: string
   ): Promise<{ [id: string]: string }> {
-    console.log(`[OpenAITranslator] 开始翻译 ${subtitles.length} 条字幕，从 ${sourceLang} 到 ${targetLang}`);
+    // 注释掉开始日志，避免前后确认型冗余
+    // console.log(`[OpenAITranslator] 开始翻译 ${subtitles.length} 条字幕`);
     
     const results: { [id: string]: string } = {};
     
@@ -60,12 +61,14 @@ export class OpenAITranslator {
     }
     
         if (fromLocalStorage.length > 0) {
-      console.log(`[OpenAITranslator] ✓ 从本地存储中获取了 ${fromLocalStorage.length} 条翻译`);
+      // 简化缓存命中日志
+      // console.log(`[OpenAITranslator] ✓ 缓存命中: ${fromLocalStorage.length} 条`);
     }
 
     // 如果全部从本地存储获取，直接返回结果
     if (pendingTranslation.length === 0) {
-              console.log(`[OpenAITranslator] 所有翻译都从本地存储获取，无需调用API`);
+              // 简化完全缓存命中日志
+              console.log(`[OpenAITranslator] ✓ 全部缓存命中`);
       return results;
     }
     
@@ -114,7 +117,8 @@ export class OpenAITranslator {
       const batchPromises = currentBatches.map(async (batch, groupIndex) => {
         const batchIndex = i + groupIndex;
         try {
-          console.log(`[OpenAITranslator] 处理第 ${batchIndex + 1}/${batches.length} 批字幕 (${batch.length} 条)`);
+          // 注释掉批次处理过程日志
+          // console.log(`[OpenAITranslator] 处理批次 ${batchIndex + 1}/${batches.length}`);
           
           // 构建批量翻译的消息
           const messages = [
@@ -151,7 +155,8 @@ export class OpenAITranslator {
           // 计算请求延迟
           const delay = this.rateLimitManager.calculateRequestDelay();
           if (delay > 10) {
-            console.log(`[OpenAITranslator] 添加 ${delay}ms 请求延迟以避免限流`);
+            // 注释掉延迟日志
+            // console.log(`[OpenAITranslator] 延迟 ${delay}ms`);
             await new Promise(resolve => setTimeout(resolve, delay));
           }
           
@@ -180,7 +185,7 @@ export class OpenAITranslator {
               }
             });
           } else {
-            console.error(`[OpenAITranslator] OpenAI返回的分段数量 (${translatedSegments.length}) 少于请求的字幕数量 (${batch.length})`);
+            console.error(`[OpenAITranslator] ✗ 分段数量不匹配: ${translatedSegments.length}/${batch.length}`);
             
             // 尝试一对一匹配尽可能多的字幕
             batch.forEach((subtitle, index) => {
@@ -202,7 +207,7 @@ export class OpenAITranslator {
             });
           }
         } catch (error) {
-          console.error(`[OpenAITranslator] 批次 ${batchIndex + 1} 翻译失败:`, error);
+          console.error(`[OpenAITranslator] ✗ 批次${batchIndex + 1}失败`);
           
           // 记录该批次中的每个字幕错误
           batch.forEach(subtitle => {
@@ -226,7 +231,8 @@ export class OpenAITranslator {
 
     // 7. 添加成功提示
     const successCount = Object.keys(results).length - fromLocalStorage.length;
-          console.log(`[OpenAITranslator] 翻译成功完成！从API翻译 ${successCount}/${subtitles.length} 条字幕，从本地存储获取 ${fromLocalStorage.length} 条`);
+          // 合并为一条简洁日志
+          console.log(`[OpenAITranslator] ✓ 翻译完成: API ${successCount}条, 缓存 ${fromLocalStorage.length}条`);
     
     return results;
   }
@@ -258,7 +264,8 @@ export class OpenAITranslator {
     
     const attemptRequest = async (): Promise<string[]> => {
       try {
-        console.log(`[OpenAI Stream] 发送请求${retryCount > 0 ? ` (重试 #${retryCount})` : ''}`);
+        // 注释掉发送请求日志
+        // console.log(`[OpenAI Stream] 发送请求${retryCount > 0 ? ` (重试 #${retryCount})` : ''}`);
         
         const response = await fetch(url, {
           method: 'POST',
@@ -305,14 +312,16 @@ export class OpenAITranslator {
           
           // 收到第一个数据块，报告开始流式传输
           if (isFirst) {
-            console.log('[OpenAI Stream] 开始接收流式数据');
+            // 注释掉流式数据开始日志
+            // console.log('[OpenAI Stream] 开始接收流式数据');
             isFirst = false;
           }
           
           // 每500ms报告一次进度
           const now = Date.now();
           if (now - lastProgressUpdate > 500) {
-            console.log(`[OpenAI Stream] 正在接收数据，当前长度: ${combinedContent.length}字符`);
+            // 注释掉过程日志
+            // console.log(`[OpenAI Stream] 接收中: ${combinedContent.length}字符`);
             lastProgressUpdate = now;
           }
           
@@ -329,7 +338,8 @@ export class OpenAITranslator {
                 }
               }
             } catch (error: unknown) {
-              console.warn('[OpenAI Stream] 解析流数据出错:', error, '原始行:', line);
+              // 静默处理解析错误
+              // console.warn('[OpenAI Stream] 解析错误');
             }
           }
         }
@@ -353,7 +363,8 @@ export class OpenAITranslator {
             segments = lines.slice(0, expectedSegments);
           } else {
             // 否则，按字符均分
-            console.warn(`[OpenAI Stream] 无法按预期分割结果，尝试按字符均分: ${combinedContent}`);
+            // 简化警告日志
+            // console.warn(`[OpenAI Stream] 分割失败，按字符均分`);
             segments = [];
             const charsPerSegment = Math.ceil(combinedContent.length / expectedSegments);
             
@@ -367,7 +378,8 @@ export class OpenAITranslator {
           }
         }
         
-        console.log(`[OpenAI Stream] 获取到 ${segments.length} 个文本段落，预期 ${expectedSegments} 个`);
+        // 简化结果日志
+        // console.log(`[OpenAI Stream] 结果: ${segments.length}/${expectedSegments} 段`);
         
         // 确保我们返回至少预期数量的段落
         while (segments.length < expectedSegments) {
@@ -387,7 +399,8 @@ export class OpenAITranslator {
            (error.message && error.message.includes('rate limit')))
         )) {
           retryCount++;
-          console.warn(`[OpenAI Stream] 请求失败，正在重试 (${retryCount}/${MAX_RETRIES}):`, error);
+          // 简化重试日志
+          console.warn(`[OpenAI Stream] 重试 ${retryCount}/${MAX_RETRIES}`);
           
           // 指数退避重试
           const delayMs = 1000 * Math.pow(2, retryCount - 1);

@@ -4,6 +4,8 @@
  * 基于 architecture.md 7.1.1 UserPreferences 设计规范
  */
 
+import type { SimplifiedCaptionTrack, TrackMetadata } from './subtitle-types';
+
 /**
  * 字幕显示模式
  */
@@ -220,26 +222,45 @@ export type TranslationServiceForCacheKey = Pick<TranslationServiceComplete,
 export type TranslationService = TranslationServiceComplete;
 
 /**
- * 视频源语言缓存项 - 极简设计
- * 基于 architecture.md 7.1.4 VideoSourceLanguageCache 设计规范
+ * 视频源语言完整数据 - 架构设计标准版
+ * 存储每个视频的完整源语言信息，包括可用列表和用户选择
+ * 基于architecture.md 7.1.4设计规范
+ * 
+ * 注意：不存储baseUrl，避免过期问题
  */
-export interface VideoSourceLanguageItem {
+export interface VideoSourceLanguageData {
   /** 视频ID */
   videoId: string;
-  /** 选择的源语言代码 */
-  sourceLang: string;
+  
+  /** 可用的源语言列表（仅元数据，不含URL） */
+  availableSourceLanguages: TrackMetadata[];
+  
+  /** 用户上次选择的源语言代码 */
+  lastSelectedLanguage?: string;
+  
+  /** 用户选中的具体源语言轨道（仅元数据） */
+  selectedSourceTrack?: TrackMetadata;
+  
+  /** 数据获取时间戳 */
+  fetchedAt: number;
+  
+  /** 最后访问时间戳 */
+  lastAccessed: number;
 }
 
 /**
- * 视频源语言缓存管理器
- * 基于 architecture.md 7.1.4 VideoSourceLanguageCache 设计规范
+ * 视频源语言缓存容器
+ * 使用FIFO策略管理多个视频的源语言数据
  */
 export interface VideoSourceLanguageCache {
   /** 缓存项数组，按FIFO顺序排列 (最新的在数组末尾) */
-  items: VideoSourceLanguageItem[];
+  items: VideoSourceLanguageData[];
   /** 最大缓存数量 */
   maxSize: number; // 固定为10
 }
+
+// 向后兼容：保留旧的类型别名（将逐步废弃）
+export type VideoSourceLanguageItem = VideoSourceLanguageData;
 
 /**
  * 默认视频源语言缓存

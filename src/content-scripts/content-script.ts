@@ -22,6 +22,10 @@ let uiRenderer: UIRenderer | null = null;
 let stateManager: StateManager | null = null;
 let isInitialized = false;
 let lastPopupCloseTime = 0;
+let capturedSourceLang: string | null = null; // 存储从service-worker传递的源语言
+
+// API响应处理器Map
+const apiResponseHandlers = new Map<string, (response: any) => void>();
 
 /**
  * 获取当前视频ID
@@ -412,10 +416,16 @@ function setupMessageHandlers(): void {
     // 处理REQUEST_SUBTITLE_CAPTURE消息
     if (messageType === 'REQUEST_SUBTITLE_CAPTURE') {
       console.log(`[content-script] 收到Chrome消息: ${messageType}`);
+      // 保存源语言信息
+      if (message.data?.sourceLang) {
+        capturedSourceLang = message.data.sourceLang;
+        console.log(`[content-script] 保存源语言: ${capturedSourceLang}`);
+      }
       window.postMessage({
         source: 'content-script',
         type: 'REQUEST_SUBTITLE_CAPTURE',
-        videoId: message.data?.videoId || getVideoId()
+        videoId: message.data?.videoId || getVideoId(),
+        sourceLang: message.data?.sourceLang // 传递给main-world
       }, '*');
       sendResponse({ success: true });
       return false;
@@ -452,6 +462,20 @@ function setupMessageHandlers(): void {
       return true; // 异步响应
     }
     
+    // 处理通过Player API获取字幕轨道
+    if (messageType === 'getSubtitleTracksAPI') {
+      console.log(`[content-script] 收到Chrome消息: ${messageType}`);
+      handleGetSubtitleTracksAPI(sendResponse);
+      return true; // 异步响应
+    }
+    
+    // 处理通过Player API设置字幕语言（ISO 639-1）
+    if (messageType === 'setSubtitleTrackAPI') {
+      console.log(`[content-script] 收到Chrome消息: ${messageType}, langCode: ${message.langCode}`);
+      handleSetSubtitleTrackAPI(message.langCode, sendResponse);
+      return true; // 异步响应
+    }
+    
     // 转发其他消息给UI组件（这些消息会在handleChromeMessage中打印日志，这里不再重复打印）
     if (uiRenderer || stateManager) {
       handleUserAction('chromeMessage', {
@@ -469,12 +493,33 @@ function setupMessageHandlers(): void {
   window.addEventListener('message', (event: MessageEvent) => {
     if (event.source !== window || !event.data) return;
     
-    const { source, type, payload } = event.data;
+    const { source, type, payload, _requestId } = event.data;
     
     // 处理来自main-world的字幕数据
     if (source === 'main-world' && type === 'SUBTITLE_CAPTURED') {
       console.log('[content-script] 收到字幕数据:', payload.count, '条');
       handleSubtitleCaptured(payload);
+    }
+    
+    // 处理来自main-world的API响应
+    if (source === 'main-world') {
+      // 字幕轨道API响应
+      if (type === 'SUBTITLE_TRACKS_API_RESPONSE' && _requestId) {
+        const handler = apiResponseHandlers.get(_requestId);
+        if (handler) {
+          handler(payload);
+          apiResponseHandlers.delete(_requestId);
+        }
+      }
+      
+      // 设置字幕语言API响应
+      if (type === 'SET_SUBTITLE_TRACK_API_RESPONSE' && _requestId) {
+        const handler = apiResponseHandlers.get(_requestId);
+        if (handler) {
+          handler(payload);
+          apiResponseHandlers.delete(_requestId);
+        }
+      }
     }
   });
   
@@ -484,6 +529,67 @@ function setupMessageHandlers(): void {
 // handleGetSubtitleData函数已被移除
 // 原因：方法1（主动API调用）频繁失败，已迁移到方法2（字幕拦截器）
 // 详见：/docs/guides/decision-log.md #23
+
+/**
+ * 处理通过Player API获取字幕轨道
+ */
+function handleGetSubtitleTracksAPI(sendResponse: (response: any) => void): void {
+  console.log('[content-script] 开始通过API获取字幕轨道');
+  
+  const requestId = `api_tracks_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  const timeout = setTimeout(() => {
+    apiResponseHandlers.delete(requestId);
+    sendResponse({
+      success: false,
+      error: 'API获取字幕轨道超时'
+    });
+  }, 5000);
+  
+  // 设置响应处理器
+  apiResponseHandlers.set(requestId, (response) => {
+    clearTimeout(timeout);
+    sendResponse(response);
+  });
+  
+  // 发送消息到main-world
+  window.postMessage({
+    source: 'content-script',
+    type: 'GET_SUBTITLE_TRACKS_API',
+    _requestId: requestId
+  }, '*');
+}
+
+/**
+ * 处理通过Player API设置字幕语言（使用ISO 639-1标准）
+ */
+function handleSetSubtitleTrackAPI(langCode: string, sendResponse: (response: any) => void): void {
+  console.log(`[content-script] 通过API设置字幕语言: ${langCode}`);
+  
+  const requestId = `api_set_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  const timeout = setTimeout(() => {
+    apiResponseHandlers.delete(requestId);
+    sendResponse({
+      success: false,
+      error: 'API设置字幕语言超时'
+    });
+  }, 5000);
+  
+  // 设置响应处理器
+  apiResponseHandlers.set(requestId, (response) => {
+    clearTimeout(timeout);
+    sendResponse(response);
+  });
+  
+  // 发送消息到main-world
+  window.postMessage({
+    source: 'content-script',
+    type: 'SET_SUBTITLE_TRACK_API',
+    langCode: langCode,  // ISO 639-1语言代码
+    _requestId: requestId
+  }, '*');
+}
 
 /**
  * 处理获取视频轨道数据
@@ -577,7 +683,8 @@ function handleSubtitleCaptured(payload: any): void {
       videoId: videoId,
       subtitles: payload.subtitles,
       url: payload.url,
-      count: payload.count
+      count: payload.count,
+      sourceLang: capturedSourceLang // 传递保存的源语言
     }
   }, (response) => {
     if (chrome.runtime.lastError) {

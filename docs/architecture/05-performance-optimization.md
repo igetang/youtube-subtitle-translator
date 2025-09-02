@@ -2,14 +2,15 @@
 
 > **文档更新**: 2025-07-16  
 > **版本**: v5.24.7+ (**当前统一版本**)  
-> **当前方案**: ✅ **Popup Fallback** (已实施完成)
+> **当前方案**: ✅ **Popup直接调用** (已实施完成)
 
 ## 🚨 **方案变更说明**
 
-### **✅ 当前采用方案: Popup Fallback**
+### **✅ 当前采用方案: Popup直接调用架构**
 - **性能优化**: 完全适配Popup架构，优化页面检测和界面切换性能
 - **内存管理**: 简化的状态管理，移除复杂的SidePanel同步开销
-- **响应速度**: 页面内检测机制，响应速度 < 100ms
+- **响应速度**: 直接API调用，无消息中转延迟，响应速度 < 50ms
+- **架构简化**: 减少消息传递层级，提升整体性能
 
 ### **❌ 已放弃方案: SidePanel**
 
@@ -491,11 +492,11 @@ function performanceMonitor(operation: string) {
 
 ```typescript
 // ❌ 已废弃：SidePanel性能监控示例
-class SidePanelManager {  // ❌ 已废弃：SidePanel方案已放弃
-  @performanceMonitor('SidePanel打开操作')  // ❌ 已废弃操作
-  async openSidePanel(tabId: number): Promise<void> {
-    // 自动记录性能指标的方法实现
-    await chrome.sidePanel.open({ tabId });
+class PopupManager {  // ✅ 当前方案：Popup直接调用
+  @performanceMonitor('Popup打开操作')  
+  async openPopup(): Promise<void> {
+    // 直接调用Chrome API，无需消息中转
+    await chrome.action.openPopup();
   }
 }
 ```
@@ -618,10 +619,13 @@ interface IRuntimeStateManager {
  * 缓存架构设计见第6章6.2节
  */
 interface ITranslationCacheManager {
-  // 缓存操作
-  get(videoId: string, targetLang: string, service: TranslationServiceForCacheKey): Promise<TranslationCacheData | null>;
+  // 缓存操作 - 完整的缓存键参数
+  get(videoId: string, sourceLang: string, targetLang: string, service: TranslationServiceForCacheKey): Promise<TranslationCacheData | null>;
   set(data: Omit<TranslationCacheData, 'dataHash'>): Promise<void>;
   clear(options?: { videoId?: string }): Promise<void>;
+  
+  // 查找操作 - 支持原始字幕复用
+  findByVideoAndSourceLang(videoId: string, sourceLang: string): Promise<TranslationCacheData[]>;
   
   // 批量操作
   getBatch(requests: CacheRequest[]): Promise<Array<TranslationCacheData | null>>;
