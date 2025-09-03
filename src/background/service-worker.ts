@@ -1591,6 +1591,23 @@ async function handleRuntimeStateGet(data: any): Promise<any> {
 }
 
 /**
+ * 通知content-script状态变更
+ */
+async function notifyStateChange(tabId: number, stateKey: string, value: any): Promise<void> {
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type: 'STATE_CHANGED',
+      data: {
+        stateKey,
+        value
+      }
+    });
+  } catch (error) {
+    // 忽略错误：标签页可能已关闭
+  }
+}
+
+/**
  * 处理运行时状态设置
  */
 async function handleRuntimeStateSet(data: any): Promise<any> {
@@ -2353,6 +2370,9 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
             type: 'SHOW_ERROR_MESSAGE',
             data: '字幕获取超时，请重试'
           }).catch(() => {});
+          
+          // 通知content-script更新UI状态
+          await notifyStateChange(tabId, 'translateActive', TranslateActiveState.INACTIVE);
         }
         
         pendingTimeouts.delete(timeoutKey);
@@ -2400,6 +2420,10 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
   } catch (error) {
     console.error(`[service-worker] ✗ handleToggleTranslate: ${error instanceof Error ? error.message : String(error)}`);
     await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
+    // 通知content-script更新UI状态
+    if (data?.tabId) {
+      await notifyStateChange(data.tabId, 'translateActive', TranslateActiveState.INACTIVE);
+    }
     return {
       success: false,
       error: error instanceof Error ? error.message : '处理翻译切换失败'
@@ -2538,6 +2562,10 @@ async function continueTranslationWithSubtitles(data: any): Promise<any> {
   } catch (error) {
     console.error('[service-worker] 继续翻译流程失败:', error);
     await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
+    // 通知content-script更新UI状态
+    if (data?.tabId) {
+      await notifyStateChange(data.tabId, 'translateActive', TranslateActiveState.INACTIVE);
+    }
     return {
       success: false,
       error: error instanceof Error ? error.message : '翻译处理失败'

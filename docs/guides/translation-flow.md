@@ -382,34 +382,65 @@ function selectBestSourceLanguage(
 - 包含视频ID、源事件、源语言、目标语言等信息
 - 初始化`TranslationDispatcher`并启动渐进式翻译
 
-### 3.2 渐进式翻译策略
+### 3.2 渐进式翻译策略（2025年9月优化版）
 
-- 获取当前视频播放时间
-- 按照优先级分组字幕事件：
-  - 高优先级：当前播放位置前后的字幕（默认90秒窗口）
-  - 普通优先级：其他字幕
-- 先处理高优先级字幕，确保当前观看部分立即显示翻译
-- 后台处理普通优先级字幕
+#### 3.2.1 核心原则
+- **紧急优先**：当前播放位置上下文（5-10条）立即翻译并显示
+- **顺序批量**：剩余字幕按30-50条分批顺序翻译
+- **智能断句**：考虑句子边界，避免切断语义
+- **渐进更新**：每批完成后立即更新显示
+- **延迟存储**：全部完成后才保存到localStorage
 
+#### 3.2.2 优先级分组
 ```typescript
-// 伪代码示例 - 按播放位置的字幕优先级分组
-function groupSubtitlesByPriority(subtitles, currentTime, windowSize = 90) {
-  const halfWindow = windowSize / 2;
-  const windowStart = Math.max(0, currentTime - halfWindow);
-  const windowEnd = currentTime + halfWindow;
+function getUrgentSubtitles(subtitles, currentTime, count = 7) {
+  const currentIndex = subtitles.findIndex(s => 
+    currentTime >= s.start && currentTime <= s.end
+  );
   
-  return {
-    highPriority: subtitles.filter(sub => 
-      (sub.start >= windowStart && sub.start <= windowEnd) ||
-      (sub.end >= windowStart && sub.end <= windowEnd) ||
-      (sub.start <= windowStart && sub.end >= windowEnd)
-    ),
-    normalPriority: subtitles.filter(sub => 
-      !(sub.start >= windowStart && sub.start <= windowEnd) &&
-      !(sub.end >= windowStart && sub.end <= windowEnd) &&
-      !(sub.start <= windowStart && sub.end >= windowEnd)
-    )
-  };
+  // 获取当前位置前3条，后4条（共7条）
+  const start = Math.max(0, currentIndex - 3);
+  const end = Math.min(subtitles.length, currentIndex + 4);
+  
+  return subtitles.slice(start, end);
+}
+```
+
+#### 3.2.3 智能断句策略
+```typescript
+function smartBatchSplit(subtitles, targetSize = 40) {
+  const batches = [];
+  let currentBatch = [];
+  
+  for (let i = 0; i < subtitles.length; i++) {
+    const subtitle = subtitles[i];
+    currentBatch.push(subtitle);
+    
+    // 判断是否应该结束当前批次
+    const shouldSplit = 
+      // 句子结束标点（优先级最高）
+      subtitle.text.match(/[.!?。！？;；]$/) ||
+      // 达到目标大小且下一条是新句子开头
+      (currentBatch.length >= targetSize && 
+       subtitles[i+1]?.text.match(/^[A-Z\u4e00-\u9fa5]/)) ||
+      // 时间间隔大于2秒（可能是话题转换）
+      (subtitles[i+1] && subtitles[i+1].start - subtitle.end > 2) ||
+      // 超过最大限制（容错）
+      currentBatch.length >= targetSize + 5;
+    
+    // 批次大小在合理范围内才分割
+    if (shouldSplit && currentBatch.length >= targetSize - 5) {
+      batches.push(currentBatch);
+      currentBatch = [];
+    }
+  }
+  
+  // 处理剩余
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch);
+  }
+  
+  return batches;
 }
 ```
 
@@ -433,43 +464,138 @@ function groupSubtitlesByPriority(subtitles, currentTime, windowSize = 90) {
 - 部分命中：只翻译缓存中缺失的部分
 - 完全未命中：翻译全部字幕
 
-### 4.2 翻译执行
+### 4.2 翻译执行（优化版）
 
-- `TranslationDispatcher`向后台脚本发送翻译请求
-- 后台脚本根据用户设置选择翻译API：
-  - Google翻译（双路径实现）
-  - 微软/Bing翻译（双路径实现）
-  - OpenAI翻译（需用户API密钥）
-  - 有道翻译
-
-- 大批量字幕分批处理，避免超出API限制
-- 实现请求间隔和故障转移机制
-- 返回格式化的翻译结果
-
+#### 4.2.1 顺序批量翻译流程
 ```typescript
-// 伪代码示例 - 批处理翻译
-async function translateInBatches(subtitles, batchSize) {
-  const results = {};
-  for (let i = 0; i < subtitles.length; i += batchSize) {
-    const batch = subtitles.slice(i, i + batchSize);
-    const batchResults = await translateBatch(batch);
-    Object.assign(results, batchResults);
+async function progressiveTranslate(subtitles, currentTime) {
+  const translationResults = new Map(); // 临时存储结果
+  
+  // Step 1: 紧急翻译（5-10条，智能断句）
+  const urgent = getUrgentSubtitles(subtitles, currentTime, 7);
+  const urgentBatch = smartBoundary(urgent);
+  const urgentResults = await translateBatch(urgentBatch);
+  
+  // 立即显示紧急翻译结果
+  displayImmediately(urgentResults);
+  translationResults.set('urgent', urgentResults);
+  
+  // Step 2: 顺序批量翻译剩余部分
+  const remaining = getRemainingSubtitles(subtitles, urgent);
+  const batches = smartBatchSplit(remaining, 40); // 40条一批
+  
+  for (let i = 0; i < batches.length; i++) {
+    console.log(`[翻译] 处理批次 ${i+1}/${batches.length}`);
     
-    // 添加间隔，避免API限制
-    if (i + batchSize < subtitles.length) {
-      await new Promise(resolve => setTimeout(resolve, 500));
+    // 翻译当前批次
+    const batchResult = await translateBatch(batches[i]);
+    
+    // 每批完成后立即组合并更新显示（渐进式）
+    translationResults.set(`batch_${i}`, batchResult);
+    const combined = combineAllResults(translationResults);
+    updateSubtitleDisplay(combined);
+    
+    // 小延迟避免API限流（200ms）
+    if (i < batches.length - 1) {
+      await sleep(200);
     }
   }
-  return results;
+  
+  // Step 3: 全部完成后才存储到localStorage
+  console.log('[翻译] 所有批次完成，保存到local storage');
+  await saveToLocalStorage(translationResults);
 }
 ```
 
-### 4.3 缓存更新
+#### 4.2.2 批量翻译API调用
 
-- 使用`SubtitleCacheManager`保存翻译结果
-- 存储在`chrome.storage.local`中
-- 自动管理缓存大小，实现LRU（最近最少使用）策略
-- 缓存包含时间戳，支持过期清理
+**分隔符问题解决方案**：
+- 使用Unicode私有区域字符（`\uE000-\uF8FF`）作为分隔符
+- Google API保证不翻译这些字符
+- 避免当前`\n---SEPARATOR---\n`被翻译或格式改变的问题
+
+```typescript
+async function translateBatch(texts, sourceLang, targetLang) {
+  // 使用Unicode私有区域字符作为分隔符（不会被翻译）
+  const MAGIC_SEPARATOR = '\uE000\uE001\uE002';
+  
+  // 合并文本
+  const combinedText = texts.join(MAGIC_SEPARATOR);
+  
+  // 调用Google Translate API
+  const params = new URLSearchParams({
+    client: 'gtx',
+    sl: sourceLang,
+    tl: targetLang,
+    dt: 't',
+    q: combinedText
+  });
+  
+  const response = await fetch(
+    `https://translate.googleapis.com/translate_a/single?${params}`
+  );
+  
+  const data = await response.json();
+  let translatedText = '';
+  
+  // 解析翻译结果
+  if (data && data[0]) {
+    data[0].forEach(item => {
+      if (item[0]) translatedText += item[0];
+    });
+  }
+  
+  // 使用相同分隔符分割结果
+  return translatedText.split(MAGIC_SEPARATOR);
+}
+```
+
+#### 4.2.3 翻译服务选择
+- **Google翻译**：使用Unicode分隔符批量处理
+- **OpenAI翻译**：使用`\n---\n`分隔符（API能正确处理）
+- **微软翻译**：支持JSON数组格式批量请求
+- **其他服务**：根据API特性选择合适方案
+
+### 4.3 缓存更新（优化版）
+
+#### 4.3.1 延迟存储策略
+- **不再实时存储**：避免频繁IO操作
+- **全部完成后存储**：一次性写入localStorage
+- **内存缓存**：翻译过程中使用Map临时存储
+
+```typescript
+async function saveToLocalStorage(translationResults) {
+  // 组合所有翻译结果
+  const fullTranslation = {
+    videoId: getCurrentVideoId(),
+    timestamp: Date.now(),
+    subtitles: combineAllResults(translationResults),
+    metadata: {
+      sourceLang: detectSourceLang(),
+      targetLang: getTargetLang(),
+      translationService: getService(),
+      totalSubtitles: getTotalCount(),
+      batchCount: translationResults.size
+    }
+  };
+  
+  // 一次性保存到localStorage
+  await chrome.storage.local.set({
+    [`translation_${fullTranslation.videoId}`]: fullTranslation
+  });
+  
+  console.log('[缓存] 翻译结果已保存', {
+    videoId: fullTranslation.videoId,
+    subtitleCount: fullTranslation.subtitles.length
+  });
+}
+```
+
+#### 4.3.2 缓存管理
+- 使用`TranslationCacheManager`统一管理
+- 实现LRU（最近最少使用）策略
+- 缓存键：`videoId + sourceLang + targetLang + service`
+- 缓存过期：7天自动清理
 
 ## 5. 字幕显示与更新
 

@@ -60,7 +60,7 @@ export class SubtitleOverlay {
     this.overlayElement.id = 'youtube-subtitle-overlay';
     this.overlayElement.style.cssText = `
       position: absolute;
-      bottom: 80px;
+      bottom: 140px;
       left: 50%;
       transform: translateX(-50%);
       z-index: 2100;
@@ -249,10 +249,10 @@ export class SubtitleOverlay {
     
     if (isFullscreen) {
       // 全屏模式下调整位置
-      this.overlayElement.style.bottom = '120px';
+      this.overlayElement.style.bottom = '180px';
     } else {
       // 正常模式
-      this.overlayElement.style.bottom = '80px';
+      this.overlayElement.style.bottom = '140px';
     }
   }
 }

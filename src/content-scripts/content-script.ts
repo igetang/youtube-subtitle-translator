@@ -455,6 +455,19 @@ function setupMessageHandlers(): void {
       return false;
     }
     
+    // 处理STATE_CHANGED消息 - 状态变更通知
+    if (messageType === 'STATE_CHANGED') {
+      console.log('[content-script] 收到状态变更通知:', message.data);
+      if (message.data && message.data.stateKey === 'translateActive') {
+        // 更新UI状态
+        if (stateManager) {
+          stateManager.updateState('translateActive', message.data.value);
+        }
+      }
+      sendResponse({ success: true });
+      return false;
+    }
+    
     // 处理getVideoTrackData消息
     if (messageType === 'getVideoTrackData') {
       console.log(`[content-script] 收到Chrome消息: ${messageType}`);
