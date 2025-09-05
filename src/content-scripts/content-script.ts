@@ -297,12 +297,21 @@ async function toggleTranslation(): Promise<void> {
     stateManager?.updateState('translateActive', 'pending');
   }
   
+  // 获取当前播放时间
+  let currentTime = 0;
+  const videoElement = document.querySelector('video');
+  if (videoElement) {
+    currentTime = videoElement.currentTime;
+    console.log(`[content-script] 当前播放时间: ${currentTime}s`);
+  }
+  
   try {
     const response = await chrome.runtime.sendMessage({
       type: 'TOGGLE_TRANSLATE',
       data: {
         videoId: videoId,
-        newState: isEnabling
+        newState: isEnabling,
+        currentTime: currentTime  // 添加当前播放时间
       }
     });
     
@@ -451,6 +460,38 @@ function setupMessageHandlers(): void {
     if (messageType === 'CLEAR_ERROR_MESSAGE') {
       console.log('[content-script] 清除错误消息');
       clearErrorMessage();
+      sendResponse({ success: true });
+      return false;
+    }
+    
+    // 处理渐进式翻译更新消息
+    if (messageType === 'TRANSLATION_UPDATE') {
+      console.log(`[content-script] 收到翻译更新: ${message.data?.updateType}`);
+      if (subtitleOverlay && message.data) {
+        const { updateType, translatedSubtitles, batchIndex, totalBatches } = message.data;
+        
+        if (updateType === 'urgent') {
+          // 紧急翻译：立即替换显示
+          subtitleOverlay.updateTranslations(translatedSubtitles, true);
+          console.log('[content-script] 应用紧急翻译');
+        } else if (updateType === 'progressive') {
+          // 渐进式翻译：追加更新
+          subtitleOverlay.updateTranslations(translatedSubtitles, false);
+          if (batchIndex && totalBatches) {
+            console.log(`[content-script] 渐进式更新 ${batchIndex}/${totalBatches}`);
+          }
+        }
+      }
+      sendResponse({ success: true });
+      return false;
+    }
+    
+    // 处理翻译完成消息
+    if (messageType === 'TRANSLATION_COMPLETE') {
+      console.log('[content-script] 翻译全部完成');
+      if (message.data) {
+        console.log(`[content-script] 总计翻译: ${message.data.totalSubtitles} 条字幕`);
+      }
       sendResponse({ success: true });
       return false;
     }
@@ -690,6 +731,13 @@ function handleSubtitleCaptured(payload: any): void {
     return;
   }
   
+  // 获取当前播放时间
+  let currentTime = 0;
+  const videoElement = document.querySelector('video');
+  if (videoElement) {
+    currentTime = videoElement.currentTime;
+  }
+  
   chrome.runtime.sendMessage({
     type: 'SUBTITLE_DATA',
     data: {
@@ -697,7 +745,9 @@ function handleSubtitleCaptured(payload: any): void {
       subtitles: payload.subtitles,
       url: payload.url,
       count: payload.count,
-      sourceLang: capturedSourceLang // 传递保存的源语言
+      sourceLang: capturedSourceLang, // 传递保存的源语言
+      currentTime: currentTime,  // 添加当前播放时间
+      tabId: chrome.runtime.id  // 这里不能获取tabId，由service-worker自己处理
     }
   }, (response) => {
     if (chrome.runtime.lastError) {

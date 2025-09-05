@@ -213,6 +213,62 @@ export class SubtitleOverlay {
   }
   
   /**
+   * 更新翻译（渐进式）
+   * @param translatedSubtitles 翻译后的字幕数组
+   * @param replaceAll 是否替换所有字幕（true用于紧急翻译，false用于渐进式更新）
+   */
+  public updateTranslations(translatedSubtitles: SubtitleEntry[], replaceAll: boolean = false): void {
+    if (!translatedSubtitles || translatedSubtitles.length === 0) {
+      return;
+    }
+    
+    if (replaceAll) {
+      // 紧急翻译：直接替换所有字幕
+      console.log(`[SubtitleOverlay] 替换所有字幕: ${translatedSubtitles.length} 条`);
+      this.currentSubtitles = translatedSubtitles;
+    } else {
+      // 渐进式更新：合并新翻译
+      console.log(`[SubtitleOverlay] 渐进式更新字幕: ${translatedSubtitles.length} 条`);
+      
+      // 创建一个Map用于快速查找
+      const translationMap = new Map<number, SubtitleEntry>();
+      translatedSubtitles.forEach((sub) => {
+        // 使用start时间作为唯一标识
+        const key = sub.start || (sub as any).startTime || 0;
+        translationMap.set(key, sub);
+      });
+      
+      // 更新现有字幕或添加新字幕
+      this.currentSubtitles = this.currentSubtitles.map(existingSub => {
+        const key = existingSub.start || (existingSub as any).startTime || 0;
+        const updatedSub = translationMap.get(key);
+        return updatedSub || existingSub;
+      });
+      
+      // 添加完全新的字幕（如果有）
+      translatedSubtitles.forEach(sub => {
+        const key = sub.start || (sub as any).startTime || 0;
+        const exists = this.currentSubtitles.some(s => 
+          (s.start || (s as any).startTime || 0) === key
+        );
+        if (!exists) {
+          this.currentSubtitles.push(sub);
+        }
+      });
+      
+      // 按时间排序
+      this.currentSubtitles.sort((a, b) => {
+        const aStart = a.start || (a as any).startTime || 0;
+        const bStart = b.start || (b as any).startTime || 0;
+        return aStart - bStart;
+      });
+    }
+    
+    // 触发显示更新
+    this.updateDisplay();
+  }
+  
+  /**
    * 销毁字幕层
    */
   public destroy(): void {
