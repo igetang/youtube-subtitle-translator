@@ -128,7 +128,7 @@ export class OpenAITranslator {
             },
             {
               role: "user",
-              content: batch.map(item => item.text).join("\n---\n")
+              content: batch.map(item => item.text).join("\n\n")  // 使用双换行符分隔
             }
           ];
           
@@ -345,17 +345,18 @@ export class OpenAITranslator {
         }
         
         // 分割结果为预期的段落
-        // 特殊处理：检查是否已经通过"---"分隔
+        // 使用双换行符分隔（基于07架构文档）
         let segments: string[];
         
-        if (combinedContent.includes('---')) {
-          // 使用分隔符分割
-          segments = combinedContent.split('---').map(s => s.trim());
+        // 首先尝试双换行符分割
+        if (combinedContent.includes('\n\n')) {
+          // 使用双换行符分割
+          segments = combinedContent.split('\n\n').map(s => s.trim()).filter(s => s.length > 0);
         } else if (expectedSegments === 1) {
           // 只需要一个段落
           segments = [combinedContent.trim()];
         } else {
-          // 尝试按行分割，然后合并为expectedSegments个段落
+          // 尝试按单换行符分割
           const lines = combinedContent.split('\n').filter(line => line.trim().length > 0);
           
           if (lines.length >= expectedSegments) {

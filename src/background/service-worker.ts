@@ -16,6 +16,11 @@ import { RuntimeStateManager } from '../shared/storage/runtime-state-manager';
 import { StorageManager } from '../shared/storage/storage-manager';
 import { TranslationCacheManager } from '../shared/storage/translation-cache-manager';
 import { VideoSourceLanguageCacheManager } from '../shared/storage/video-source-language-cache-manager';
+
+// === 批量翻译组件导入（基于07架构文档） ===
+import { TimeGapAnalyzer } from './components/time-gap-analyzer';
+import { IntelligentSegmenter } from './components/intelligent-segmenter';
+import { TwoPhaseTranslator } from './components/two-phase-translator';
 import { 
   TranslateActiveState, 
   RuntimeStateChangeEvent,
@@ -2584,10 +2589,9 @@ async function continueTranslationWithSubtitles(data: any): Promise<any> {
 }
 
 // ============= 渐进式翻译工具函数 =============
-// Unicode私有区域分隔符（不会被翻译API改变）
-const UNICODE_SEPARATOR = '\uE001';
+// 基于07架构文档：使用双换行符分隔，不再需要Unicode分隔符
 const TRANSLATION_BATCH_DELAY = 200; // 批次间延迟(ms)
-const URGENT_SUBTITLE_COUNT = 10; // 紧急翻译字幕数量
+const URGENT_SUBTITLE_COUNT = 41; // 紧急翻译字幕数量（前后各20条）
 const MIN_BATCH_SIZE = 30; // 最小批次大小
 const MAX_BATCH_SIZE = 50; // 最大批次大小
 
@@ -2617,7 +2621,9 @@ function getCurrentPlaybackContext(subtitles: any[], currentTime: number, contex
 }
 
 /**
+ * @deprecated 已被IntelligentSegmenter替代
  * 智能创建翻译批次（考虑句子边界）
+ * 保留用于兼容性，将在下个版本移除
  */
 function createSmartBatches(subtitles: any[], minSize: number = 30, maxSize: number = 50): any[][] {
   const batches: any[][] = [];
@@ -2687,7 +2693,7 @@ function sleep(ms: number): Promise<void> {
  */
 async function executeTranslation(subtitleData: SubtitleData, preferences: UserPreferences): Promise<any> {
   try {
-    console.log('[service-worker] 执行渐进式翻译:', {
+    console.log('[service-worker] 执行两阶段翻译（基于时间间隔断句）:', {
       videoId: subtitleData.videoId,
       subtitleCount: subtitleData.subtitles?.length,
       hasTabId: !!subtitleData.tabId,
@@ -2702,124 +2708,85 @@ async function executeTranslation(subtitleData: SubtitleData, preferences: UserP
     
     console.log('[service-worker] 检测源语言:', sourceLang);
     
-    // 存储所有翻译结果
-    const allTranslations: Map<number, string> = new Map();
-    
-    // ========== Step 1: 紧急翻译（当前播放位置附近） ==========
-    let urgentSubtitles: any[] = [];
-    let urgentIndices: number[] = [];
-    
+    // 找到当前播放位置的索引
+    let currentIndex = 0;
     if (currentTime !== undefined && currentTime >= 0) {
-      // 获取当前播放位置附近的字幕
-      urgentSubtitles = getCurrentPlaybackContext(subtitles, currentTime, URGENT_SUBTITLE_COUNT);
-      
-      // 记录这些字幕在原数组中的索引
-      urgentIndices = urgentSubtitles.map(sub => 
-        subtitles.findIndex(s => s === sub)
-      ).filter(idx => idx !== -1);
-      
-      if (urgentSubtitles.length > 0) {
-        console.log(`[service-worker] Step 1: 紧急翻译 ${urgentSubtitles.length} 条字幕`);
-        
-        const urgentTexts = urgentSubtitles.map(s => s.text);
-        const urgentTranslations = await translateBatch(
-          urgentTexts,
-          sourceLang || 'auto',
-          targetLang,
-          translationService
-        );
-        
-        // 保存紧急翻译结果
-        urgentIndices.forEach((idx, i) => {
-          allTranslations.set(idx, urgentTranslations[i]);
-        });
-        
-        // 立即发送紧急翻译结果到content-script
-        if (tabId && typeof tabId === 'number') {
-          const urgentResult = subtitles.slice(0, Math.max(...urgentIndices) + 1).map((sub, idx) => ({
-            start: sub.start || sub.startTime || 0,
-            duration: sub.duration || sub.dur || 0,
-            text: sub.text,
-            translation: allTranslations.get(idx) || ''
-          }));
-          
-          chrome.tabs.sendMessage(tabId, {
-            type: 'TRANSLATION_UPDATE',
-            data: {
-              updateType: 'urgent',
-              translatedSubtitles: urgentResult,
-              videoId
-            }
-          }).catch(err => {
-            console.warn('[service-worker] 发送紧急翻译失败:', err);
-          });
+      for (let i = 0; i < subtitles.length; i++) {
+        const subStart = subtitles[i].start || subtitles[i].startTime || 0;
+        const subEnd = subStart + (subtitles[i].duration || subtitles[i].dur || 0);
+        if (currentTime >= subStart && currentTime <= subEnd) {
+          currentIndex = i;
+          break;
         }
       }
     }
     
-    // ========== Step 2: 批量翻译剩余字幕 ==========
-    // 过滤掉已经紧急翻译的字幕
-    const remainingSubtitles = subtitles.filter((_, idx) => !urgentIndices.includes(idx));
-    const remainingIndices = subtitles.map((_, idx) => idx).filter(idx => !urgentIndices.includes(idx));
+    // 创建翻译回调函数
+    const translationCallback = async (texts: string[], srcLang: string, tgtLang: string): Promise<string[]> => {
+      // TwoPhaseTranslator已经预处理并合并了文本，这里直接传递
+      // texts[0]已经是用换行符分隔的合并文本
+      
+      // 调用翻译API
+      const translatedTexts = await translateBatch(
+        texts,  // 直接传递，不再处理
+        srcLang || 'auto',
+        tgtLang,
+        translationService
+      );
+      
+      // 翻译结果已经是按换行符分割好的数组，直接返回
+      return translatedTexts;
+    };
     
-    if (remainingSubtitles.length > 0) {
-      console.log(`[service-worker] Step 2: 批量翻译剩余 ${remainingSubtitles.length} 条字幕`);
+    // 创建两阶段翻译器
+    const twoPhaseTranslator = new TwoPhaseTranslator(translationCallback);
+    
+    // 进度回调函数
+    const onProgress = (phase: string, progress: number, data?: any) => {
+      if (!tabId || typeof tabId !== 'number') return;
       
-      // 智能创建批次（考虑句子边界）
-      const batches = createSmartBatches(remainingSubtitles, MIN_BATCH_SIZE, MAX_BATCH_SIZE);
-      console.log(`[service-worker] 创建了 ${batches.length} 个智能批次`);
-      
-      // 顺序处理每个批次
-      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-        const batch = batches[batchIndex];
-        const batchTexts = batch.map(s => s.text);
-        
-        console.log(`[service-worker] 处理批次 ${batchIndex + 1}/${batches.length}: ${batchTexts.length} 条`);
-        
-        // 翻译当前批次
-        const batchTranslations = await translateBatch(
-          batchTexts,
-          sourceLang || 'auto',
-          targetLang,
-          translationService
-        );
-        
-        // 保存批次翻译结果
-        batch.forEach((sub, i) => {
-          const originalIdx = subtitles.findIndex(s => s === sub);
-          if (originalIdx !== -1) {
-            allTranslations.set(originalIdx, batchTranslations[i]);
-          }
-        });
-        
-        // 发送渐进式更新（如果有tabId）
-        if (tabId && typeof tabId === 'number') {
-          const progressiveResult = subtitles.slice(0, Math.max(...Array.from(allTranslations.keys())) + 1).map((sub, idx) => ({
-            start: sub.start || sub.startTime || 0,
-            duration: sub.duration || sub.dur || 0,
-            text: sub.text,
-            translation: allTranslations.get(idx) || ''
-          }));
-          
-          chrome.tabs.sendMessage(tabId, {
-            type: 'TRANSLATION_UPDATE',
-            data: {
-              updateType: 'progressive',
-              translatedSubtitles: progressiveResult,
-              videoId,
-              batchIndex: batchIndex + 1,
-              totalBatches: batches.length
-            }
-          }).catch(err => {
-            console.warn('[service-worker] 发送渐进式更新失败:', err);
-          });
-        }
-        
-        // 批次间延迟，避免API限流
-        if (batchIndex < batches.length - 1) {
-          await sleep(TRANSLATION_BATCH_DELAY);
-        }
+      if (phase === 'urgent' && data) {
+        // 紧急翻译完成，立即发送
+        console.log(`[service-worker] 紧急翻译完成: ${data.translatedCount}条，耗时${data.timeElapsed}ms`);
+      } else if (phase === 'batch' && data) {
+        // 批量翻译进度
+        console.log(`[service-worker] 批量翻译进度: ${progress.toFixed(0)}% (批次${data.currentBatch}/${data.totalBatches})`);
+      } else if (phase === 'complete' && data) {
+        // 翻译完成
+        console.log(`[service-worker] 翻译完成: ${data.translatedCount}条，总耗时${(data.totalTime/1000).toFixed(1)}s`);
       }
+    };
+    
+    // 执行两阶段翻译
+    const allTranslations = await twoPhaseTranslator.translateVideo(
+      subtitles,
+      currentIndex,
+      sourceLang,
+      targetLang,
+      onProgress
+    );
+    
+    // 发送渐进式更新到content-script
+    if (tabId && typeof tabId === 'number' && allTranslations.size > 0) {
+      // 组装当前的翻译结果
+      const progressiveResult = subtitles.map((sub, idx) => ({
+        start: sub.start || sub.startTime || 0,
+        duration: sub.duration || sub.dur || 0,
+        text: sub.text,
+        translation: allTranslations.get(idx) || ''
+      }));
+      
+      // 发送渐进式更新
+      chrome.tabs.sendMessage(tabId, {
+        type: 'TRANSLATION_UPDATE',
+        data: {
+          updateType: 'progressive',
+          translatedSubtitles: progressiveResult,
+          videoId
+        }
+      }).catch(err => {
+        console.warn('[service-worker] 发送渐进式更新失败:', err);
+      });
     }
     
     // ========== Step 3: 组装最终结果 ==========
@@ -3017,20 +2984,32 @@ async function translateWithGoogle(
   
   if (texts.length === 0) return [];
   
-  // 实现方案：使用特殊标记保留字幕边界
-  console.log('[DEBUG] 使用标记法翻译策略');
+  // 实现方案：使用换行符分隔保留字幕边界
+  console.log('[DEBUG] 使用换行符分隔翻译策略');
   
-  // Step 1: 预处理 - 去掉字幕内部换行，添加边界标记
-  const SUBTITLE_BOUNDARY = ' <<<B>>> '; // 字幕边界标记
-  const processedTexts = texts.map((text) => {
-    // 去掉内部换行，变成完整句子
-    return text.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
-  });
+  // 检查是否是已经用换行符合并的单个文本
+  let combinedText: string;
+  let isPreMerged = false;
   
-  // Step 2: 用边界标记连接所有字幕
-  const combinedText = processedTexts.join(SUBTITLE_BOUNDARY);
-  console.log(`[DEBUG] 合并文本（带标记）: "${combinedText.substring(0, 200)}..."`);
-  console.log(`[DEBUG] 原始${texts.length}条字幕，插入${texts.length - 1}个边界标记`);
+  if (texts.length === 1 && texts[0].includes('\n')) {
+    // 已经是用换行符合并的文本
+    combinedText = texts[0];
+    isPreMerged = true;
+    console.log(`[DEBUG] 检测到已合并文本（换行符分隔），长度: ${combinedText.length}`);
+  } else {
+    // 多个字幕文本，需要合并
+    // Step 1: 预处理 - 去掉字幕内部换行，变成完整句子
+    const processedTexts = texts.map((text) => {
+      return text.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+    });
+    
+    // Step 2: 用换行符连接所有字幕
+    combinedText = processedTexts.join('\n');
+    console.log(`[DEBUG] 合并${texts.length}条字幕，使用换行符分隔`);
+  }
+  
+  console.log(`[DEBUG] 合并文本（前200字符）: "${combinedText.substring(0, 200)}..."`);
+  console.log(`[DEBUG] 完整合并文本:\n${combinedText}`);
   
   try {
     // 使用Google Translate免费API
@@ -3069,37 +3048,26 @@ async function translateWithGoogle(
     }
     
     console.log(`[DEBUG] 翻译结果（前200字符）: "${translatedText.substring(0, 200)}..."`);
+    console.log(`[DEBUG] 完整翻译结果:\n${translatedText}`);
     
-    // Step 5: 按标记分割翻译结果
-    // 尝试多种可能的标记形式（Google可能会改变格式）
-    const possibleMarkers = [
-      '<<<B>>>',           // 原始标记
-      '<<< B >>>',         // 可能加了空格
-      '&lt;&lt;&lt;B&gt;&gt;&gt;', // HTML编码
-      '< < < B > > >',     // 分开的
-    ];
-    
+    // Step 5: 分割翻译结果
     let translatedTexts: string[] = [];
     
-    // 尝试各种标记分割
-    for (const marker of possibleMarkers) {
-      translatedTexts = translatedText.split(marker).map(s => s.trim()).filter(s => s.length > 0);
-      if (translatedTexts.length === texts.length) {
-        console.log(`[DEBUG] 成功使用标记 "${marker}" 分割成 ${translatedTexts.length} 条`);
-        break;
-      }
-    }
+    // 统一处理：按换行符分割翻译结果
+    translatedTexts = translatedText.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+    console.log(`[DEBUG] 按换行符分割，得到 ${translatedTexts.length} 条翻译`);
     
-    // 如果标记分割失败，使用比例分割法
-    if (translatedTexts.length !== texts.length) {
-      console.warn(`[service-worker] 标记分割失败，使用比例分割法`);
-      console.log(`[DEBUG] 翻译文本中找不到边界标记，可能被Google改变或丢失`);
+    // 如果分割数量不匹配，使用比例分割法作为降级方案
+    if (!isPreMerged && translatedTexts.length !== texts.length) {
+      console.warn(`[service-worker] 分割数量不匹配（${translatedTexts.length} vs ${texts.length}），使用比例分割法`);
       
-      // 使用比例分割法作为降级方案
+      // 获取原始文本长度用于比例分割
+      const processedTexts = texts.map((text) => {
+        return text.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+      });
       const originalLengths = processedTexts.map(t => t.length);
       translatedTexts = splitByRatio(translatedText, originalLengths);
       console.log(`[DEBUG] 按比例分割成 ${translatedTexts.length} 条`);
-      
     }
     
     // 返回翻译结果
