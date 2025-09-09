@@ -21,6 +21,7 @@ import { VideoSourceLanguageCacheManager } from '../shared/storage/video-source-
 import { TimeGapAnalyzer } from './components/time-gap-analyzer';
 import { IntelligentSegmenter } from './components/intelligent-segmenter';
 import { TwoPhaseTranslator } from './components/two-phase-translator';
+import { SimpleWatchdogManager } from './components/simple-watchdog-manager';
 import { 
   TranslateActiveState, 
   RuntimeStateChangeEvent,
@@ -36,9 +37,9 @@ const storageManager = StorageManager.getInstance();
 const translationCacheManager = TranslationCacheManager.getInstance();
 const videoSourceLanguageCacheManager = VideoSourceLanguageCacheManager.getInstance();
 
-// === PENDING 状态超时管理 ===
-const PENDING_TIMEOUT = 5000; // 5秒超时
-const pendingTimeouts = new Map<string, NodeJS.Timeout>(); // key: tabId_videoId，管理各个标签页的超时定时器
+// === 看门狗管理器（替代旧的PENDING超时机制） ===
+const watchdogManager = new SimpleWatchdogManager();
+
 
 // === 站点特定 SidePanel 功能 ===
 
@@ -648,14 +649,9 @@ async function routeMessage(
     
     // === 字幕数据处理 ===
     case 'SUBTITLE_DATA':
-      // 清除 PENDING 超时定时器
-      const timeoutKey = `${sender.tab?.id}_${data.videoId}`;
-      const timeoutId = pendingTimeouts.get(timeoutKey);
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        pendingTimeouts.delete(timeoutKey);
-        console.log('[service-worker] 已清除PENDING超时定时器');
-      }
+      // 清除字幕获取看门狗
+      const subtitleWatchdogKey = `subtitle_fetch_${sender.tab?.id}_${data.videoId}`;
+      watchdogManager.clearWatchdog(subtitleWatchdogKey);
       
       // 处理字幕数据并检查是否需要继续翻译流程
       const subtitleResult = await handleSubtitleData(data);
@@ -2095,14 +2091,9 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     
     // 更新运行时状态
     if (!newState) {
-      // 清除可能存在的超时定时器
-      const timeoutKey = `${sender.tab?.id}_${videoId}`;
-      const timeoutId = pendingTimeouts.get(timeoutKey);
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        pendingTimeouts.delete(timeoutKey);
-        console.log('[service-worker] 关闭翻译时清除了PENDING超时定时器');
-      }
+      // 清除所有看门狗
+      watchdogManager.clearAll();
+      console.log('[service-worker] 关闭翻译时清除了所有看门狗');
       
       // 关闭翻译 - 直接设置为INACTIVE（不经过PENDING）
       await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
@@ -2199,6 +2190,12 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     if (cachedResult) {
       console.log('[service-worker] ✓ 找到缓存的翻译结果（P0级完全命中）');
       await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
+      
+      // 通知UI状态变更
+      if (sender.tab?.id) {
+        await notifyStateChange(sender.tab.id, 'translateActive', TranslateActiveState.ACTIVE);
+      }
+      
       return {
         success: true,
         action: 'cached',
@@ -2229,6 +2226,11 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
       
       // 先设置状态并返回结果给用户（优先响应）
       await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
+      
+      // 通知UI状态变更
+      if (sender.tab?.id) {
+        await notifyStateChange(sender.tab.id, 'translateActive', TranslateActiveState.ACTIVE);
+      }
       
       // 异步保存到缓存（不阻塞用户）
       Promise.resolve().then(async () => {
@@ -2370,28 +2372,24 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
         }
       }
       
-      // Step 5.4: 设置 PENDING 超时定时器（5秒）
-      const timeoutId = setTimeout(async () => {
-        console.warn(`[service-worker] PENDING超时（5秒）: ${timeoutKey}`);
+      // Step 5.4: 启动字幕获取看门狗（无重试版本）
+      const subtitleWatchdogKey = `subtitle_fetch_${tabId}_${videoId}`;
+      watchdogManager.startWatchdog(subtitleWatchdogKey, async () => {
+        console.error(`[service-worker] 字幕获取超时（5秒），终止翻译流程`);
+        // 无重试机制：超时直接设置为INACTIVE
+        await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
         
-        const currentState = await runtimeStateManager.getTranslateState();
-        if (currentState === TranslateActiveState.PENDING) {
-          await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
-          
-          // 通知用户
+        // 通知用户
+        if (tabId) {
           chrome.tabs.sendMessage(tabId, {
             type: 'SHOW_ERROR_MESSAGE',
-            data: '字幕获取超时，请重试'
+            data: {
+              message: '字幕获取超时，请检查网络连接后重试',
+              duration: 3000
+            }
           }).catch(() => {});
-          
-          // 通知content-script更新UI状态
-          await notifyStateChange(tabId, 'translateActive', TranslateActiveState.INACTIVE);
         }
-        
-        pendingTimeouts.delete(timeoutKey);
-      }, PENDING_TIMEOUT);
-      
-      pendingTimeouts.set(timeoutKey, timeoutId);
+      });
       
       // Step 5.5: 触发字幕拦截器
       console.log('[service-worker] Step 5.5: 触发字幕拦截器');
@@ -2414,12 +2412,8 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
       };
       
     } catch (error) {
-      // 清理定时器
-      const timeoutId = pendingTimeouts.get(timeoutKey);
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        pendingTimeouts.delete(timeoutKey);
-      }
+      // 清理看门狗
+      watchdogManager.clearAll();
       
       console.error('[service-worker] Step 5 失败:', error);
       await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
@@ -2559,6 +2553,9 @@ async function continueTranslationWithSubtitles(data: any): Promise<any> {
     // 通知Content Script显示翻译结果
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tabs[0]?.id) {
+      // 先通知状态变更
+      await notifyStateChange(tabs[0].id, 'translateActive', TranslateActiveState.ACTIVE);
+      
       await chrome.tabs.sendMessage(tabs[0].id, {
         type: 'DISPLAY_TRANSLATION',
         data: translatedResult
@@ -2734,7 +2731,14 @@ async function executeTranslation(subtitleData: SubtitleData, preferences: UserP
         translationService
       );
       
-      // 翻译结果已经是按换行符分割好的数组，直接返回
+      // 重要修复：如果输入是单个合并文本，输出也应该是单个合并文本
+      if (texts.length === 1 && texts[0].includes('\n')) {
+        // 输入是预合并的格式，输出也要保持相同格式
+        // 将分割后的数组重新合并成单个字符串
+        return [translatedTexts.join('\n')];
+      }
+      
+      // 否则保持原样返回
       return translatedTexts;
     };
     
@@ -2746,8 +2750,41 @@ async function executeTranslation(subtitleData: SubtitleData, preferences: UserP
       if (!tabId || typeof tabId !== 'number') return;
       
       if (phase === 'urgent' && data) {
-        // 紧急翻译完成，立即发送
+        // 紧急翻译完成，立即发送到content-script显示
         console.log(`[service-worker] 紧急翻译完成: ${data.translatedCount}条，耗时${data.timeElapsed}ms`);
+        
+        // 立即发送紧急翻译结果到页面显示（黄色字幕）
+        if (data.translations && data.urgentRange) {
+          const urgentSubtitles = [];
+          const { startIdx, endIdx } = data.urgentRange;
+          
+          // 组装紧急翻译的字幕数据
+          for (let i = startIdx; i < endIdx && i < subtitles.length; i++) {
+            const sub = subtitles[i];
+            const translation = data.translations.get(i);
+            if (translation) {
+              urgentSubtitles.push({
+                start: sub.start || sub.startTime || 0,
+                duration: sub.duration || sub.dur || 0,
+                text: sub.text,
+                translation: translation,
+                isUrgent: true  // 标记为紧急翻译
+              });
+            }
+          }
+          
+          // 发送紧急翻译更新
+          chrome.tabs.sendMessage(tabId, {
+            type: 'TRANSLATION_UPDATE',
+            data: {
+              updateType: 'urgent',
+              translatedSubtitles: urgentSubtitles,
+              videoId
+            }
+          }).catch(err => {
+            console.warn('[service-worker] 发送紧急翻译更新失败:', err);
+          });
+        }
       } else if (phase === 'batch' && data) {
         // 批量翻译进度
         console.log(`[service-worker] 批量翻译进度: ${progress.toFixed(0)}% (批次${data.currentBatch}/${data.totalBatches})`);
@@ -2769,12 +2806,15 @@ async function executeTranslation(subtitleData: SubtitleData, preferences: UserP
     // 发送渐进式更新到content-script
     if (tabId && typeof tabId === 'number' && allTranslations.size > 0) {
       // 组装当前的翻译结果
-      const progressiveResult = subtitles.map((sub, idx) => ({
-        start: sub.start || sub.startTime || 0,
-        duration: sub.duration || sub.dur || 0,
-        text: sub.text,
-        translation: allTranslations.get(idx) || ''
-      }));
+      const progressiveResult = subtitles.map((sub, idx) => {
+        const translation = allTranslations.get(idx);
+        return {
+          start: sub.start || sub.startTime || 0,
+          duration: sub.duration || sub.dur || 0,
+          text: sub.text,
+          translation: translation || ''
+        };
+      });
       
       // 发送渐进式更新
       chrome.tabs.sendMessage(tabId, {
@@ -2975,17 +3015,21 @@ async function translateWithGoogle(
   sourceLang: string, 
   targetLang: string
 ): Promise<string[]> {
-  console.log('[DEBUG] translateWithGoogle接收参数:', {
-    textsCount: texts.length,
-    sourceLang: sourceLang,
-    targetLang: targetLang,
-    firstText: texts[0]?.substring(0, 50) // 打印第一条文本的前50个字符
+  // 通过调用栈判断是紧急翻译还是批量翻译
+  // 在新架构中，紧急翻译的调用栈包含 'executeUrgent' 或 'urgent'
+  const stack = new Error().stack || '';
+  const isUrgentTranslation = stack.includes('urgent') || stack.includes('Urgent');
+  const translationType = isUrgentTranslation ? '紧急翻译' : '批量翻译';
+  
+  console.log(`[DEBUG] ${translationType}请求:`, {
+    总数: texts.length === 1 ? texts[0].split('\n').length : texts.length,
+    语言: `${sourceLang} → ${targetLang}`
   });
   
   if (texts.length === 0) return [];
   
+  
   // 实现方案：使用换行符分隔保留字幕边界
-  console.log('[DEBUG] 使用换行符分隔翻译策略');
   
   // 检查是否是已经用换行符合并的单个文本
   let combinedText: string;
@@ -2995,7 +3039,6 @@ async function translateWithGoogle(
     // 已经是用换行符合并的文本
     combinedText = texts[0];
     isPreMerged = true;
-    console.log(`[DEBUG] 检测到已合并文本（换行符分隔），长度: ${combinedText.length}`);
   } else {
     // 多个字幕文本，需要合并
     // Step 1: 预处理 - 去掉字幕内部换行，变成完整句子
@@ -3005,11 +3048,18 @@ async function translateWithGoogle(
     
     // Step 2: 用换行符连接所有字幕
     combinedText = processedTexts.join('\n');
-    console.log(`[DEBUG] 合并${texts.length}条字幕，使用换行符分隔`);
   }
   
-  console.log(`[DEBUG] 合并文本（前200字符）: "${combinedText.substring(0, 200)}..."`);
-  console.log(`[DEBUG] 完整合并文本:\n${combinedText}`);
+  // 合并成一条日志显示原始字幕信息
+  const lines = combinedText.split('\n');
+  if (lines.length > 0) {
+    const firstLine = lines[0].substring(0, 80);
+    const lastLine = lines.length > 1 ? lines[lines.length - 1].substring(0, 80) : '';
+    const logInfo = lines.length > 1 
+      ? `[第1条: "${firstLine}" ... 第${lines.length}条: "${lastLine}"]`
+      : `[单条: "${firstLine}"]`;
+    console.log(`[DEBUG] ${translationType}原文 (${lines.length}条): ${logInfo}`);
+  }
   
   try {
     // 使用Google Translate免费API
@@ -3047,15 +3097,21 @@ async function translateWithGoogle(
       });
     }
     
-    console.log(`[DEBUG] 翻译结果（前200字符）: "${translatedText.substring(0, 200)}..."`);
-    console.log(`[DEBUG] 完整翻译结果:\n${translatedText}`);
-    
     // Step 5: 分割翻译结果
     let translatedTexts: string[] = [];
     
     // 统一处理：按换行符分割翻译结果
     translatedTexts = translatedText.split('\n').map(s => s.trim()).filter(s => s.length > 0);
-    console.log(`[DEBUG] 按换行符分割，得到 ${translatedTexts.length} 条翻译`);
+    
+    // 合并成一条日志显示翻译结果信息
+    if (translatedTexts.length > 0) {
+      const firstResult = translatedTexts[0].substring(0, 80);
+      const lastResult = translatedTexts.length > 1 ? translatedTexts[translatedTexts.length - 1].substring(0, 80) : '';
+      const resultInfo = translatedTexts.length > 1
+        ? `[第1条: "${firstResult}" ... 第${translatedTexts.length}条: "${lastResult}"]`
+        : `[单条: "${firstResult}"]`;
+      console.log(`[DEBUG] ${translationType}译文 (${translatedTexts.length}条): ${resultInfo}`);
+    }
     
     // 如果分割数量不匹配，使用比例分割法作为降级方案
     if (!isPreMerged && translatedTexts.length !== texts.length) {
@@ -3071,7 +3127,6 @@ async function translateWithGoogle(
     }
     
     // 返回翻译结果
-    console.log(`[DEBUG] 翻译完成，返回 ${translatedTexts.length} 条结果`);
     return translatedTexts;
     
   } catch (error) {
@@ -3085,8 +3140,8 @@ async function translateWithGoogle(
  */
 async function translateWithMicrosoft(
   texts: string[], 
-  sourceLang: string, 
-  targetLang: string
+  _sourceLang: string, 
+  _targetLang: string
 ): Promise<string[]> {
   console.log('[service-worker] ⚠️ Microsoft翻译API尚未实现');
   // TODO: 实现Microsoft翻译API
@@ -3098,9 +3153,9 @@ async function translateWithMicrosoft(
  */
 async function translateWithOpenAI(
   texts: string[], 
-  sourceLang: string, 
-  targetLang: string,
-  service: any
+  _sourceLang: string, 
+  _targetLang: string,
+  _service: any
 ): Promise<string[]> {
   console.log('[service-worker] ⚠️ OpenAI翻译API尚未实现');
   // TODO: 实现OpenAI翻译API
@@ -3111,7 +3166,7 @@ async function translateWithOpenAI(
 async function handleApiConnectionTest(data: any): Promise<any> {
   console.log('[service-worker] <- testApiConnection:', data);
   
-  const { apiType, apiKey, forceTest } = data;
+  const { apiType, apiKey } = data;
   
   try {
     // 免费API测试逻辑
@@ -3158,7 +3213,7 @@ async function handleErrorReport(data: any): Promise<any> {
  * 🎯 职责：仅由操作函数调用，用于多标签页状态同步
  * 📵 生命周期事件不应调用此函数，避免重复广播
  */
-function broadcastSidePanelStateChange(isOpen: boolean): void {
+function _broadcastSidePanelStateChange(isOpen: boolean): void {
   chrome.tabs.query({ url: '*://www.youtube.com/*' }, (tabs) => {
     tabs.forEach(tab => {
       if (tab.id) {
@@ -3181,7 +3236,7 @@ function broadcastSidePanelStateChange(isOpen: boolean): void {
  * 🎯 消息处理专用状态获取函数 - 基于SAD.md设计
  * 用于响应Content Script的状态查询请求
  */
-async function getSidePanelStateForMessage(): Promise<any> {
+async function _getSidePanelStateForMessage(): Promise<any> {
   try {
     const isOpen = await getSidePanelState();
     return { success: true, isOpen: isOpen };
@@ -3289,7 +3344,7 @@ async function handleCheckSidePanelStatus(sender: chrome.runtime.MessageSender):
  * 🎯 处理getSidePanelStatus消息 - 基于存储读取的高性能方案
  * 符合architecture.md的新架构设计
  */
-async function handleGetSidePanelStatus(sender: chrome.runtime.MessageSender): Promise<any> {
+async function handleGetSidePanelStatus(_sender: chrome.runtime.MessageSender): Promise<any> {
   try {
     // 直接从存储读取状态，高性能方案
     const isEnabled = await runtimeStateManager.getPopupState();

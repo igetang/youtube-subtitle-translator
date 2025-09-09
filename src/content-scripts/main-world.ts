@@ -255,7 +255,7 @@ class SubtitleInterceptor {
     // 劫持fetch
     const originalFetch = window.fetch;
     window.fetch = async (...args) => {
-      const url = typeof args[0] === 'string' ? args[0] : args[0]?.url;
+      const url = typeof args[0] === 'string' ? args[0] : (args[0] instanceof Request ? args[0].url : args[0]?.toString());
       
       if (url && url.includes('timedtext')) {
         console.log('[SubtitleInterceptor] 🎯 捕获到字幕URL (Fetch):', url);
@@ -276,16 +276,17 @@ class SubtitleInterceptor {
     // 劫持XMLHttpRequest
     const originalOpen = XMLHttpRequest.prototype.open;
     const self = this;
-    XMLHttpRequest.prototype.open = function(method: string, url: string, ...rest: any[]) {
-      if (url && url.includes('timedtext')) {
-        console.log('[SubtitleInterceptor] 🎯 捕获到字幕URL (XHR):', url);
-        self.capturedUrl = url;
+    XMLHttpRequest.prototype.open = function(method: string, url: string | URL, async: boolean = true, username?: string | null, password?: string | null) {
+      const urlString = url.toString();
+      if (urlString && urlString.includes('timedtext')) {
+        console.log('[SubtitleInterceptor] 🎯 捕获到字幕URL (XHR):', urlString);
+        self.capturedUrl = urlString;
         
         this.addEventListener('load', function() {
-          self.processXHRResponse(this.responseText, url);
+          self.processXHRResponse(this.responseText, urlString);
         });
       }
-      return originalOpen.apply(this, [method, url, ...rest]);
+      return originalOpen.apply(this, [method, url, async, username, password] as any);
     };
 
     subtitleInterceptorInitialized = true;

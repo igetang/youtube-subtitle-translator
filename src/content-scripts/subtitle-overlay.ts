@@ -10,6 +10,7 @@ export interface SubtitleEntry {
   duration: number;   // 持续时间（秒）
   text: string;       // 原文
   translation?: string; // 译文
+  isUrgent?: boolean; // 是否为紧急翻译
 }
 
 /**
@@ -23,6 +24,7 @@ export class SubtitleOverlay {
   private animationFrameId: number | null = null;
   private isActive: boolean = false;
   private currentLanguageMode: 'bilingual' | 'targetOnly' = 'bilingual';
+  private isUrgentTranslation: boolean = false; // 标记是否为紧急翻译
   
   constructor() {
     console.log('[SubtitleOverlay] 初始化字幕显示层');
@@ -168,20 +170,25 @@ export class SubtitleOverlay {
       // 根据显示模式构建字幕HTML
       let subtitleHTML = '';
       
+      // 根据是否为紧急翻译决定译文颜色
+      // 紧急翻译：黄色高亮 (#ffeb3b) - 保持原有样式
+      // 批量翻译：与原文相同的白色 (#ffffff) - 新的样式
+      const translationColor = currentSubtitle.isUrgent ? '#ffeb3b' : '#ffffff';
+      
       if (this.currentLanguageMode === 'bilingual') {
         // 双语模式：显示原文和译文
         subtitleHTML = `
           <div style="color: #ffffff; font-size: 20px; line-height: 1.4; margin-bottom: 4px;">
             ${this.escapeHtml(currentSubtitle.text)}
           </div>
-          <div style="color: #ffeb3b; font-size: 22px; line-height: 1.4; font-weight: 500;">
+          <div style="color: ${translationColor}; font-size: 22px; line-height: 1.4; font-weight: 500;">
             ${this.escapeHtml(currentSubtitle.translation || currentSubtitle.text)}
           </div>
         `;
       } else {
         // 仅目标语言模式
         subtitleHTML = `
-          <div style="color: #ffffff; font-size: 22px; line-height: 1.4; font-weight: 500;">
+          <div style="color: ${translationColor}; font-size: 22px; line-height: 1.4; font-weight: 500;">
             ${this.escapeHtml(currentSubtitle.translation || currentSubtitle.text)}
           </div>
         `;
@@ -222,13 +229,25 @@ export class SubtitleOverlay {
       return;
     }
     
+    // 确保覆盖层已初始化
+    if (!this.overlayElement) {
+      this.initialize();
+    }
+    
+    // 激活字幕显示
+    this.isActive = true;
+    
     if (replaceAll) {
       // 紧急翻译：直接替换所有字幕
-      console.log(`[SubtitleOverlay] 替换所有字幕: ${translatedSubtitles.length} 条`);
-      this.currentSubtitles = translatedSubtitles;
+      // 给每条字幕添加紧急标记
+      this.currentSubtitles = translatedSubtitles.map(sub => ({
+        ...sub,
+        isUrgent: true
+      }));
+      this.isUrgentTranslation = true; // 标记为紧急翻译
     } else {
       // 渐进式更新：合并新翻译
-      console.log(`[SubtitleOverlay] 渐进式更新字幕: ${translatedSubtitles.length} 条`);
+      this.isUrgentTranslation = false; // 标记为最终翻译
       
       // 创建一个Map用于快速查找
       const translationMap = new Map<number, SubtitleEntry>();
@@ -242,7 +261,11 @@ export class SubtitleOverlay {
       this.currentSubtitles = this.currentSubtitles.map(existingSub => {
         const key = existingSub.start || (existingSub as any).startTime || 0;
         const updatedSub = translationMap.get(key);
-        return updatedSub || existingSub;
+        if (updatedSub) {
+          // 最终翻译，移除紧急标记
+          return { ...updatedSub, isUrgent: false };
+        }
+        return existingSub;
       });
       
       // 添加完全新的字幕（如果有）
@@ -264,8 +287,10 @@ export class SubtitleOverlay {
       });
     }
     
-    // 触发显示更新
-    this.updateDisplay();
+    // 触发显示更新（使用当前时间）
+    if (this.videoElement) {
+      this.updateSubtitleDisplay(this.videoElement.currentTime);
+    }
   }
   
   /**

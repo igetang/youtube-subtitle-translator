@@ -33,7 +33,17 @@ export class IntelligentSegmenter {
       return [];
     }
     
-    // 分析时间间隔，获取动态阈值
+    // 如果字幕总数不超过MAX_BATCH_SIZE，直接一批发送，无需分析时间间隔
+    if (subtitles.length <= IntelligentSegmenter.MAX_BATCH_SIZE) {
+      console.log(`[IntelligentSegmenter] 字幕总数${subtitles.length}条 ≤ ${IntelligentSegmenter.MAX_BATCH_SIZE}条，一次性发送`);
+      return [{
+        startIdx: 0,
+        endIdx: subtitles.length,
+        subtitles: subtitles
+      }];
+    }
+    
+    // 只有超过40条才需要分析时间间隔和智能断句
     const gapStats = TimeGapAnalyzer.analyzeGapStatistics(subtitles);
     this.dynamicThreshold = gapStats.dynamicThreshold;
     
@@ -95,6 +105,13 @@ export class IntelligentSegmenter {
       subtitles.length
     );
     
+    // 如果剩余字幕数量不超过MAX_BATCH_SIZE，直接一次性发送
+    if (searchEnd - startIdx <= IntelligentSegmenter.MAX_BATCH_SIZE && 
+        searchEnd === subtitles.length) {
+      console.log(`[IntelligentSegmenter] 剩余${searchEnd - startIdx}条，一次性发送`);
+      return searchEnd;
+    }
+    
     // Step 1: 在40条内找最大时间间隔
     let maxGap = 0;
     let cutPoint = searchEnd;
@@ -111,16 +128,19 @@ export class IntelligentSegmenter {
       }
     }
     
-    // Step 2: 如果批次过小，尝试后延寻找合适断点
-    if (cutPoint - startIdx < IntelligentSegmenter.MIN_BATCH_SIZE) {
-      // 从最小批次位置开始寻找
-      const minBatchEnd = Math.min(
-        startIdx + IntelligentSegmenter.MIN_BATCH_SIZE,
-        subtitles.length
-      );
+    // Step 2: 如果批次过小，后延寻找合适断点（根据07文档使用while循环）
+    const originalCutPoint = cutPoint;  // 保存第一次找到的断点
+    let loopCount = 0;
+    const MAX_LOOPS = 3;  // 最多循环3次
+    
+    while (cutPoint - startIdx < IntelligentSegmenter.MIN_BATCH_SIZE && 
+           cutPoint < subtitles.length &&
+           loopCount < MAX_LOOPS) {
+      let found = false;
+      loopCount++;
       
-      // 在MIN到MAX之间寻找超过阈值的间隔
-      for (let i = minBatchEnd - 1; i < searchEnd - 1; i++) {
+      // 使用动态阈值判断，从当前cutPoint开始向后搜索
+      for (let i = cutPoint; i < Math.min(searchEnd - 1, subtitles.length - 1); i++) {
         const currentEnd = subtitles[i].end || 
                           (subtitles[i].start + (subtitles[i].duration || 0));
         const nextStart = subtitles[i + 1].start;
@@ -129,14 +149,23 @@ export class IntelligentSegmenter {
         // 使用动态阈值判断
         if (gap >= this.dynamicThreshold) {
           cutPoint = i + 1;
+          found = true;
+          console.log(`[IntelligentSegmenter] 后延找到断点(循环${loopCount}): 位置${i+1}, 间隔${gap.toFixed(2)}s`);
           break;
         }
       }
       
-      // 如果还是没找到，至少保证最小批次大小
-      if (cutPoint - startIdx < IntelligentSegmenter.MIN_BATCH_SIZE) {
-        cutPoint = Math.min(minBatchEnd, subtitles.length);
+      // 如果没有找到合适断点，跳出循环
+      if (!found) {
+        console.log(`[IntelligentSegmenter] 后延未找到合适断点，停止搜索`);
+        break;
       }
+    }
+    
+    // 如果循环了3次还是小于10条，使用第一次的断点位置
+    if (loopCount >= MAX_LOOPS && cutPoint - startIdx < IntelligentSegmenter.MIN_BATCH_SIZE) {
+      cutPoint = originalCutPoint;
+      console.log(`[IntelligentSegmenter] 达到最大循环次数，使用初始断点${originalCutPoint}`);
     }
     
     return cutPoint;

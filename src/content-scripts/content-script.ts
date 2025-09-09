@@ -27,6 +27,7 @@ let capturedSourceLang: string | null = null; // 存储从service-worker传递�
 // API响应处理器Map
 const apiResponseHandlers = new Map<string, (response: any) => void>();
 
+
 /**
  * 获取当前视频ID
  */
@@ -442,7 +443,7 @@ function setupMessageHandlers(): void {
     
     // 处理DISPLAY_TRANSLATION消息
     if (messageType === 'DISPLAY_TRANSLATION') {
-      console.log('[content-script] 收到翻译结果消息');
+      console.log('[content-script] 🎯🎯🎯 收到最终翻译结果消息，准备显示字幕 🎯🎯🎯');
       displayTranslatedSubtitles(message.data);
       sendResponse({ success: true });
       return false;
@@ -466,20 +467,25 @@ function setupMessageHandlers(): void {
     
     // 处理渐进式翻译更新消息
     if (messageType === 'TRANSLATION_UPDATE') {
-      console.log(`[content-script] 收到翻译更新: ${message.data?.updateType}`);
       if (subtitleOverlay && message.data) {
         const { updateType, translatedSubtitles, batchIndex, totalBatches } = message.data;
         
         if (updateType === 'urgent') {
           // 紧急翻译：立即替换显示
+          console.log(`[content-script] 🚀 收到紧急翻译(${translatedSubtitles?.length || 0}条)，立即显示`);
           subtitleOverlay.updateTranslations(translatedSubtitles, true);
-          console.log('[content-script] 应用紧急翻译');
         } else if (updateType === 'progressive') {
           // 渐进式翻译：追加更新
-          subtitleOverlay.updateTranslations(translatedSubtitles, false);
           if (batchIndex && totalBatches) {
-            console.log(`[content-script] 渐进式更新 ${batchIndex}/${totalBatches}`);
+            console.log(`[content-script] ✅ 收到批次翻译 ${batchIndex}/${totalBatches} (${translatedSubtitles?.length || 0}条)`);
+          } else {
+            console.log(`[content-script] ✅ 收到最终翻译(${translatedSubtitles?.length || 0}条)`);
           }
+          
+          subtitleOverlay.updateTranslations(translatedSubtitles, false);
+        } else {
+          console.log(`[content-script] 收到翻译更新: ${updateType}`);
+          subtitleOverlay.updateTranslations(translatedSubtitles, false);
         }
       }
       sendResponse({ success: true });
@@ -746,8 +752,8 @@ function handleSubtitleCaptured(payload: any): void {
       url: payload.url,
       count: payload.count,
       sourceLang: capturedSourceLang, // 传递保存的源语言
-      currentTime: currentTime,  // 添加当前播放时间
-      tabId: chrome.runtime.id  // 这里不能获取tabId，由service-worker自己处理
+      currentTime: currentTime  // 添加当前播放时间
+      // 不要设置tabId，让service-worker从sender.tab.id获取
     }
   }, (response) => {
     if (chrome.runtime.lastError) {
@@ -834,36 +840,59 @@ function showErrorMessage(data: { message: string; duration?: number; level?: st
   try {
     const { message, duration = 5000, level = 'warning' } = data;
     
-    // 查找或创建错误消息容器
+    // 查找视频容器
+    const videoElement = document.querySelector('video');
+    const videoContainer = videoElement?.closest('#movie_player, .html5-video-player');
+    
+    if (!videoContainer) {
+      console.error('[content-script] 未找到视频容器，无法显示错误消息');
+      return;
+    }
+    
+    // 查找或创建错误消息容器（使用字幕样式）
     let errorContainer = document.getElementById('youtube-translator-error-message');
     if (!errorContainer) {
       errorContainer = document.createElement('div');
       errorContainer.id = 'youtube-translator-error-message';
       errorContainer.style.cssText = `
-        position: fixed;
-        top: 80px;
+        position: absolute;
+        bottom: 140px;
         left: 50%;
         transform: translateX(-50%);
-        z-index: 9999;
-        padding: 12px 24px;
-        border-radius: 4px;
-        font-size: 14px;
-        font-family: "YouTube Sans", "Roboto", sans-serif;
-        transition: opacity 0.3s ease;
+        z-index: 2100;
         pointer-events: none;
+        width: 90%;
+        max-width: 800px;
+        text-align: center;
+        transition: opacity 0.3s ease;
       `;
-      document.body.appendChild(errorContainer);
+      
+      // 创建内部消息容器（类似字幕容器）
+      const messageBox = document.createElement('div');
+      messageBox.id = 'error-message-box';
+      messageBox.style.cssText = `
+        background: rgba(0, 0, 0, 0.75);
+        padding: 8px 16px;
+        border-radius: 4px;
+        backdrop-filter: blur(2px);
+        display: inline-block;
+      `;
+      
+      errorContainer.appendChild(messageBox);
+      videoContainer.appendChild(errorContainer);
     }
     
-    // 设置样式基于级别
-    const styles = {
-      info: 'background: rgba(66, 165, 245, 0.95); color: white;',
-      warning: 'background: rgba(255, 152, 0, 0.95); color: white;',
-      error: 'background: rgba(244, 67, 54, 0.95); color: white;'
+    const messageBox = errorContainer.querySelector('#error-message-box') as HTMLElement;
+    if (!messageBox) return;
+    
+    // 设置消息文本样式（类似字幕样式）
+    const textStyles = {
+      info: 'color: #4CAF50; font-size: 22px; line-height: 1.4; font-weight: 500;',
+      warning: 'color: #ffeb3b; font-size: 22px; line-height: 1.4; font-weight: 500;',
+      error: 'color: #ff5252; font-size: 22px; line-height: 1.4; font-weight: 500;'
     };
     
-    errorContainer.style.cssText += styles[level as keyof typeof styles] || styles.warning;
-    errorContainer.textContent = message;
+    messageBox.innerHTML = `<div style="${textStyles[level as keyof typeof textStyles] || textStyles.warning}">${message}</div>`;
     errorContainer.style.opacity = '1';
     errorContainer.style.display = 'block';
     
@@ -913,6 +942,8 @@ if (document.readyState === 'loading') {
 } else {
   initialize();
 }
+
+// 测试代码已移除（v3.0 无重试架构）
 
 // 导出给测试使用
 export {
