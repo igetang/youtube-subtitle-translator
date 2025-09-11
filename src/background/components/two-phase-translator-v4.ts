@@ -91,26 +91,35 @@ export class TwoPhaseTranslatorV4 {
       
       console.log(`[TwoPhaseTranslatorV4] 紧急翻译 ${urgentBatch.length} 条字幕`);
       
-      // 准备文本
+      // 调试：查看原始字幕格式
+      console.log('[TwoPhaseTranslatorV4] 原始字幕前3条:', 
+        urgentBatch.slice(0, 3).map(sub => ({
+          text: sub.text,
+          hasNewline: sub.text.includes('\n'),
+          length: sub.text.length
+        }))
+      );
+      
+      // 准备文本：移除单条字幕内的换行符，用空格替代
       const texts = urgentBatch.map(sub => sub.text.replace(/\n/g, ' ').trim());
-      const combinedText = texts.join('\n');
+      console.log('[TwoPhaseTranslatorV4] 处理后文本前3条:', texts.slice(0, 3));
       
       // 检查信号
       if (signal.aborted) {
         throw new DOMException('紧急翻译准备时被取消', 'AbortError');
       }
       
-      // 调用翻译API
+      // 调用翻译API - 传递文本数组而不是合并的文本
       const translatedTexts = await this.callTranslationAPI(
-        [combinedText],
+        texts,  // 直接传递文本数组，让callTranslationAPI内部处理合并
         preferences.translationService,
         'auto',  // 源语言
         preferences.targetLang,
         signal
       );
       
-      // 分割翻译结果
-      const translatedLines = translatedTexts[0]?.split('\n') || [];
+      // 直接使用返回的翻译数组
+      const translatedLines = translatedTexts || [];
       
       // 构建结果
       urgentBatch.forEach((sub, idx) => {
@@ -344,9 +353,9 @@ export class TwoPhaseTranslatorV4 {
           
           // Google免费翻译API
           const translateUrl = 'https://translate.googleapis.com/translate_a/single';
-          // 使用特殊分隔符，避免与翻译文本中的换行符冲突
-          const SEPARATOR = ' |SEP| ';
-          const combinedText = texts.join(SEPARATOR);
+          // 使用换行符连接，让Google把多条字幕当作连续段落处理
+          // 单条字幕内的换行符已在前面被替换为空格
+          const combinedText = texts.join('\n');
           console.log('[TwoPhaseTranslatorV4] 合并后文本长度:', combinedText.length);
           console.log('[TwoPhaseTranslatorV4] 合并后文本前200字符:', combinedText.substring(0, 200));
           
@@ -355,6 +364,7 @@ export class TwoPhaseTranslatorV4 {
             sl: sourceLang === 'auto' ? 'auto' : sourceLang,
             tl: targetLang,
             dt: 't',
+            format: 'text',  // 添加：保留换行符作为文本的一部分，而不是句子分隔符
             q: combinedText
           });
           
@@ -375,8 +385,8 @@ export class TwoPhaseTranslatorV4 {
               console.log('[TwoPhaseTranslatorV4] 合并的翻译结果长度:', translations.length);
               console.log('[TwoPhaseTranslatorV4] 合并的翻译结果前200字符:', translations.substring(0, 200));
               
-              // 使用相同的分隔符分割
-              translatedTexts = translations.split(SEPARATOR).map(t => t.trim());
+              // 使用换行符分割（与合并时一致）
+              translatedTexts = translations.split('\n').map(t => t.trim());
               console.log('[TwoPhaseTranslatorV4] 分割后数组长度:', translatedTexts.length);
               console.log('[TwoPhaseTranslatorV4] 分割后前3个:', translatedTexts.slice(0, 3));
               

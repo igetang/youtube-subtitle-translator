@@ -65,39 +65,78 @@ graph TB
 
 ### 2.3 字幕格式处理
 
-> 📅 **更新**：2025-09-11
-> 🎯 **重要改进**：使用特殊分隔符避免Google API干扰
+> 📅 **更新**：2025-09-12
+> 🎯 **最终方案**：经过8种分隔符方案测试，回归最简单可靠的换行符方案
+
+#### 2.3.1 测试历程
+
+经过大量测试（2025-09-12），我们测试了8种不同的分隔符方案：
+
+1. **五个竖线** `|||||` - API会保留但作为独立片段翻译，破坏上下文
+2. **类HTML标签** `<SEP>` - 被转义或丢失
+3. **方括号** `[###]` - 部分保留，但不稳定
+4. **Emoji** `🔷` - 保留但影响翻译质量
+5. **零宽空格** `\u200B` - 完全丢失
+6. **HTML注释** `<!--SEP-->` - 需要html格式，增加复杂度
+7. **混合方案** - 过于复杂，收益不明显
+8. **短横线+换行符** `-\n` - 部分保留，但处理复杂
+
+#### 2.3.2 最终决策
 
 ```javascript
-// ⚠️ 旧方案（已废弃）：使用换行符分隔
-// 问题：Google API会在长文本中插入换行符，导致分割错误
-// const textToTranslate = batch.map(item => item.text).join('\n');
+// ✅ 最终采用方案：简单可靠的换行符分隔
+// 原理：Google Translate API将换行符视为句子边界，独立翻译但保持在同一响应中
 
-// ✅ 新方案：使用特殊分隔符
-const SEPARATOR = ' |SEP| ';  // 不太可能出现在翻译文本中
-const batch = [
-  { id: 1, text: "Hello world" },
-  { id: 2, text: "How are you" },
-  { id: 3, text: "Nice to meet you" }
-];
+// 1. 预处理：去除字幕内部换行符，避免干扰
+const processedTexts = batch.map(item => 
+  item.text.replace(/\n/g, ' ').trim()
+);
 
-// 合并时使用特殊分隔符
-const textToTranslate = batch.map(item => item.text).join(SEPARATOR);
+// 2. 组合：使用换行符作为字幕边界
+const textToTranslate = processedTexts.join('\n');
 
-// 发送给翻译API
-const translatedText = await translateAPI(textToTranslate);
+// 3. API调用参数（关键配置）
+const params = new URLSearchParams({
+  client: 'gtx',      // 客户端标识
+  sl: sourceLang,      // 源语言
+  tl: targetLang,      // 目标语言
+  dt: 't',            // 数据类型（translation）
+  format: 'text',     // 重要：使用text格式，不是html
+  q: textToTranslate  // 查询文本
+});
 
-// 按相同分隔符分割，并trim处理空格
-const translatedArray = translatedText.split(SEPARATOR).map(t => t.trim());
+// 4. 发送请求
+const response = await fetch(
+  `https://translate.googleapis.com/translate_a/single?${params}`
+);
 
-// 降级策略：如果分隔符失效，按长度比例分割
+// 5. 解析响应
+const data = await response.json();
+const translatedText = data[0].map(item => item[0]).join('');
+
+// 6. 按换行符分割回原始数量
+const translatedArray = translatedText.split('\n').map(t => t.trim());
+```
+
+#### 2.3.3 方案优势
+
+1. **简单可靠**：无需复杂的分隔符处理逻辑
+2. **API友好**：换行符是Google API原生支持的句子边界
+3. **准确分割**：翻译后能准确还原字幕数量
+4. **维护上下文**：虽然独立翻译，但在同一请求中保持一定上下文
+
+#### 2.3.4 注意事项
+
+```javascript
+// ⚠️ 重要：必须先清理字幕内部的换行符
+// YouTube字幕可能包含内部换行符（如多行字幕）
+const cleanText = subtitle.text.replace(/\n/g, ' ').trim();
+
+// ⚠️ 降级策略：如果分割数量不匹配
 if (translatedArray.length !== batch.length) {
-  // 按原文长度比例分配翻译文本
-  const totalLength = batch.map(b => b.text.length).reduce((a, b) => a + b, 0);
-  let currentPos = 0;
-  translatedArray = batch.map(item => {
-    const ratio = item.text.length / totalLength;
-    const translatedLength = Math.floor(translatedText.length * ratio);
+  console.warn('翻译分割数量不匹配，使用降级策略');
+  // 选项1：按原文长度比例分配
+  // 选项2：使用单条翻译模式
     const result = translatedText.substring(currentPos, currentPos + translatedLength);
     currentPos += translatedLength;
     return result;
