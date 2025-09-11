@@ -56,30 +56,69 @@ graph TB
 | 参数 | 值 | 说明 |
 |-----|-----|-----|
 | MAX_BATCH_SIZE | 40条 | 单批最大字幕数（约2分钟内容） |
-| MIN_BATCH_SIZE | 10条 | 最小批次（避免过度碎片化） |
-| URGENT_RADIUS | 20条 | 紧急翻译半径（前后各20条） |
+| MIN_BATCH_SIZE | 20条 | 最小批次（预留，当前设计不使用） |
+| URGENT_BEFORE | 9条 | 紧急翻译前向范围 |
+| URGENT_AFTER | 30条 | 紧急翻译后向范围（共40条） |
 | API_DELAY | 200ms | API调用间隔（避免限流） |
 | 动态阈值 | 自适应 | max(平均间隔×3, 中位数×2, 1秒) |
+| 执行模式 | 并行 | 紧急翻译与批量翻译并行执行 |
 
 ### 2.3 字幕格式处理
 
+> 📅 **更新**：2025-09-11
+> 🎯 **重要改进**：使用特殊分隔符避免Google API干扰
+
 ```javascript
-// 字幕间使用双换行符分隔，便于区分每条字幕
+// ⚠️ 旧方案（已废弃）：使用换行符分隔
+// 问题：Google API会在长文本中插入换行符，导致分割错误
+// const textToTranslate = batch.map(item => item.text).join('\n');
+
+// ✅ 新方案：使用特殊分隔符
+const SEPARATOR = ' |SEP| ';  // 不太可能出现在翻译文本中
 const batch = [
   { id: 1, text: "Hello world" },
   { id: 2, text: "How are you" },
   { id: 3, text: "Nice to meet you" }
 ];
 
-// 合并时使用双换行符
-const textToTranslate = batch.map(item => item.text).join('\n\n');
+// 合并时使用特殊分隔符
+const textToTranslate = batch.map(item => item.text).join(SEPARATOR);
 
 // 发送给翻译API
 const translatedText = await translateAPI(textToTranslate);
 
-// 按双换行符分割回原始条数
-const translatedArray = translatedText.split('\n\n');
+// 按相同分隔符分割，并trim处理空格
+const translatedArray = translatedText.split(SEPARATOR).map(t => t.trim());
+
+// 降级策略：如果分隔符失效，按长度比例分割
+if (translatedArray.length !== batch.length) {
+  // 按原文长度比例分配翻译文本
+  const totalLength = batch.map(b => b.text.length).reduce((a, b) => a + b, 0);
+  let currentPos = 0;
+  translatedArray = batch.map(item => {
+    const ratio = item.text.length / totalLength;
+    const translatedLength = Math.floor(translatedText.length * ratio);
+    const result = translatedText.substring(currentPos, currentPos + translatedLength);
+    currentPos += translatedLength;
+    return result;
+  });
+}
 ```
+
+#### 分隔符选择原则
+
+1. **独特性**：选择不太可能出现在正常翻译文本中的字符组合
+2. **稳定性**：避免被翻译API修改或转义
+3. **可见性**：便于调试和日志分析
+4. **兼容性**：不影响URL编码和JSON传输
+
+#### 已验证的问题与解决
+
+| 问题 | 原因 | 解决方案 |
+|-----|-----|---------|
+| 只翻译第一句 | Google API插入换行符 | 使用特殊分隔符 |
+| 分割数量不匹配 | 分隔符被翻译或丢失 | 添加降级策略 |
+| 文本首尾空格 | API返回格式问题 | trim()处理 |
 
 ## 三、核心算法实现
 
@@ -116,91 +155,149 @@ class GapAnalyzer {
 
 ```javascript
 class IntelligentSegmenter {
+  /**
+   * 在40条字幕批次内找最佳断点
+   * 核心原理：最大间隔 > 最小间隔 + 400ms 才断句
+   */
   findOptimalCutPoint(subtitles, startIdx) {
-    const MAX_BATCH = 40;
-    const MIN_BATCH = 10;
-    const searchEnd = Math.min(startIdx + MAX_BATCH, subtitles.length);
+    const BATCH_SIZE = 40;
+    const SENTENCE_GAP = 400;  // 正常句间间隔400ms
     
-    // Step 1: 找40条内的最大时间间隔
+    const endIdx = Math.min(startIdx + BATCH_SIZE, subtitles.length);
+    
+    // 剩余不足40条，全部发送
+    if (endIdx - startIdx < BATCH_SIZE) {
+      console.log(`[断句] 剩余${endIdx - startIdx}条，全部发送`);
+      return endIdx;
+    }
+    
+    // 找40条内的最小和最大间隔
+    let minGap = Infinity;
     let maxGap = 0;
-    let cutPoint = searchEnd;
+    let maxGapIndex = endIdx;  // 默认不断句
     
-    for (let i = startIdx; i < searchEnd - 1; i++) {
+    for (let i = startIdx; i < endIdx - 1; i++) {
+      // 间隔 = 下一条起始时间 - 当前条结束时间
       const gap = subtitles[i + 1].start - subtitles[i].end;
+      
+      minGap = Math.min(minGap, gap);
+      
       if (gap > maxGap) {
         maxGap = gap;
-        cutPoint = i + 1;
+        maxGapIndex = i + 1;  // 断点在间隔后的字幕位置
       }
     }
     
-    // Step 2: 如果批次过小，后延寻找合适断点
-    while (cutPoint - startIdx < MIN_BATCH && cutPoint < subtitles.length) {
-      let found = false;
-      
-      // 使用动态阈值判断
-      for (let i = cutPoint; i < searchEnd - 1; i++) {
-        const gap = subtitles[i + 1].start - subtitles[i].end;
-        if (gap >= this.dynamicThreshold) {
-          cutPoint = i + 1;
-          found = true;
-          break;
-        }
-      }
-      
-      if (!found) break;  // 没有合适断点，保持当前
+    // 判断是否满足断句条件
+    if (maxGap > minGap + SENTENCE_GAP) {
+      console.log(`[断句] 在索引${maxGapIndex}处断开，间隔${maxGap}ms > 阈值${minGap + SENTENCE_GAP}ms`);
+      return maxGapIndex;
     }
     
-    return cutPoint;
+    // 不满足条件，40条全部一起发送
+    console.log(`[断句] 最大间隔${maxGap}ms不满足条件，40条一起发送`);
+    return endIdx;
   }
 }
 ```
 
-### 3.3 两阶段翻译策略
+### 3.3 两阶段翻译策略（并行执行版）
 
 ```javascript
 class TwoPhaseTranslator {
+  private isComplete = false;               // 批量翻译完成标志
+  private urgentCoverageComplete = false;   // 紧急翻译覆盖全部标志
+  
   async translateVideo(allSubtitles, currentIndex) {
-    // 阶段1：紧急翻译（用户当前位置）
-    const urgentBatch = this.getUrgentBatch(allSubtitles, currentIndex);
-    const urgentResult = await this.translateBatch(urgentBatch);
-    this.displayImmediately(urgentResult);  // 300ms内显示
+    // 重置标志
+    this.isComplete = false;
+    this.urgentCoverageComplete = false;
     
-    // 阶段2：完整批量翻译（全部字幕）
-    const fullBatches = this.createSmartBatches(allSubtitles);
-    const fullResults = await this.translateAllBatches(fullBatches);
+    // 并行执行两个阶段
+    const [urgentResult, batchResult] = await Promise.allSettled([
+      this.executeUrgentTranslation(allSubtitles, currentIndex),
+      this.executeBatchTranslation(allSubtitles, currentIndex)
+    ]);
     
-    // 阶段3：覆盖更新（用完整结果替换紧急结果）
-    this.mergeAndUpdate(fullResults);
-    
-    return fullResults;
+    return { urgentResult, batchResult };
   }
   
-  getUrgentBatch(subtitles, currentIndex) {
-    // 前后各20条，共41条
-    const start = Math.max(0, currentIndex - 20);
-    const end = Math.min(subtitles.length, currentIndex + 21);
-    return subtitles.slice(start, end);
+  async executeUrgentTranslation(allSubtitles, currentIndex) {
+    // 计算紧急翻译范围：前9后30，共40条
+    const urgentStart = Math.max(0, currentIndex - 9);
+    const urgentEnd = Math.min(allSubtitles.length, currentIndex + 31);
+    const urgentBatch = allSubtitles.slice(urgentStart, urgentEnd);
+    
+    // 判断是否覆盖全部字幕
+    if (urgentBatch.length === allSubtitles.length) {
+      this.urgentCoverageComplete = true;
+      console.log('[紧急翻译] 已覆盖全部字幕，批量翻译将跳过');
+    }
+    
+    // 执行翻译
+    const results = await this.translateBatch(urgentBatch);
+    
+    // 显示逻辑：检查批量翻译是否已完成
+    if (!this.isComplete) {
+      this.displayResults(results);
+      console.log('[紧急翻译] 显示结果');
+    } else {
+      console.log('[紧急翻译] 批量已完成，忽略紧急结果');
+    }
+    
+    return results;
   }
   
-  async translateAllBatches(batches) {
+  async executeBatchTranslation(allSubtitles, currentIndex) {
+    // 前置判断：是否需要执行批量翻译
+    if (this.urgentCoverageComplete) {
+      console.log('[批量翻译] 跳过：紧急翻译已覆盖全部');
+      this.isComplete = true;
+      return null;
+    }
+    
+    // 使用智能断句创建批次
+    const batches = this.createSmartBatches(allSubtitles);
     const results = new Map();
     
+    // 顺序执行批次，每批延迟200ms
     for (let i = 0; i < batches.length; i++) {
+      if (i > 0) {
+        await this.delay(200);  // 防止API限流
+      }
+      
       const batch = batches[i];
-      const translated = await this.callAPI(batch);
+      const translated = await this.translateBatch(batch);
       
       // 存储结果
       translated.forEach((text, idx) => {
         results.set(batch.startIdx + idx, text);
       });
-      
-      // 避免API限流
-      if (i < batches.length - 1) {
-        await this.delay(200);
-      }
     }
     
+    // 标记完成并覆盖显示
+    this.isComplete = true;
+    this.displayResults(results);
+    console.log('[批量翻译] 完成，覆盖所有内容');
+    
     return results;
+  }
+  
+  createSmartBatches(allSubtitles) {
+    const batches = [];
+    const segmenter = new IntelligentSegmenter();
+    let startIdx = 0;
+    
+    while (startIdx < allSubtitles.length) {
+      const cutPoint = segmenter.findOptimalCutPoint(allSubtitles, startIdx);
+      batches.push({
+        startIdx: startIdx,
+        subtitles: allSubtitles.slice(startIdx, cutPoint)
+      });
+      startIdx = cutPoint;
+    }
+    
+    return batches;
   }
 }
 ```
@@ -471,12 +568,12 @@ async function executeBatchTranslation(batches: any[]) {
 
 #### 问题场景
 
-在两阶段翻译中，可能出现紧急翻译API响应延迟的情况：
+在两阶段并行翻译中，可能出现紧急翻译API响应延迟的情况：
 
 ```
 时间线：
 0s    紧急翻译发起（等待API响应）
-0.2s  批量翻译开始（紧急翻译仍在等待）
+0s    批量翻译并行开始（200ms间隔发送）
 3s    批量翻译完成 → 显示完整翻译结果
 4s    紧急翻译终于返回 → ❌ 错误覆盖批量结果
 ```
@@ -535,23 +632,31 @@ class TwoPhaseTranslator {
 #### 时序保护流程图
 
 ```
-紧急翻译API调用
-    ├─ 正常返回 → 检查 isComplete
-    │   ├─ false → 更新结果 ✅
-    │   └─ true  → 忽略结果 ❌
+并行执行开始
+    ├─ 紧急翻译（前9后30共40条）
+    │   ├─ 检查是否覆盖全部 → 设置urgentCoverageComplete
+    │   ├─ 执行翻译
+    │   └─ 完成时检查isComplete
+    │       ├─ false → 显示紧急结果 ✅
+    │       └─ true  → 忽略紧急结果 ❌
     │
-    └─ 5秒超时 → 看门狗触发
-        └─ 检查 isComplete
-            ├─ false → 重试翻译
-            └─ true  → 取消重试
+    └─ 批量翻译（200ms延迟发送）
+        ├─ 检查urgentCoverageComplete
+        │   ├─ true  → 跳过批量翻译 ❌
+        │   └─ false → 继续执行 ✅
+        ├─ 智能断句分批
+        ├─ 顺序执行各批次
+        └─ 完成后覆盖显示
 ```
 
 #### 关键设计要点
 
-1. **单一标志**：只用一个 `isComplete` 布尔值，避免复杂的状态机
-2. **双重检查**：正常返回和超时重试都要检查完成标志
-3. **自动忽略**：批量翻译完成后，所有延迟的紧急翻译自动被忽略
-4. **无需手动清理**：不需要在批量完成时主动清除紧急翻译看门狗
+1. **双标志机制**：
+   - `isComplete`：防止延迟的紧急翻译覆盖批量结果
+   - `urgentCoverageComplete`：避免不必要的批量翻译
+2. **显示优先级**：批量翻译始终覆盖紧急翻译（最终显示）
+3. **智能跳过**：短视频（<40条）自动跳过批量翻译
+4. **防止闪烁**：通过标志控制，避免显示内容反复切换
 
 #### 测试验证
 
@@ -962,34 +1067,39 @@ class TimeoutController {
 }
 ```
 
-#### 两阶段翻译（无重试版）
+#### 两阶段翻译（并行执行版）
 
 ```typescript
 class SimplifiedTwoPhaseTranslator {
   private timeoutController = new TimeoutController();
   
   async translateVideo(subtitles: any[], currentIndex: number) {
-    // 阶段1：紧急翻译（5秒超时，失败直接跳过）
-    try {
-      const urgentBatch = this.getUrgentBatch(subtitles, currentIndex);
-      const urgentResult = await this.timeoutController.executeWithTimeout(
-        this.translateBatch(urgentBatch),
-        5000
-      );
-      this.displayImmediately(urgentResult);
-    } catch (error) {
-      console.warn('[紧急翻译] 失败或超时，继续批量翻译');
-    }
+    // 并行执行紧急翻译和批量翻译
+    const urgentPromise = this.executeUrgentTranslation(subtitles, currentIndex);
+    const batchPromise = this.executeBatchTranslation(subtitles);
     
-    // 阶段2：批量翻译（每批独立，失败不影响其他）
-    const batches = this.createSmartBatches(subtitles);
-    await this.translateBatchesIndependently(batches);
+    // 同时等待两个阶段完成
+    await Promise.all([
+      urgentPromise.catch(err => console.warn('[紧急翻译]', err)),
+      batchPromise
+    ]);
   }
   
-  async translateBatchesIndependently(batches: any[]) {
-    // 每批独立执行，失败不影响其他批次
+  async executeUrgentTranslation(subtitles: any[], currentIndex: number) {
+    // 紧急翻译：前9后30共40条（5秒超时）
+    const urgentBatch = this.getUrgentBatch(subtitles, currentIndex);
+    const urgentResult = await this.timeoutController.executeWithTimeout(
+      this.translateBatch(urgentBatch),
+      5000
+    );
+    this.displayImmediately(urgentResult);
+  }
+  
+  async executeBatchTranslation(subtitles: any[]) {
+    // 批量翻译：每批独立执行，失败不影响其他
+    const batches = this.createSmartBatches(subtitles);
     const promises = batches.map(async (batch, index) => {
-      // 错开200ms避免API限流
+      // 每批错开200ms避免API限流
       await this.delay(index * 200);
       
       try {
