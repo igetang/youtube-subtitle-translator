@@ -8,9 +8,9 @@ console.log('[test-content-script] 当前URL:', window.location.href);
 console.log('[test-content-script] 当前时间:', new Date().toISOString());
 
 // 在页面添加一个简单的视觉指示器
-const indicator = document.createElement('div');
-indicator.id = 'youtube-translator-test-indicator';
-indicator.style.cssText = `
+const testIndicator = document.createElement('div');
+testIndicator.id = 'youtube-translator-test-testIndicator';
+testIndicator.style.cssText = `
   position: fixed;
   top: 10px;
   right: 10px;
@@ -22,22 +22,22 @@ indicator.style.cssText = `
   font-size: 12px;
   font-family: Arial, sans-serif;
 `;
-indicator.textContent = 'YouTube翻译助手已注入';
+testIndicator.textContent = 'YouTube翻译助手已注入';
 
 // 3秒后自动消失
 setTimeout(() => {
-  if (indicator.parentNode) {
-    indicator.parentNode.removeChild(indicator);
+  if (testIndicator.parentNode) {
+    testIndicator.parentNode.removeChild(testIndicator);
   }
 }, 3000);
 
 // 等待页面加载完成后再添加指示器
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
-    document.body.appendChild(indicator);
+    document.body.appendChild(testIndicator);
   });
 } else {
-  document.body.appendChild(indicator);
+  document.body.appendChild(testIndicator);
 }
 
 // 每5秒输出一次日志确认脚本持续运行

@@ -12,7 +12,7 @@ import {
   VideoSourceLanguageCacheManager,
   UserPreferencesManager
 } from '../shared/storage';
-import { SubtitleMode, TranslationServiceType, UserPreferences } from '../shared/types/user-preferences-types';
+import { SubtitleMode, TranslationServiceType, UserPreferences, VideoSourceLanguageCache, VideoSourceLanguageItem } from '../shared/types/user-preferences-types';
 import { SimplifiedCaptionTrack, TrackMetadata } from '../shared/types/subtitle-types';
 
 const videoSourceLanguageCacheManager = VideoSourceLanguageCacheManager.getInstance();
@@ -1478,7 +1478,7 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
           kind: 'auto'
         },
         // 然后添加实际的轨道数据
-        ...availableLanguages.map(track => ({
+        ...availableLanguages.map((track: any) => ({
           languageCode: track.languageCode,
           languageName: track.name,
           kind: track.kind || 'standard'
@@ -2032,10 +2032,13 @@ async function saveVideoSourceLanguageCache(
     // 查找是否已存在该视频的缓存
     const existingIndex = cache.items.findIndex(item => item.videoId === videoId);
     
+    const now = Date.now();
     const newItem: VideoSourceLanguageItem = {
       videoId,
       availableSourceLanguages,
-      selectedSourceTrack
+      selectedSourceTrack: selectedSourceTrack || undefined,
+      fetchedAt: now,
+      lastAccessed: now
     };
     
     if (existingIndex >= 0) {

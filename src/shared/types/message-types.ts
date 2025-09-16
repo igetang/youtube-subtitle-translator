@@ -647,6 +647,30 @@ export interface MessageSendResult<T = any> {
 }
 
 // ================================
+// 🎯 翻译开关相关类型
+// ================================
+
+/**
+ * 翻译开关请求数据
+ */
+export interface ToggleTranslateRequest {
+  videoId: string;
+  newState: boolean;
+}
+
+/**
+ * 翻译开关响应数据
+ */
+export interface ToggleTranslateResponse {
+  success: boolean;
+  action: 'cached' | 'translated' | 'needFetch' | 'stopped' | 'error';
+  data?: any;
+  message?: string;
+  error?: string;
+  config?: UserPreferences;
+}
+
+// ================================
 // 🎯 导出类型集合
 // ================================
 

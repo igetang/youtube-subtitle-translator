@@ -13,6 +13,7 @@
 // === 核心模块导入 ===
 import { UserPreferencesManager } from '../shared/storage/user-preferences-manager';
 import { RuntimeStateManager } from '../shared/storage/runtime-state-manager';
+import { UserPreferences, TranslationServiceComplete, TranslationServiceType } from '../shared/types/user-preferences-types';
 import { StorageManager } from '../shared/storage/storage-manager';
 import { TranslationCacheManager } from '../shared/storage/translation-cache-manager';
 import { VideoSourceLanguageCacheManager } from '../shared/storage/video-source-language-cache-manager';
@@ -980,7 +981,7 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
             await videoSourceLanguageCacheManager.set({
               videoId,
               availableSourceLanguages,
-              lastSelectedLanguage: lastSelectedLanguage
+              lastSelectedLanguage: lastSelectedLanguage || undefined
             });
             
             console.log(`[service-worker] ✓ 已保存到缓存[Local Storage]`);
@@ -1004,7 +1005,7 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
       detectedSourceLang = selectBestSourceLanguage(
         availableSourceLanguages,
         targetLang,
-        null  // 没有历史选择
+        undefined  // 没有历史选择
       );
       console.log(`[service-worker] 智能选择源语言: ${detectedSourceLang} (目标语言: ${targetLang})`);
     } else {
@@ -2025,6 +2026,8 @@ async function handleSubtitleData(data: any): Promise<any> {
 interface ToggleTranslateRequest {
   videoId: string;
   newState: boolean;
+  currentTime?: number;
+  tabId?: number;
 }
 
 /**
@@ -2032,7 +2035,7 @@ interface ToggleTranslateRequest {
  */
 interface ToggleTranslateResponse {
   success: boolean;
-  action: 'cached' | 'translated' | 'needFetch' | 'stopped';
+  action: 'cached' | 'translated' | 'needFetch' | 'stopped' | 'error';
   data?: any;
   message?: string;
   error?: string;
@@ -2118,15 +2121,14 @@ function generateTranslationCacheKey(
   videoId: string,
   sourceLang: string,
   targetLang: string,
-  service: TranslationServiceConfig
+  service: TranslationServiceComplete
 ): string {
   // 基础部分
   let key = `translation_${videoId}_${sourceLang}_${targetLang}_${service.type}`;
   
   // 根据服务类型添加特定参数
   switch (service.type) {
-    case 'openai':
-    case 'openai-free':
+    case TranslationServiceType.OPENAI:
       // OpenAI需要模型和temperature
       if (service.model) {
         key += `_${service.model}`;
@@ -2135,11 +2137,10 @@ function generateTranslationCacheKey(
         key += `_${service.temperature}`;
       }
       break;
-    case 'google':
-    case 'google-free':
+    case TranslationServiceType.GOOGLE_FREE:
       // Google翻译无额外参数
       break;
-    case 'deepl':
+    case TranslationServiceType.DEEPSEEK:
       // DeepL可能有formality参数
       if ((service as any).formality) {
         key += `_${(service as any).formality}`;
@@ -2457,7 +2458,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
       execute(async (signal) => {
         // 监听abort信号
         if (signal.aborted) {
-          throw new AbortError('字幕获取被取消', 'subtitle_fetch');
+          throw new OldAbortError('字幕获取被取消', 'subtitle_fetch');
         }
         
         // 等待字幕响应（这里不发送新消息，因为消息已经在下面发送了）
@@ -2475,7 +2476,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
         });
       }).catch(async (error) => {
         // 超时或取消时的处理
-        if (error instanceof TimeoutError || error instanceof AbortError) {
+        if (error instanceof OldTimeoutError || error instanceof OldAbortError) {
           console.error(`[service-worker] ${error.message}`);
           
           // 清理controller
@@ -2543,6 +2544,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     }
     return {
       success: false,
+      action: 'error',
       error: error instanceof Error ? error.message : '处理翻译切换失败'
     };
   }
@@ -2608,11 +2610,11 @@ async function continueTranslationWithSubtitles(data: any): Promise<any> {
     }
     
     // 如果源语言还是auto，尝试从可用语言列表中选择
-    if (sourceLang === 'auto' && sourceData?.availableSourceLanguages?.length > 0) {
+    if (sourceLang === 'auto' && sourceData && sourceData.availableSourceLanguages && sourceData.availableSourceLanguages.length > 0) {
       sourceLang = selectBestSourceLanguage(
         sourceData.availableSourceLanguages,
         preferences.targetLang,
-        sourceData.lastSelectedLanguage
+        sourceData.lastSelectedLanguage || undefined
       );
       console.log(`[service-worker] 智能选择源语言: ${sourceLang}`);
     }
@@ -2652,7 +2654,6 @@ async function continueTranslationWithSubtitles(data: any): Promise<any> {
       translationService: preferences.translationService,
       originalSubtitles: subtitles,
       translatedSubtitles: translatedResult.translatedSubtitles,
-      createdAt: Date.now(),
       lastUsed: Date.now(),
       dataHash: ''
     });

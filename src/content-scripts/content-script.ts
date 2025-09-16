@@ -8,7 +8,6 @@ import { UIRenderer } from '@shared/components/ui-renderer';
 import { StateManager } from '@shared/components/state-manager';
 import { TranslateActiveState } from '@shared/types/runtime-state-types';
 import { subtitleOverlay } from './subtitle-overlay';
-import { testControlPanel } from './test-control-panel';
 
 // ==================== 初始化 ====================
 
@@ -95,13 +94,13 @@ async function initializeUIComponents(): Promise<void> {
   try {
     // 创建UI渲染器
     uiRenderer = new UIRenderer();
-    await uiRenderer.initialize();
+    uiRenderer.initialize({}, {});
     // 注释掉中间层日志
     // console.log('[content-script] UIRenderer初始化完成');
-    
+
     // 创建状态管理器
     stateManager = new StateManager();
-    await stateManager.initialize();
+    stateManager.initialize({}, {});
     // 注释掉中间层日志
     // console.log('[content-script] StateManager初始化完成');
     
@@ -144,7 +143,7 @@ async function checkAndCreateButtons(): Promise<void> {
   if (rightControls && autoplayButton) {
     // 注释掉中间层日志
     // console.log('[content-script] YouTube控制栏已就绪，创建按钮');
-    const success = await uiRenderer.createButtons();
+    const success = await uiRenderer?.createButtons();
     if (success) {
       // 删除重复日志，UIRenderer已经输出了“按钮创建完成”
       // console.log('[content-script] ✅ 按钮创建成功');
@@ -167,7 +166,7 @@ async function checkAndCreateButtons(): Promise<void> {
     if (rightControls && autoplayButton) {
       // 注释掉中间层日志
       // console.log('[content-script] YouTube控制栏就绪，尝试创建按钮');
-      const success = await uiRenderer.createButtons();
+      const success = await uiRenderer?.createButtons();
       if (success) {
         // 删除重复日志，UIRenderer已经输出了“按钮创建完成”
         // console.log('[content-script] ✅ 按钮创建成功');

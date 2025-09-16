@@ -5,8 +5,21 @@
  * @date 2025-09-09
  */
 
-import type { ToggleTranslateRequest, ToggleTranslateResponse } from '../shared/types/messages';
+import type { ToggleTranslateRequest, ToggleTranslateResponse } from '../shared/types/message-types';
 import { TranslateActiveState } from '../shared/types/runtime-state-types';
+
+// 定义字幕数据接口
+interface SubtitleData {
+  subtitles: Array<{
+    text: string;
+    start: number;
+    end: number;
+    index?: number;
+  }>;
+  sourceLang?: string;
+  currentTime?: number;
+  videoId?: string;
+}
 import { abortTimeoutManager } from './components/abort-timeout-manager';
 import { 
   StageTimeoutError, 
@@ -55,6 +68,7 @@ export async function handleToggleTranslateV4(
     console.error('[service-worker-v4] 无法获取标签页ID');
     return {
       success: false,
+      action: 'error',
       error: '无法获取标签页信息'
     };
   }
@@ -251,7 +265,7 @@ export async function handleToggleTranslateV4(
     
     // 等待字幕数据（关键的5秒超时）
     console.log('[service-worker-v4] 等待字幕数据响应...');
-    const subtitleData = await session.executeStage(
+    const subtitleData: SubtitleData = await session.executeStage(
       'subtitle_fetch',
       async (signal) => {
         return new Promise((resolve, reject) => {

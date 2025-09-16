@@ -441,7 +441,7 @@ export class TwoPhaseTranslatorV4 {
               // console.log('[TwoPhaseTranslatorV4] 合并的翻译结果前200字符:', translations.substring(0, 200));
               
               // 使用换行符分割（与合并时一致）
-              translatedTexts = translations.split('\n').map(t => t.trim());
+              translatedTexts = translations.split('\n').map((t: string) => t.trim());
               console.log('[TwoPhaseTranslatorV4] 分割后数组长度:', translatedTexts.length);
               console.log('[TwoPhaseTranslatorV4] 分割后前3个:', translatedTexts.slice(0, 3));
               

@@ -114,8 +114,8 @@ export class SubtitleOverlay {
       translation: item.translation
     }));
     
-    // 设置显示模式
-    this.currentLanguageMode = translationData.subtitleMode === 'targetOnly' ? 'targetOnly' : 'bilingual';
+    // 设置显示模式（默认使用双语模式）
+    this.currentLanguageMode = 'bilingual';
     
     this.isActive = true;
 

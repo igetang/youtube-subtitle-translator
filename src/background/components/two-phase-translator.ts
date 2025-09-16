@@ -220,7 +220,7 @@ export class TwoPhaseTranslator {
     executionId: number,
     startTime: number,
     onProgress?: (phase: string, progress: number, data?: any) => void
-  ): Promise<Map<number, string>> {
+  ): Promise<Map<number, string> | null> {
     // 前置判断：是否需要执行批量翻译
     if (this.urgentCoverageComplete) {
       console.log('[TwoPhaseTranslator] 跳过批量翻译：紧急翻译已覆盖全部');

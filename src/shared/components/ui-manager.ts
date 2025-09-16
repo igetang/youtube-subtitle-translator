@@ -1263,7 +1263,7 @@ export class UIManager {
     
     // ✅ C7-C9: 根据翻译状态发出相应事件
     // 获取当前视频ID
-    const videoId = this.getVideoId();
+    const videoId = new URLSearchParams(window.location.search).get('v') || '';
     
     if (this.isActiveState(targetState)) {
       console.log('[ui-manager] 翻译已激活，发出translation:start_requested事件');
