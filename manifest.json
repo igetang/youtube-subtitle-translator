@@ -23,7 +23,6 @@
   "permissions": [
     "storage",
     "tabs",
-    "content_settings",
     "notifications"
   ],
   "host_permissions": [

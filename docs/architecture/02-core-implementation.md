@@ -1403,8 +1403,323 @@ class OpenAIConfigHandler {
 ### 5.13 历史参考 📚
 
 > **📚 传统架构说明**：v5.24.6及更早版本采用了复杂的全局状态同步机制，包含340行代码和复杂的Port管理。当前项目已采用简化架构设计（v5.24.7+），代码量减少85%，维护成本大幅降低。
-> 
+>
 > 详细的传统架构内容已归档至 [legacy/](../legacy/) 目录，此处不再重复描述。
+
+### 5.14 YouTube SPA导航处理 ⭐ **设计方案** (2025-09-16)
+
+#### 5.14.1 问题背景
+
+YouTube作为单页应用（SPA），在视频切换时不会刷新页面，这导致：
+- 翻译按钮状态残留（显示上一个视频的状态）
+- 字幕覆盖层继续显示旧翻译
+- 全局变量（如`capturedSourceLang`）未清理
+
+#### 5.14.2 设计方案
+
+**核心原则**：视频切换 = 页面刷新（重置到初始状态）
+
+**检测机制**：
+```javascript
+// 1. YouTube导航事件（主要）
+document.addEventListener('yt-navigate-finish', handleVideoChange);
+
+// 2. URL轮询检测（备用，1秒间隔）
+setInterval(() => {
+  const newVideoId = getVideoId();
+  if (newVideoId !== currentVideoId) {
+    handleVideoChange(currentVideoId, newVideoId);
+    currentVideoId = newVideoId;
+  }
+}, 1000);
+```
+
+**重置策略**：
+```javascript
+async function handleVideoChange(oldVideoId: string, newVideoId: string) {
+  // 1. 状态重置
+  await stateManager.setState('translateActive', TranslateActiveState.INACTIVE);
+
+  // 2. 变量清理
+  capturedSourceLang = null;
+
+  // 3. UI重置
+  subtitleOverlay?.hide();
+  uiRenderer?.updateButtonState('inactive');
+}
+```
+
+#### 5.14.3 竞态条件处理
+
+```javascript
+let isNavigating = false;
+
+// 导航开始时禁用操作
+document.addEventListener('yt-navigate-start', () => {
+  isNavigating = true;
+});
+
+// 导航完成后恢复
+document.addEventListener('yt-navigate-finish', () => {
+  setTimeout(() => isNavigating = false, 500);
+});
+
+// 用户操作时检查
+function handleToggleTranslate() {
+  if (isNavigating) return; // 忽略导航期间的操作
+  // 正常处理...
+}
+```
+
+#### 5.14.4 架构决策
+
+**为什么不做基于videoId的状态隔离？**
+- 实现复杂度高，收益有限
+- 99%用户期望新视频从关闭状态开始
+- 简单方案更易维护和调试
+
+**保持不变的内容**：
+- 用户偏好设置（targetLang、translationService等）
+- 视频缓存数据（基于videoId的翻译缓存）
+- Popup状态（由Chrome管理）
+
+### 5.15 字幕拦截器按需初始化设计 ⭐ **设计方案** (2025-09-16)
+
+#### 5.15.1 问题背景
+
+**发现的问题**：
+- 视频切换后，未点击翻译按钮，但插件自动获取了字幕
+- SubtitleInterceptor一旦初始化（劫持fetch），就永久监听所有timedtext请求
+- YouTube记住用户的CC字幕设置，视频切换时自动请求字幕
+- 这些自动请求被拦截器捕获，造成不必要的处理
+
+**根本原因**：
+```javascript
+// 当前问题：一次初始化，永久劫持
+window.fetch = async (...args) => {
+  // 永久劫持，无法撤销
+}
+```
+
+#### 5.15.2 完整架构设计（最终版 2025-01-16）
+
+**核心理念**：按需初始化，用完即销毁 - 避免永久劫持导致的自动字幕捕获
+
+**三层超时机制**：
+- **Service Worker**: 5秒翻译总超时
+- **拦截器内部**: 5秒自动销毁
+- **Content Script**: 6秒兜底保护
+
+```javascript
+// 统一超时配置
+const TIMEOUT_CONFIG = {
+  TRANSLATION: 5000,      // Service Worker翻译超时
+  INTERCEPTOR: 5000,      // 拦截器自动销毁
+  CAPTURE_FALLBACK: 6000  // Content Script兜底
+};
+
+// 保存原始函数（全局，最开始执行）
+const originalFetch = window.fetch;
+const originalXHROpen = XMLHttpRequest.prototype.open;
+
+// 并发控制标志
+let isInitializing = false;
+
+class SubtitleInterceptor {
+  private static instance: SubtitleInterceptor | null = null;
+  private isActive: boolean = false;  // 简化状态管理
+  private destroyTimer: number | null = null;  // 超时保护
+
+  // 单例模式，确保全局唯一
+  static getInstance(): SubtitleInterceptor {
+    if (!SubtitleInterceptor.instance) {
+      SubtitleInterceptor.instance = new SubtitleInterceptor();
+    }
+    return SubtitleInterceptor.instance;
+  }
+
+  // 检查激活状态
+  static isActive(): boolean {
+    return SubtitleInterceptor.instance?.isActive || false;
+  }
+
+  // 初始化返回成功状态
+  initialize(): boolean {
+    if (this.isActive) {
+      console.log('[SubtitleInterceptor] 已激活，跳过初始化');
+      return true;
+    }
+
+    try {
+      const self = this;
+
+      // 劫持fetch
+      window.fetch = async function(...args) {
+        const url = typeof args[0] === 'string' ? args[0] :
+                   (args[0] instanceof Request ? args[0].url : args[0]?.toString());
+
+        if (url && url.includes('timedtext')) {
+          console.log('[SubtitleInterceptor] 🎯 捕获字幕URL:', url);
+          const response = await originalFetch(...args);
+          const clone = response.clone();
+          self.processSubtitleResponse(clone, url);
+          return response;
+        }
+
+        return originalFetch(...args);
+      };
+
+      // 劫持XMLHttpRequest
+      XMLHttpRequest.prototype.open = function(method, url, async, username, password) {
+        const urlString = url.toString();
+        if (urlString && urlString.includes('timedtext')) {
+          const xhr = this;
+          xhr.addEventListener('load', function() {
+            self.processXHRResponse(xhr.responseText, urlString);
+          }, { once: true });
+        }
+        return originalXHROpen.apply(this, arguments);
+      };
+
+      this.isActive = true;
+
+      // 5秒超时自动销毁（与Service Worker同步）
+      this.destroyTimer = setTimeout(() => {
+        console.log('[SubtitleInterceptor] ⏱️ 5秒超时自动销毁');
+        this.destroy();
+      }, TIMEOUT_CONFIG.INTERCEPTOR);
+
+      console.log('[SubtitleInterceptor] ✅ 初始化成功');
+      return true;
+
+    } catch (error) {
+      console.error('[SubtitleInterceptor] ❌ 初始化失败:', error);
+      return false;
+    }
+  }
+
+  destroy(): void {
+    if (!this.isActive) {
+      console.log('[SubtitleInterceptor] 未激活，无需销毁');
+      return;
+    }
+
+    // 清除超时计时器
+    if (this.destroyTimer) {
+      clearTimeout(this.destroyTimer);
+      this.destroyTimer = null;
+    }
+
+    // 恢复原始函数
+    window.fetch = originalFetch;
+    XMLHttpRequest.prototype.open = originalXHROpen;
+
+    // 重置状态
+    this.isActive = false;
+    SubtitleInterceptor.instance = null;
+
+    console.log('[SubtitleInterceptor] ✅ 已销毁');
+  }
+
+  // 处理响应时检查状态
+  private async processSubtitleResponse(response: Response, url: string): Promise<void> {
+    if (!this.isActive) return;
+
+    try {
+      const text = await response.text();
+
+      // 异步操作后再次检查
+      if (!this.isActive) return;
+
+      // 解析并保存字幕...
+      this.saveAndNotify(subtitles);
+    } catch (error) {
+      console.error('[SubtitleInterceptor] 处理失败:', error);
+    }
+  }
+}
+```
+
+#### 5.15.3 优势
+
+- **无残留**：视频切换不会有拦截器残留
+- **按需工作**：只在主动获取字幕时监听
+- **避免干扰**：不会捕获YouTube的自动字幕请求
+- **资源友好**：不会长期占用内存和CPU
+
+#### 5.15.4 架构要点（最终版 2025-01-16）
+
+**1. 生命周期管理**
+```
+创建 → 初始化 → 捕获 → 销毁
+  ↓      ↓        ↓       ↓
+单例   5秒超时  立即销毁  清理
+```
+
+**2. 三层超时保护**
+```javascript
+// 统一5秒超时设计
+Service Worker: 5秒 → PENDING变INACTIVE
+拦截器内部:     5秒 → 自动销毁
+Content Script: 6秒 → 兜底强制销毁
+```
+
+**3. 状态管理机制**
+- **Service Worker层**: 3状态系统（INACTIVE/PENDING/ACTIVE）
+- **Main World层**: 单一isActive标志
+- **保护机制**: PENDING状态防止重复操作
+
+**4. 并发控制**
+```javascript
+// 防止重复初始化
+if (!SubtitleInterceptor.isActive() && !isInitializing) {
+  isInitializing = true;
+  const success = interceptor.initialize();
+  isInitializing = false;
+
+  if (success) {
+    interceptor.triggerSubtitleButton();
+  }
+}
+```
+
+**5. 销毁时机**
+- **主动销毁**: 字幕捕获后立即销毁（不等background响应）
+- **超时销毁**: 5秒自动销毁
+- **兜底销毁**: 6秒强制销毁
+- **切换销毁**: 视频切换时销毁
+
+**6. 错误处理**
+- `initialize()` 返回boolean表示成功/失败
+- 多处`isActive`检查防止异步竞态
+- 失败有明确的错误消息通知
+
+**7. 关键设计决策**
+| 决策 | 理由 |
+|------|------|
+| 单例模式 | 防止多个拦截器冲突 |
+| 5秒超时 | 平衡用户体验和可靠性 |
+| 立即销毁 | 避免捕获自动请求 |
+| PENDING锁 | 防止用户重复点击 |
+| 无重试 | Fail Fast原则 |
+
+#### 5.15.5 调用流程
+
+```mermaid
+graph TD
+    A[用户点击翻译按钮] --> B{拦截器是否激活?}
+    B -->|否| C[创建/获取单例实例]
+    B -->|是| D[跳过初始化]
+    C --> E[调用initialize]
+    E --> F{初始化成功?}
+    F -->|是| G[设置10秒超时]
+    F -->|否| H[返回错误]
+    G --> I[触发字幕按钮]
+    I --> J[捕获字幕]
+    J --> K[立即销毁拦截器]
+    K --> L[发送字幕到background]
+    G --> M[10秒后自动销毁]
+```
 
 ---
 
@@ -1430,5 +1745,18 @@ class OpenAIConfigHandler {
 2. **历史内容管理**: 定期评估历史内容的保留价值
 3. **文档简化**: 适时将过时的历史内容迁移到单独的归档文档
 4. **用户反馈**: 持续收集Popup方案的用户反馈，迭代优化
+
+### **📅 版本更新记录**
+- **2025-01-16**: 更新5.15节 - 完整Fetch拦截架构设计（最终版）
+  - 统一5秒超时机制（Service Worker/拦截器/兜底）
+  - 完善三层超时保护设计
+  - 明确生命周期管理流程
+  - 添加关键设计决策说明
+
+- **2025-09-16**: 添加5.15节 - 字幕拦截器按需初始化优化设计
+  - 从架构角度重新审视拦截器设计
+  - 保持单例模式 + 6个优化点
+  - 添加超时保护和状态简化方案
+  - 统一销毁时机，防止拦截器泄漏
 
 ---

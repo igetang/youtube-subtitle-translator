@@ -80,12 +80,18 @@ export default defineConfig(({ command, mode }) => {
           },
           output: {
             entryFileNames: '[name].js',
-            chunkFileNames: 'assets/[name].js',
-            assetFileNames: 'assets/[name].[ext]',
-            format: 'es', // Service Worker 保持 ES 模块格式
+            // 关键：将chunk文件也放在根目录，避免路径问题
+            chunkFileNames: '[name]-[hash].js',
+            assetFileNames: '[name].[ext]',
+            // 改回ES格式，因为IIFE与动态导入不兼容
+            format: 'es',
           },
+          // 重要：为service worker禁用modulePreload
+          external: [],
         },
         emptyOutDir: false,
+        // 关键：完全禁用modulePreload
+        modulePreload: false,  // 直接设为false而不是对象
       },
     });
   }

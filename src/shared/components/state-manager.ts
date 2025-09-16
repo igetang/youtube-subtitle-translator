@@ -51,10 +51,17 @@ export class StateManager {
    * @param value 状态值
    */
   async updateState(key: string, value: any): Promise<void> {
-    // 注释掉开始日志，避免链路冗余
-    // console.log(`[StateManager] 🔄 更新状态: ${key} = ${value}`);
+    console.log(`[StateManager] → 更新状态: ${key} = ${value}`);
 
     try {
+      // 先检查本地状态是否已经是目标值
+      if (this.runtimeState[key] === value) {
+        console.log(`[StateManager] 状态已是 ${value}，直接更新UI`);
+        // 即使状态相同也要通知UI更新，因为UI可能还没有同步
+        this.notifyStateChange(key, value);
+        return;
+      }
+
       // 发送状态更新到background
       const result = await chrome.runtime.sendMessage({
         type: 'setRuntimeState',

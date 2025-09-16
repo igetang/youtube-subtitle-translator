@@ -5,8 +5,18 @@
  */
 // 简化初始化日志
 
-// 字幕拦截器初始化标志
-let subtitleInterceptorInitialized = false;
+// 保存原始的fetch和XMLHttpRequest（必须在最开始保存）
+const originalFetch = window.fetch;
+const originalXHROpen = XMLHttpRequest.prototype.open;
+
+// 统一超时配置
+const TIMEOUT_CONFIG = {
+  INTERCEPTOR: 5000,      // 拦截器5秒超时
+  CAPTURE_FALLBACK: 6000  // Content Script 6秒兜底
+};
+
+// 并发控制标志
+let isInitializing = false;
 
 // 🔧 简化后的消息转发器 - 使用标准消息机制
 class MainWorldMessenger {
@@ -231,73 +241,144 @@ class SubtitleAPIController {
 // 全局字幕API控制器实例
 let subtitleAPIController: SubtitleAPIController | null = null;
 
-// 字幕拦截器类
+// 字幕拦截器类（优化版）
 class SubtitleInterceptor {
-  private static instance: SubtitleInterceptor;
+  private static instance: SubtitleInterceptor | null = null;
   private capturedSubtitles: any[] = [];
   private capturedUrl: string | null = null;
+  private isActive: boolean = false;  // 简化状态管理
+  private destroyTimer: number | null = null;  // 超时保护
 
   static getInstance(): SubtitleInterceptor {
+    // 单例模式，确保全局只有一个实例
     if (!SubtitleInterceptor.instance) {
       SubtitleInterceptor.instance = new SubtitleInterceptor();
     }
     return SubtitleInterceptor.instance;
   }
 
-  initialize(): void {
-    if (subtitleInterceptorInitialized) {
-      console.log('[SubtitleInterceptor] 已经初始化，跳过');
+  // 检查拦截器是否激活
+  static isActive(): boolean {
+    return SubtitleInterceptor.instance?.isActive || false;
+  }
+
+  // 初始化返回成功状态
+  initialize(): boolean {
+    if (this.isActive) {
+      console.log('[SubtitleInterceptor] 拦截器已激活，跳过初始化');
+      return true;
+    }
+
+    try {
+      console.log('[SubtitleInterceptor] 🚀 按需初始化拦截器...');
+
+      const self = this;
+
+      // 劫持fetch
+      window.fetch = async function(...args) {
+        const url = typeof args[0] === 'string' ? args[0] : (args[0] instanceof Request ? args[0].url : args[0]?.toString());
+
+        if (url && url.includes('timedtext')) {
+          console.log('[SubtitleInterceptor] 🎯 捕获到字幕URL (Fetch):', url);
+          self.capturedUrl = url;
+
+          const response = await originalFetch(...args);
+          const clone = response.clone();
+
+          // 异步处理字幕数据
+          self.processSubtitleResponse(clone, url);
+
+          return response;
+        }
+
+        return originalFetch(...args);
+      };
+
+      // 劫持XMLHttpRequest
+      XMLHttpRequest.prototype.open = function(method: string, url: string | URL, async: boolean = true, username?: string | null, password?: string | null) {
+        const urlString = url.toString();
+        if (urlString && urlString.includes('timedtext')) {
+          console.log('[SubtitleInterceptor] 🎯 捕获到字幕URL (XHR):', urlString);
+          self.capturedUrl = urlString;
+
+          const xhr = this;
+          const loadHandler = function() {
+            self.processXHRResponse(xhr.responseText, urlString);
+          };
+          xhr.addEventListener('load', loadHandler, { once: true });
+        }
+        return originalXHROpen.apply(this, [method, url, async, username, password] as any);
+      };
+
+      this.isActive = true;
+
+      // 设置5秒超时自动销毁（与Service Worker同步）
+      this.destroyTimer = window.setTimeout(() => {
+        console.log('[SubtitleInterceptor] ⏱️ 5秒超时自动销毁');
+        this.destroy();
+        // 通知content-script超时
+        window.postMessage({
+          source: 'main-world',
+          type: 'INTERCEPTOR_TIMEOUT',
+          payload: { reason: '5秒超时' }
+        }, '*');
+      }, TIMEOUT_CONFIG.INTERCEPTOR);
+
+      console.log('[SubtitleInterceptor] ✅ 初始化成功');
+      return true;
+
+    } catch (error) {
+      console.error('[SubtitleInterceptor] ❌ 初始化失败:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 销毁拦截器，恢复原始的fetch和XMLHttpRequest
+   */
+  destroy(): void {
+    if (!this.isActive) {
+      console.log('[SubtitleInterceptor] 拦截器未激活，无需销毁');
       return;
     }
 
-    // 简化初始化日志
+    console.log('[SubtitleInterceptor] 🔧 销毁拦截器...');
 
-    // 劫持fetch
-    const originalFetch = window.fetch;
-    window.fetch = async (...args) => {
-      const url = typeof args[0] === 'string' ? args[0] : (args[0] instanceof Request ? args[0].url : args[0]?.toString());
-      
-      if (url && url.includes('timedtext')) {
-        console.log('[SubtitleInterceptor] 🎯 捕获到字幕URL (Fetch):', url);
-        this.capturedUrl = url;
-        
-        const response = await originalFetch(...args);
-        const clone = response.clone();
-        
-        // 异步处理字幕数据
-        this.processSubtitleResponse(clone, url);
-        
-        return response;
-      }
-      
-      return originalFetch(...args);
-    };
+    // 清除超时计时器
+    if (this.destroyTimer) {
+      clearTimeout(this.destroyTimer);
+      this.destroyTimer = null;
+    }
 
-    // 劫持XMLHttpRequest
-    const originalOpen = XMLHttpRequest.prototype.open;
-    const self = this;
-    XMLHttpRequest.prototype.open = function(method: string, url: string | URL, async: boolean = true, username?: string | null, password?: string | null) {
-      const urlString = url.toString();
-      if (urlString && urlString.includes('timedtext')) {
-        console.log('[SubtitleInterceptor] 🎯 捕获到字幕URL (XHR):', urlString);
-        self.capturedUrl = urlString;
-        
-        this.addEventListener('load', function() {
-          self.processXHRResponse(this.responseText, urlString);
-        });
-      }
-      return originalOpen.apply(this, [method, url, async, username, password] as any);
-    };
+    // 恢复原始的fetch和XMLHttpRequest
+    window.fetch = originalFetch;
+    XMLHttpRequest.prototype.open = originalXHROpen;
 
-    subtitleInterceptorInitialized = true;
-    console.log('[SubtitleInterceptor] ✅ 字幕拦截器初始化完成');
+    // 清理状态
+    this.capturedSubtitles = [];
+    this.capturedUrl = null;
+    this.isActive = false;
+
+    // 清理全局字幕数据
+    delete (window as any).__capturedSubtitles;
+
+    // 清理静态实例引用
+    SubtitleInterceptor.instance = null;
+
+    console.log('[SubtitleInterceptor] ✅ 拦截器已销毁');
   }
 
   private async processSubtitleResponse(response: Response, url: string): Promise<void> {
+    // 如果拦截器未激活，不处理响应
+    if (!this.isActive) {
+      console.log('[SubtitleInterceptor] 拦截器未激活，忽略响应');
+      return;
+    }
+
     try {
       const text = await response.text();
       // 移除中间步骤日志
-      
+
       // 尝试解析为JSON
       try {
         const data = JSON.parse(text);
@@ -321,9 +402,15 @@ class SubtitleInterceptor {
   }
 
   private processXHRResponse(responseText: string, url: string): void {
+    // 如果拦截器未激活，不处理响应
+    if (!this.isActive) {
+      console.log('[SubtitleInterceptor] 拦截器未激活，忽略XHR响应');
+      return;
+    }
+
     try {
       // 移除中间步骤日志
-      
+
       // 尝试解析为JSON
       try {
         const data = JSON.parse(responseText);
@@ -392,7 +479,13 @@ class SubtitleInterceptor {
 
   private saveAndNotify(subtitles: any[]): void {
     if (subtitles.length === 0) return;
-    
+
+    // 如果拦截器未激活，不保存和通知
+    if (!this.isActive) {
+      console.log('[SubtitleInterceptor] 拦截器未激活，不保存字幕');
+      return;
+    }
+
     // 保存到全局变量
     this.capturedSubtitles = subtitles;
     (window as any).__capturedSubtitles = subtitles;
@@ -507,10 +600,49 @@ window.addEventListener('message', (event: MessageEvent) => {
     
     // 处理字幕捕获请求
     if (type === 'REQUEST_SUBTITLE_CAPTURE') {
-      console.log('[Main World] 收到字幕捕获请求，初始化拦截器...');
+      console.log('[Main World] 收到字幕捕获请求');
+
+      // 并发控制：防止重复初始化
+      if (!SubtitleInterceptor.isActive() && !isInitializing) {
+        isInitializing = true;
+
+        const interceptor = SubtitleInterceptor.getInstance();
+        const success = interceptor.initialize();
+
+        isInitializing = false;
+
+        if (success) {
+          console.log('[Main World] 初始化成功，触发字幕按钮');
+          interceptor.triggerSubtitleButton();
+        } else {
+          console.error('[Main World] 初始化失败');
+          // 发送失败消息
+          window.postMessage({
+            source: 'main-world',
+            type: 'INTERCEPTOR_INIT_FAILED',
+            payload: { error: '初始化失败' }
+          }, '*');
+        }
+      } else {
+        console.log('[Main World] 拦截器已激活或正在初始化，跳过');
+      }
+    }
+
+    // 处理拦截器销毁请求
+    if (type === 'DESTROY_SUBTITLE_INTERCEPTOR') {
+      console.log('[Main World] 收到销毁拦截器请求');
       const interceptor = SubtitleInterceptor.getInstance();
-      interceptor.initialize();
-      interceptor.triggerSubtitleButton();
+      interceptor.destroy();
+
+      // 发送销毁确认
+      window.postMessage({
+        source: 'main-world',
+        type: 'INTERCEPTOR_DESTROYED',
+        payload: {
+          success: true,
+          timestamp: Date.now()
+        }
+      }, '*');
     }
     
     // 处理轨道请求

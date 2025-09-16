@@ -391,6 +391,13 @@ export const RUNTIME_STATE_STORAGE_KEYS = {
 - **B45-B48 PENDING检测**: 支持PENDING状态的循环检测和超时处理
 - **状态变更源追踪**: 通过 `RuntimeStateManager` 的事件机制追踪状态变更来源
 
+**YouTube SPA导航处理设计**（2025-09-16）：
+- **设计原则**: 视频切换 = 页面刷新，每个视频从干净状态开始
+- **重置策略**: 视频切换时自动重置translateActive为INACTIVE
+- **检测机制**: 监听`yt-navigate-finish`事件 + URL轮询备用方案
+- **用户体验**: 新视频默认关闭翻译，用户主动选择是否开启
+- **架构决策**: 不做基于videoId的复杂状态隔离，保持简单可维护
+
 
 **使用示例**：
 ```typescript
@@ -872,7 +879,7 @@ export const StorageKeys = {
 
 2. **统一存储的优势**：
    - **原子性操作**：整个设置作为一个单元更新，避免部分更新导致的不一致
-   - **Hash验证简单**：基于完整对象计算Hash，验证数据完整性
+   - **Hash验证高效**：只对关键参数计算Hash，验证缓存匹配的正确性
    - **事务性更强**：减少存储操作次数，降低出错概率
    - **管理简化**：UserPreferencesManager只需处理一个存储键
 
@@ -920,12 +927,26 @@ function calculateUserPreferencesHash(settings: UserPreferences): string {
 #### 7.3.2 **TranslationCacheData 数据完整性验证**
 
 **验证机制**：
-- **dataHash**: 验证翻译数据完整性，包含字幕内容和关键元数据
+- **dataHash**: 验证缓存键参数的完整性，确保缓存匹配正确
 - **自动恢复**: 验证失败时自动重新翻译，保证功能可用性
+- **性能优先**: 只对关键参数计算hash，避免大量数据的计算开销
 
 ```typescript
 function calculateTranslationDataHash(data: Omit<TranslationCacheData, 'dataHash'>): string {
-  const str = JSON.stringify(data);
+  // 只对缓存键相关的参数计算hash，不包含实际的字幕内容
+  // 理由：1. 提升性能 2. 避免字段顺序问题 3. Chrome存储本身可靠
+  const hashData = {
+    videoId: data.videoId,
+    sourceLang: data.sourceLang,
+    targetLang: data.targetLang,
+    translationService: {
+      type: data.translationService.type,
+      model: data.translationService.model || 'default',
+      temperature: data.translationService.temperature || 'default'
+    }
+  };
+
+  const str = JSON.stringify(hashData);
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);
@@ -935,6 +956,11 @@ function calculateTranslationDataHash(data: Omit<TranslationCacheData, 'dataHash
   return Math.abs(hash).toString(16);
 }
 ```
+
+**设计理念**：
+- **实用主义**: 缓存的目的是提升性能，不是数据安全验证
+- **简化维护**: 避免字幕数据结构变化导致的缓存失效
+- **性能优先**: 减少不必要的计算开销，特别是在读取缓存时
 
 ### 7.4 数据结构总结
 

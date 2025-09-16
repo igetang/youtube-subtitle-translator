@@ -266,7 +266,25 @@ export class RuntimeStateManager {
         console.warn('[runtime-state-manager] 检测到旧版布尔值，进行数据迁移:', translateActiveValue);
         translateActiveValue = translateActiveValue ? TranslateActiveState.ACTIVE : TranslateActiveState.INACTIVE;
       }
-      
+
+      // 🔧 将字符串转换为枚举值（存储的是字符串，内部使用枚举）
+      if (typeof translateActiveValue === 'string') {
+        switch (translateActiveValue) {
+          case 'inactive':
+            translateActiveValue = TranslateActiveState.INACTIVE;
+            break;
+          case 'pending':
+            translateActiveValue = TranslateActiveState.PENDING;
+            break;
+          case 'active':
+            translateActiveValue = TranslateActiveState.ACTIVE;
+            break;
+          default:
+            console.warn(`[runtime-state-manager] 未知的状态字符串: ${translateActiveValue}，使用默认值`);
+            translateActiveValue = DEFAULT_RUNTIME_STATE.translateActive;
+        }
+      }
+
       // 重构运行时状态对象
       const loadedState: RuntimeState = {
         translateActive: translateActiveValue || DEFAULT_RUNTIME_STATE.translateActive,
@@ -333,15 +351,30 @@ export class RuntimeStateManager {
     if (!this.initialized) {
       await this.initialize();
     }
-    
+
     let translateState = this.runtimeCache.translateActive || DEFAULT_RUNTIME_STATE.translateActive;
-    
+
     // 🔧 数据清理：确保返回的始终是枚举值
     if (typeof translateState === 'boolean') {
       console.warn('[runtime-state-manager] getTranslateState检测到布尔值，进行转换:', translateState);
       translateState = (translateState as any) ? TranslateActiveState.ACTIVE : TranslateActiveState.INACTIVE;
     }
-    
+
+    // 🔧 将字符串转换为枚举值（确保返回的始终是枚举）
+    if (typeof translateState === 'string') {
+      switch (translateState) {
+        case 'inactive':
+          return TranslateActiveState.INACTIVE;
+        case 'pending':
+          return TranslateActiveState.PENDING;
+        case 'active':
+          return TranslateActiveState.ACTIVE;
+        default:
+          console.warn(`[runtime-state-manager] getTranslateState: 未知的状态字符串 "${translateState}"，使用默认值`);
+          return DEFAULT_RUNTIME_STATE.translateActive;
+      }
+    }
+
     return translateState;
   }
 

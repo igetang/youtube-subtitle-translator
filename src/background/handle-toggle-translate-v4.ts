@@ -160,14 +160,15 @@ export async function handleToggleTranslateV4(
         const trackResponse = await session.executeStage(
           'get_tracks',
           async (signal) => {
-            console.log('[service-worker-v4] 调用 getSubtitleTracksAPI');
+            console.log('[service-worker-v4] 调用 getVideoTrackData API');
             const response = await chrome.tabs.sendMessage(tabId, {
-              type: 'getSubtitleTracksAPI'  // 修正：使用小写开头，匹配content-script
+              type: 'getVideoTrackData',
+              videoId: videoId
             });
             console.log('[service-worker-v4] 轨道API响应:', response);
             return response;
           },
-          { timeoutMs: 2000 }
+          { timeoutMs: 5000 }  // 增加超时时间到5秒
         );
 
         if (trackResponse?.success && trackResponse.tracks?.length > 0) {

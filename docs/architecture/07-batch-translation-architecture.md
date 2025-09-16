@@ -190,54 +190,149 @@ class GapAnalyzer {
 }
 ```
 
-### 3.2 智能断句算法
+### 3.2 智能断句算法 (v2.0 - 2025-09更新)
+
+#### 核心思想
+从后往前查找断点，确保每个批次尽可能接近40条上限，同时识别语义边界。
+
+#### 断句规则
 
 ```javascript
 class IntelligentSegmenter {
   /**
-   * 在40条字幕批次内找最佳断点
-   * 核心原理：最大间隔 > 最小间隔 + 400ms 才断句
+   * 智能断句算法 v2.0
+   * 核心改进：
+   * 1. 从后往前查找（批次最大化）
+   * 2. 双层断点策略（强断点+弱断点）
+   * 3. 最小批次保护（>=10条）
+   * 4. 3次重试机制
    */
   findOptimalCutPoint(subtitles, startIdx) {
-    const BATCH_SIZE = 40;
-    const SENTENCE_GAP = 400;  // 正常句间间隔400ms
-    
+    const BATCH_SIZE = 40;           // 最大批次
+    const MIN_BATCH_SIZE = 10;       // 最小批次
+    const STRONG_GAP = 2.0;          // 强断点：2秒（场景/段落切换）
+    const WEAK_GAP_DIFF = 0.4;       // 弱断点：差值400ms（句子边界）
+    const MAX_RETRIES = 3;           // 最大重试次数
+
     const endIdx = Math.min(startIdx + BATCH_SIZE, subtitles.length);
-    
-    // 剩余不足40条，全部发送
+
+    // 特殊情况：剩余不足40条，全部发送
     if (endIdx - startIdx < BATCH_SIZE) {
-      console.log(`[断句] 剩余${endIdx - startIdx}条，全部发送`);
       return endIdx;
     }
-    
-    // 找40条内的最小和最大间隔
-    let minGap = Infinity;
-    let maxGap = 0;
-    let maxGapIndex = endIdx;  // 默认不断句
-    
-    for (let i = startIdx; i < endIdx - 1; i++) {
-      // 间隔 = 下一条起始时间 - 当前条结束时间
-      const gap = subtitles[i + 1].start - subtitles[i].end;
-      
-      minGap = Math.min(minGap, gap);
-      
-      if (gap > maxGap) {
-        maxGap = gap;
-        maxGapIndex = i + 1;  // 断点在间隔后的字幕位置
+
+    // 第一轮：从后往前寻找强断点（gap > 2秒）
+    let strongBreakPoint = null;
+    let retryCount = 0;
+
+    for (let i = endIdx - 1; i > startIdx; i--) {
+      const gap = subtitles[i].start - subtitles[i-1].end;
+
+      if (gap > STRONG_GAP) {
+        const batchSize = i - startIdx;
+
+        if (batchSize >= MIN_BATCH_SIZE) {
+          // 找到满足条件的强断点
+          console.log(`[断句] 找到强断点@${i}，间隔${gap}s，批次${batchSize}条`);
+          return i;
+        } else if (!strongBreakPoint && retryCount < MAX_RETRIES) {
+          // 记录第一个强断点，但批次太小，继续找
+          strongBreakPoint = i;
+          retryCount++;
+        }
       }
     }
-    
-    // 判断是否满足断句条件
-    if (maxGap > minGap + SENTENCE_GAP) {
-      console.log(`[断句] 在索引${maxGapIndex}处断开，间隔${maxGap}ms > 阈值${minGap + SENTENCE_GAP}ms`);
-      return maxGapIndex;
+
+    // 第二轮：寻找弱断点（maxGap - minGap > 400ms）
+    if (!strongBreakPoint) {
+      // 先计算最小间隔
+      let minGap = Infinity;
+      for (let i = startIdx + 1; i < endIdx; i++) {
+        const gap = subtitles[i].start - subtitles[i-1].end;
+        minGap = Math.min(minGap, gap);
+      }
+
+      // 从后往前找弱断点
+      let weakBreakPoint = null;
+      retryCount = 0;
+
+      for (let i = endIdx - 1; i > startIdx; i--) {
+        const gap = subtitles[i].start - subtitles[i-1].end;
+
+        if (gap > minGap + WEAK_GAP_DIFF) {
+          const batchSize = i - startIdx;
+
+          if (batchSize >= MIN_BATCH_SIZE) {
+            // 找到满足条件的弱断点
+            console.log(`[断句] 找到弱断点@${i}，间隔差${gap-minGap}s，批次${batchSize}条`);
+            return i;
+          } else if (!weakBreakPoint && retryCount < MAX_RETRIES) {
+            // 记录第一个弱断点，但批次太小，继续找
+            weakBreakPoint = i;
+            retryCount++;
+          }
+        }
+      }
+
+      // 3次重试后仍不满足，使用第一个找到的弱断点
+      if (weakBreakPoint) {
+        console.log(`[断句] 使用首个弱断点@${weakBreakPoint}（批次<10条）`);
+        return weakBreakPoint;
+      }
+    } else {
+      // 3次重试后仍不满足，使用第一个找到的强断点
+      console.log(`[断句] 使用首个强断点@${strongBreakPoint}（批次<10条）`);
+      return strongBreakPoint;
     }
-    
-    // 不满足条件，40条全部一起发送
-    console.log(`[断句] 最大间隔${maxGap}ms不满足条件，40条一起发送`);
+
+    // 没找到任何断点，40条全部发送
+    console.log(`[断句] 未找到合适断点，40条一起发送`);
     return endIdx;
   }
 }
+```
+
+#### 算法优势
+
+1. **批次最大化**
+   - 从后往前查找，确保每批尽可能接近40条上限
+   - 提高API调用效率，减少请求次数
+
+2. **语义边界识别**
+   - 强断点（2秒）：识别场景切换、段落分隔
+   - 弱断点（400ms差值）：识别句子边界
+   - 双层策略确保找到最合适的断点
+
+3. **批次质量保证**
+   - 最小批次10条，避免过于碎片化
+   - 3次重试机制，平衡批次大小和断句质量
+
+4. **降级处理**
+   - 找不到理想断点时的合理降级
+   - 确保算法在各种字幕密度下都能工作
+
+#### 执行流程图
+
+```
+开始 → 搜索窗口[startIdx, startIdx+40)
+  ↓
+剩余<40条? → 是 → 全部发送
+  ↓ 否
+从后往前找强断点(gap>2s)
+  ↓
+找到且批次>=10? → 是 → 使用该断点
+  ↓ 否
+记录强断点，继续找(最多3次)
+  ↓
+从后往前找弱断点(gap>minGap+400ms)
+  ↓
+找到且批次>=10? → 是 → 使用该断点
+  ↓ 否
+记录弱断点，继续找(最多3次)
+  ↓
+有记录的断点? → 是 → 使用第一个记录的断点
+  ↓ 否
+40条全部发送
 ```
 
 ### 3.3 两阶段翻译策略（并行执行版）

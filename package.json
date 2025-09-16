@@ -7,11 +7,12 @@
     "dev": "concurrently \"npm run dev:main\" \"npm run dev:content\"",
     "dev:main": "vite build --watch",
     "dev:content": "vite build --watch --mode content-script",
-    "build": "npm run build:main && npm run build:content && npm run build:mainworld && npm run build:worker",
+    "build": "npm run build:main && npm run build:content && npm run build:mainworld && npm run build:worker && npm run fix:worker",
     "build:main": "vite build",
     "build:content": "vite build --mode content-script",
     "build:mainworld": "vite build --mode main-world",
-    "build:worker": "vite build --mode service-worker"
+    "build:worker": "vite build --mode service-worker",
+    "fix:worker": "node scripts/fix-service-worker.js"
   },
   "keywords": [
     "chrome-extension",

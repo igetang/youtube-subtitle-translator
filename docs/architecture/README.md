@@ -9,7 +9,8 @@
 4. **[04-message-system.md](04-message-system.md)** - 消息系统设计
 5. **[05-performance-optimization.md](05-performance-optimization.md)** - 性能优化策略
 6. **[06-simplified-popup-architecture.md](06-simplified-popup-architecture.md)** - 简化的Popup直接调用架构
-7. **[07-batch-translation-architecture.md](07-batch-translation-architecture.md)** - 🆕 批量翻译架构（时间间隔断句）
+7. **[07-batch-translation-architecture.md](07-batch-translation-architecture.md)** - 批量翻译架构（时间间隔断句）
+8. **[08-abort-timeout-architecture.md](08-abort-timeout-architecture.md)** - 🆕 基于AbortController的超时架构（v4.0）
 
 ### 专题文档
 - **[popup.md](popup.md)** - Popup界面设计（替代SidePanel）
@@ -43,3 +44,4 @@
 5. **YouTube Player API集成** - 使用官方API控制字幕，ISO 639-1标准
 6. **智能源语言选择** - 用户历史/英语优先/手动优先规则
 7. **批量翻译系统v2** - 时间间隔断句取代规则断句（2025.09）
+8. **AbortController超时架构v4** - 真正中断执行流，解决超时问题（2025.09）

@@ -312,11 +312,11 @@ export class UIRenderer {
 
     const isPopupOpen = runtimeState.popupOpen === true;
     if (this.settingsButton) {
-      this.updateSettingsButton(isSettingPanelOpen);
+      this.updateSettingsButton(isPopupOpen);
     }
 
     console.log('[UIRenderer] ✅ 按钮状态已更新:', {
-      translateActive: isTranslateActive,
+      translateActive: translateState,
       popupOpen: isPopupOpen
     });
   }

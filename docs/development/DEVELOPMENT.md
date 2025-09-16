@@ -380,8 +380,9 @@ interface VideoSpecificData {
 - **排除字段**: 不包含频繁变化的状态数据（如translateActive）
 
 #### **VideoSpecificData 数据完整性验证**
-- **dataHash**: 验证翻译数据完整性，包含字幕内容和关键元数据
+- **dataHash**: 验证缓存键参数的完整性（videoId, sourceLang, targetLang, translationService）
 - **自动恢复**: 验证失败时自动重新翻译，保证功能可用性
+- **性能优先**: 只对关键参数计算hash，不包含字幕内容，提升性能
 
 ### 管理器架构
 

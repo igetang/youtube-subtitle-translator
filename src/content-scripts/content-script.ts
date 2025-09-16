@@ -8,6 +8,7 @@ import { UIRenderer } from '@shared/components/ui-renderer';
 import { StateManager } from '@shared/components/state-manager';
 import { TranslateActiveState } from '@shared/types/runtime-state-types';
 import { subtitleOverlay } from './subtitle-overlay';
+import { testControlPanel } from './test-control-panel';
 
 // ==================== 初始化 ====================
 
@@ -26,6 +27,11 @@ let capturedSourceLang: string | null = null; // 存储从service-worker传递�
 
 // API响应处理器Map
 const apiResponseHandlers = new Map<string, (response: any) => void>();
+
+// 视频切换相关变量
+let currentVideoId: string | null = null;
+let isNavigating = false;
+let urlCheckInterval: number | null = null;
 
 
 /**
@@ -269,8 +275,14 @@ function handleChromeMessage(data: any): void {
  * 切换翻译状态
  */
 async function toggleTranslation(): Promise<void> {
+  // 竞态条件保护：导航期间忽略操作
+  if (isNavigating) {
+    console.log('[content-script] 导航中，忽略翻译切换操作');
+    return;
+  }
+
   const currentState = stateManager?.getState('translateActive') || TranslateActiveState.INACTIVE;
-  
+
   let isEnabling = false;
   switch (currentState) {
     case TranslateActiveState.INACTIVE:
@@ -339,7 +351,7 @@ async function toggleTranslation(): Promise<void> {
 }
 
 /**
- * 请求字幕捕获
+ * 请求字幕捕获（带超时保护）
  */
 function requestSubtitleCapture(): void {
   console.log('[content-script] 发送字幕捕获请求到main-world...');
@@ -347,6 +359,16 @@ function requestSubtitleCapture(): void {
     source: 'content-script',
     type: 'REQUEST_SUBTITLE_CAPTURE'
   }, '*');
+
+  // 设置6秒超时（比拦截器内部的5秒稍长，确保能收到超时消息）
+  setTimeout(() => {
+    // 发送销毁消息（兜底保护）
+    console.log('[content-script] 字幕捕获6秒超时，强制销毁拦截器');
+    window.postMessage({
+      source: 'content-script',
+      type: 'DESTROY_SUBTITLE_INTERCEPTOR'
+    }, '*');
+  }, 6000);
 }
 
 /**
@@ -355,7 +377,8 @@ function requestSubtitleCapture(): void {
 function displayTranslatedSubtitles(data: any): void {
   // 移除冗余日志，show方法内部会打印
   subtitleOverlay.show(data);
-  stateManager?.updateState('translateActive', 'active');
+  // 状态更新由Background通过STATE_CHANGED消息统一管理，避免重复更新
+  // stateManager?.updateState('translateActive', 'active');
 }
 
 /**
@@ -364,7 +387,8 @@ function displayTranslatedSubtitles(data: any): void {
 function hideTranslatedSubtitles(): void {
   console.log('[content-script] 隐藏翻译字幕');
   subtitleOverlay.hide();
-  stateManager?.updateState('translateActive', 'inactive');
+  // 状态更新由Background通过STATE_CHANGED消息统一管理，避免重复更新
+  // stateManager?.updateState('translateActive', 'inactive');
 }
 
 // ==================== Popup管理 ====================
@@ -515,6 +539,21 @@ function setupMessageHandlers(): void {
       return false;
     }
     
+    // 处理TRIGGER_SUBTITLE_LOAD消息 - 触发字幕加载
+    if (messageType === 'TRIGGER_SUBTITLE_LOAD') {
+      console.log('[content-script] 收到触发字幕加载请求');
+      
+      // 通知main-world开始捕获字幕
+      window.postMessage({
+        source: 'content-script',
+        type: 'REQUEST_SUBTITLE_CAPTURE'
+      }, '*');
+      
+      console.log('[content-script] 已发送字幕捕获请求到main-world');
+      sendResponse({ success: true });
+      return false;
+    }
+    
     // 处理getVideoTrackData消息
     if (messageType === 'getVideoTrackData') {
       console.log(`[content-script] 收到Chrome消息: ${messageType}`);
@@ -560,7 +599,32 @@ function setupMessageHandlers(): void {
       console.log('[content-script] 收到字幕数据:', payload.count, '条');
       handleSubtitleCaptured(payload);
     }
-    
+
+    // 处理拦截器销毁确认
+    if (source === 'main-world' && type === 'INTERCEPTOR_DESTROYED') {
+      console.log('[content-script] ✅ 拦截器已销毁');
+    }
+
+    // 处理拦截器初始化失败
+    if (source === 'main-world' && type === 'INTERCEPTOR_INIT_FAILED') {
+      console.error('[content-script] ❌ 拦截器初始化失败:', payload);
+      showErrorMessage({
+        message: '字幕获取失败：拦截器初始化错误',
+        level: 'error',
+        duration: 3000
+      });
+    }
+
+    // 处理拦截器超时
+    if (source === 'main-world' && type === 'INTERCEPTOR_TIMEOUT') {
+      console.warn('[content-script] ⏱️ 拦截器超时自动销毁:', payload);
+      showErrorMessage({
+        message: '字幕获取超时',
+        level: 'warning',
+        duration: 3000
+      });
+    }
+
     // 处理来自main-world的API响应
     if (source === 'main-world') {
       // 字幕轨道API响应
@@ -730,20 +794,28 @@ function handleGetVideoTrackData(videoId: string, sendResponse: (response: any) 
  */
 function handleSubtitleCaptured(payload: any): void {
   console.log('[content-script] 处理字幕数据，共', payload.count, '条');
-  
+
+  // 🔧 立即销毁拦截器，不管成功失败
+  console.log('[content-script] 字幕捕获完成，立即销毁拦截器');
+  window.postMessage({
+    source: 'content-script',
+    type: 'DESTROY_SUBTITLE_INTERCEPTOR'
+  }, '*');
+
   const videoId = getVideoId();
   if (!videoId) {
     console.warn('[content-script] 无法获取视频ID');
     return;
   }
-  
+
   // 获取当前播放时间
   let currentTime = 0;
   const videoElement = document.querySelector('video');
   if (videoElement) {
     currentTime = videoElement.currentTime;
   }
-  
+
+  // 然后才发送给 background
   chrome.runtime.sendMessage({
     type: 'SUBTITLE_DATA',
     data: {
@@ -758,9 +830,10 @@ function handleSubtitleCaptured(payload: any): void {
   }, (response) => {
     if (chrome.runtime.lastError) {
       console.error('[content-script] ✗ SUBTITLE_DATA:', chrome.runtime.lastError);
+      // 即使失败也不需要再销毁，因为已经在前面销毁了
       return;
     }
-    
+
     if (response && response.success) {
       console.log('[content-script] ✓ SUBTITLE_DATA: 成功');
     }
@@ -792,7 +865,10 @@ async function initialize(): Promise<void> {
     
     // 刷新状态
     await refreshStates();
-    
+
+    // 启动视频切换检测
+    startVideoChangeDetection();
+
     isInitialized = true;
     // 保留最终初始化完成日志
     console.log('[content-script] ✅ 初始化完成');
@@ -932,6 +1008,94 @@ function clearErrorMessage(): void {
   } catch (error) {
     console.error('[content-script] 清除错误消息失败:', error);
   }
+}
+
+// ==================== 视频切换处理 ====================
+
+/**
+ * 处理视频切换
+ */
+async function handleVideoChange(oldVideoId: string | null, newVideoId: string): Promise<void> {
+  console.log(`[content-script] 视频切换检测: ${oldVideoId} → ${newVideoId}`);
+
+  // 1. 重置翻译状态为关闭
+  if (stateManager) {
+    await stateManager.updateStates({
+      translateActive: TranslateActiveState.INACTIVE
+    });
+  }
+
+  // 2. 清理临时变量
+  capturedSourceLang = null;
+
+  // 2.5. 销毁拦截器（如果存在）
+  console.log('[content-script] 视频切换，销毁拦截器...');
+  window.postMessage({
+    source: 'content-script',
+    type: 'DESTROY_SUBTITLE_INTERCEPTOR'
+  }, '*');
+
+  // 3. 清理字幕显示（使用SubtitleOverlay的API）
+  subtitleOverlay.hide();
+
+  // 4. 更新按钮状态
+  if (uiRenderer) {
+    // 更新翻译按钮状态
+    const translateButton = document.getElementById('youtube-translate-button');
+    if (translateButton) {
+      translateButton.classList.remove('active');
+      translateButton.setAttribute('aria-pressed', 'false');
+    }
+  }
+
+  // 5. 清除错误消息
+  clearErrorMessage();
+
+  console.log('[content-script] 视频切换重置完成');
+}
+
+/**
+ * 启动视频切换检测
+ */
+function startVideoChangeDetection(): void {
+  // 保存初始视频ID
+  currentVideoId = getVideoId();
+
+  // 方法1：监听YouTube导航事件
+  document.addEventListener('yt-navigate-start', () => {
+    console.log('[content-script] YouTube导航开始');
+    isNavigating = true;
+  });
+
+  document.addEventListener('yt-navigate-finish', () => {
+    console.log('[content-script] YouTube导航完成');
+
+    const newVideoId = getVideoId();
+    if (newVideoId && newVideoId !== currentVideoId) {
+      handleVideoChange(currentVideoId, newVideoId);
+      currentVideoId = newVideoId;
+    }
+
+    // 500ms后恢复操作
+    setTimeout(() => {
+      isNavigating = false;
+    }, 500);
+  });
+
+  // 方法2：URL轮询检测（备用方案）
+  urlCheckInterval = window.setInterval(() => {
+    const newVideoId = getVideoId();
+    if (newVideoId && newVideoId !== currentVideoId) {
+      // 如果导航事件没有触发，使用轮询检测
+      if (!isNavigating) {
+        console.log('[content-script] URL变化检测到视频切换');
+        handleVideoChange(currentVideoId, newVideoId);
+        currentVideoId = newVideoId;
+      }
+    }
+  }, 1000);
+
+  console.log('[content-script] 视频切换检测已启动');
 }
 
 // ==================== 启动 ====================

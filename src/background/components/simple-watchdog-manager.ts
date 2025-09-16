@@ -9,6 +9,7 @@
 export class SimpleWatchdogManager {
   private static readonly TIMEOUT = 5000;  // 统一5秒超时
   private watchers = new Map<string, NodeJS.Timeout>();
+  private timedOutStages = new Set<string>();  // 记录已超时的阶段
   
   /**
    * 启动单次超时监控（无重试）

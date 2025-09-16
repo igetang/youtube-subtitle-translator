@@ -118,12 +118,17 @@ export class SubtitleOverlay {
     this.currentLanguageMode = translationData.subtitleMode === 'targetOnly' ? 'targetOnly' : 'bilingual';
     
     this.isActive = true;
-    
+
     // 确保覆盖层存在
     if (!this.overlayElement) {
       this.initialize();
     }
-    
+
+    // 确保覆盖层可见（修复视频切换后的显示问题）
+    if (this.overlayElement) {
+      this.overlayElement.style.display = '';
+    }
+
     console.log('[SubtitleOverlay] 字幕数据已加载，开始显示');
   }
   
@@ -135,6 +140,10 @@ export class SubtitleOverlay {
     this.isActive = false;
     if (this.subtitleContainer) {
       this.subtitleContainer.style.display = 'none';
+    }
+    // 同时隐藏外层overlay（与show/updateTranslations的显示逻辑对应）
+    if (this.overlayElement) {
+      this.overlayElement.style.display = 'none';
     }
     this.currentSubtitles = [];
   }
@@ -233,9 +242,14 @@ export class SubtitleOverlay {
     if (!this.overlayElement) {
       this.initialize();
     }
-    
+
     // 激活字幕显示
     this.isActive = true;
+
+    // 确保覆盖层可见（修复视频切换后的显示问题）
+    if (this.overlayElement) {
+      this.overlayElement.style.display = '';
+    }
     
     if (replaceAll) {
       // 紧急翻译：直接替换所有字幕

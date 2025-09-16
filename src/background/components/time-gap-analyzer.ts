@@ -145,13 +145,13 @@ export class TimeGapAnalyzer {
     
     if (shortGapRatio > 0.8) {
       // 快节奏：对话密集
-      return { min: 10, max: 40, optimal: 30 };
+      return { min: 10, max: 120, optimal: 80 };  // 修改为120以适应12000字符限制
     } else if (shortGapRatio > 0.5) {
       // 正常节奏
-      return { min: 10, max: 40, optimal: 25 };
+      return { min: 10, max: 120, optimal: 60 };  // 修改为120以适应12000字符限制
     } else {
       // 慢节奏：停顿较多
-      return { min: 10, max: 40, optimal: 20 };
+      return { min: 10, max: 120, optimal: 40 };  // 修改为120以适应12000字符限制
     }
   }
 }

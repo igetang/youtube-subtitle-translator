@@ -471,8 +471,8 @@ function smartBatchSplit(subtitles, targetSize = 40) {
 async function progressiveTranslate(subtitles, currentTime) {
   const translationResults = new Map(); // 临时存储结果
   
-  // Step 1: 紧急翻译（5-10条，智能断句）
-  const urgent = getUrgentSubtitles(subtitles, currentTime, 7);
+  // Step 1: 紧急翻译（前9后30共40条）
+  const urgent = getUrgentSubtitles(subtitles, currentTime, 40);
   const urgentBatch = smartBoundary(urgent);
   const urgentResults = await translateBatch(urgentBatch);
   
