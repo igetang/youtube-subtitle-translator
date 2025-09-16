@@ -22,6 +22,26 @@ import { TimeGapAnalyzer } from './components/time-gap-analyzer';
 import { IntelligentSegmenter } from './components/intelligent-segmenter';
 import { TwoPhaseTranslator } from './components/two-phase-translator';
 import { SimpleWatchdogManager } from './components/simple-watchdog-manager';
+import { AbortTimeoutController, TimeoutError as OldTimeoutError, AbortError as OldAbortError } from './components/abort-timeout-controller';
+
+// === 超时架构v4.0组件导入 ===
+import { abortTimeoutManager } from './components/abort-timeout-manager';
+import { TranslationSession } from './components/translation-session';
+import { handleToggleTranslateV4 } from './handle-toggle-translate-v4';
+import { 
+  StageTimeoutError, 
+  SessionAbortError, 
+  isTimeoutError, 
+  isAbortError,
+  getUserFriendlyMessage,
+  getErrorLevel,
+  ErrorLevel
+} from '../shared/types/timeout-errors';
+import { 
+  sendMessageWithSignal, 
+  fetchSubtitlesWithSignal,
+  triggerSubtitleLoadWithSignal 
+} from './components/message-with-signal';
 import { 
   TranslateActiveState, 
   RuntimeStateChangeEvent,
@@ -37,8 +57,23 @@ const storageManager = StorageManager.getInstance();
 const translationCacheManager = TranslationCacheManager.getInstance();
 const videoSourceLanguageCacheManager = VideoSourceLanguageCacheManager.getInstance();
 
-// === 看门狗管理器（替代旧的PENDING超时机制） ===
+// === Feature Flag: 控制是否使用新的AbortController架构 ===
+const USE_ABORT_CONTROLLER_ARCHITECTURE = true;  // 设为true启用新架构，false使用旧架构
+
+// === 看门狗管理器（保留用于兼容，将逐步迁移到AbortTimeoutManager） ===
 const watchdogManager = new SimpleWatchdogManager();
+
+// === 旧的AbortController存储（将被abortTimeoutManager替代） ===
+const activeAbortControllers = new Map<string, AbortController>();
+
+// === 条件初始化新架构 ===
+let abortTimeoutManagerInstance: any = null;
+if (USE_ABORT_CONTROLLER_ARCHITECTURE) {
+  console.log('[service-worker] 🚀 启用AbortController超时架构v4.0');
+  // 使用静态导入的abortTimeoutManager
+  abortTimeoutManagerInstance = abortTimeoutManager;
+  console.log('[service-worker] ✓ AbortTimeoutManager已初始化');
+}
 
 
 // === 站点特定 SidePanel 功能 ===
@@ -649,34 +684,69 @@ async function routeMessage(
     
     // === 字幕数据处理 ===
     case 'SUBTITLE_DATA':
-      // 清除字幕获取看门狗
-      const subtitleWatchdogKey = `subtitle_fetch_${sender.tab?.id}_${data.videoId}`;
-      watchdogManager.clearWatchdog(subtitleWatchdogKey);
-      
-      // 处理字幕数据并检查是否需要继续翻译流程
-      const subtitleResult = await handleSubtitleData(data);
-      
-      // 如果当前状态是PENDING，说明正在等待字幕，需要继续翻译流程
-      const currentState = await runtimeStateManager.getTranslateState();
-      if (currentState === TranslateActiveState.PENDING) {
-        console.log('[service-worker] 字幕捕获完成，继续执行翻译');
-        // 添加tabId到data（如果没有的话）
-        if (!data.tabId && sender.tab?.id) {
-          data.tabId = sender.tab.id;
+      if (USE_ABORT_CONTROLLER_ARCHITECTURE) {
+        // 新架构：字幕数据会被会话自动处理，这里只需要返回确认
+        // 注意：不要创建新的sessionId，实际会话在handle-toggle-translate-v4中管理
+        console.log('[service-worker] → 收到字幕数据（V4架构会自动处理）');
+        // 新架构不需要handleSubtitleData，Session内部会处理
+        return { 
+          success: true, 
+          message: '字幕数据已接收（V4架构自动处理）',
+          videoId: data.videoId,
+          count: data.count 
+        };
+      } else {
+        // 旧架构：清除字幕获取的AbortController
+        const subtitleAbortKey = `subtitle_fetch_${sender.tab?.id}_${data.videoId}`;
+        const abortController = activeAbortControllers.get(subtitleAbortKey);
+        if (abortController) {
+          // 取消超时计时器（操作成功完成）
+          activeAbortControllers.delete(subtitleAbortKey);
+          console.log(`[service-worker] 字幕获取成功，已清除超时控制器`);
         }
-        // 触发翻译流程
-        const translateResult = await continueTranslationWithSubtitles(data);
-        return translateResult || subtitleResult;
+        
+        // 旧架构：处理字幕数据
+        const subtitleResult = await handleSubtitleData(data);
+        
+        // 旧架构：检查是否需要继续翻译流程
+        const currentState = await runtimeStateManager.getTranslateState();
+        if (currentState === TranslateActiveState.PENDING) {
+          console.log('[service-worker] 字幕捕获完成，继续执行翻译');
+          // 添加tabId到data（如果没有的话）
+          if (!data.tabId && sender.tab?.id) {
+            data.tabId = sender.tab.id;
+          }
+          // 触发翻译流程
+          const translateResult = await continueTranslationWithSubtitles(data);
+          return translateResult || subtitleResult;
+        }
+        
+        return subtitleResult;
       }
-      
-      return subtitleResult;
     
     // === 翻译控制 ===
     case 'TOGGLE_TRANSLATE':
     case 'translation_toggle':  // 支持新的消息类型
       // 合并冗余日志
       console.log('[service-worker] 翻译切换:', { type, data });
-      return await handleToggleTranslate(sender, data);
+      
+      // 根据feature flag选择处理函数
+      if (USE_ABORT_CONTROLLER_ARCHITECTURE && abortTimeoutManagerInstance) {
+        // 使用新架构
+        console.log('[service-worker] 使用AbortController架构处理翻译');
+        // 使用静态导入的handleToggleTranslateV4
+        return await handleToggleTranslateV4(sender, data, {
+          runtimeStateManager,
+          userPreferencesManager,
+          videoSourceLanguageCacheManager: VideoSourceLanguageCacheManager.getInstance(),
+          translationCacheManager: TranslationCacheManager.getInstance(),
+          selectBestSourceLanguage,
+          notifyStateChange
+        });
+      } else {
+        // 使用旧架构
+        return await handleToggleTranslate(sender, data);
+      }
     
     default:
       console.warn(`[service-worker] 未知消息类型: ${type}`);
@@ -2217,7 +2287,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
         {
           subtitles: originalSubtitles,
           videoId: videoId,
-          url: window.location?.href || '',
+          url: sender.tab?.url || '',
           tabId: sender.tab?.id,
           currentTime: data.currentTime
         },
@@ -2353,11 +2423,10 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
                     // 不保存 baseUrl（6小时过期）
                   }));
                   
-                  await videoSourceLanguageCacheManager.set(videoId, {
+                  await videoSourceLanguageCacheManager.set({
                     videoId: videoId,
                     availableSourceLanguages: trackMetadata,
-                    lastSelectedLanguage: sourceLang,
-                    lastUpdated: Date.now()
+                    lastSelectedLanguage: sourceLang
                   });
                   
                   console.log('[service-worker] ✓ 轨道元数据已异步缓存');
@@ -2372,22 +2441,63 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
         }
       }
       
-      // Step 5.4: 启动字幕获取看门狗（无重试版本）
-      const subtitleWatchdogKey = `subtitle_fetch_${tabId}_${videoId}`;
-      watchdogManager.startWatchdog(subtitleWatchdogKey, async () => {
-        console.error(`[service-worker] 字幕获取超时（5秒），终止翻译流程`);
-        // 无重试机制：超时直接设置为INACTIVE
-        await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
+      // Step 5.4: 使用AbortTimeoutController控制字幕获取超时
+      const subtitleAbortKey = `subtitle_fetch_${tabId}_${videoId}`;
+      
+      // 创建手动控制器用于字幕获取
+      const { controller, execute, abort } = AbortTimeoutController.createManualController(
+        5000, // 5秒超时
+        'subtitle_fetch'
+      );
+      
+      // 存储controller以便在收到字幕时清除
+      activeAbortControllers.set(subtitleAbortKey, controller);
+      
+      // 执行带超时的字幕获取
+      execute(async (signal) => {
+        // 监听abort信号
+        if (signal.aborted) {
+          throw new AbortError('字幕获取被取消', 'subtitle_fetch');
+        }
         
-        // 通知用户
-        if (tabId) {
-          chrome.tabs.sendMessage(tabId, {
-            type: 'SHOW_ERROR_MESSAGE',
-            data: {
-              message: '字幕获取超时，请检查网络连接后重试',
-              duration: 3000
+        // 等待字幕响应（这里不发送新消息，因为消息已经在下面发送了）
+        return new Promise((resolve, reject) => {
+          // 设置一个标记，表示正在等待字幕
+          const checkInterval = setInterval(() => {
+            if (signal.aborted) {
+              clearInterval(checkInterval);
+              reject(new OldTimeoutError('字幕获取超时', 'subtitle_fetch', 5000));
             }
-          }).catch(() => {});
+          }, 100);
+          
+          // 注意：实际的字幕数据会通过SUBTITLE_DATA消息到达
+          // 这里只是设置超时控制
+        });
+      }).catch(async (error) => {
+        // 超时或取消时的处理
+        if (error instanceof TimeoutError || error instanceof AbortError) {
+          console.error(`[service-worker] ${error.message}`);
+          
+          // 清理controller
+          activeAbortControllers.delete(subtitleAbortKey);
+          
+          // 设置状态为INACTIVE
+          await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
+          
+          // 通知content-script更新UI
+          if (tabId) {
+            // 先通知状态变更
+            await notifyStateChange(tabId, 'translateActive', TranslateActiveState.INACTIVE);
+            
+            // 再显示错误消息
+            chrome.tabs.sendMessage(tabId, {
+              type: 'SHOW_ERROR_MESSAGE',
+              data: {
+                message: '字幕获取超时，请检查网络连接后重试',
+                duration: 3000
+              }
+            }).catch(() => {});
+          }
         }
       });
       

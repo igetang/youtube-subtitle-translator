@@ -11,10 +11,7 @@
       "Bash(find:*)",
       "Bash(mkdir:*)",
       "Bash(rmdir:*)",
-      "Read(//mnt/e/picture/**)",
-      "Read(//mnt/e/picture/**)",
-      "Read(//mnt/e/picture/**)",
-      "Read(//mnt/e/picture/**)",
+      "Read(/home/k/chrome-9.15/picture/**)",
       "WebSearch"
     ],
     "deny": []

@@ -1,6 +1,8 @@
 #!/bin/bash
 
-cd /mnt/e/chrome/8.19
+# 使用脚本所在目录作为项目根目录
+PROJECT_DIR="$(dirname "$0")"
+cd "$PROJECT_DIR"
 
 echo "=== 加载 nvm 环境 ==="
 export NVM_DIR="$HOME/.nvm"

@@ -78,10 +78,11 @@ export class VideoSourceLanguageCacheManager {
     }
 
     const item = this.cache.items.find(item => item.videoId === videoId);
-    
+
     if (!item) {
-      // 简化中间层日志，未命中不输出
-      // console.log(`[video-source-cache] 缓存未命中: ${videoId}`);
+      // 调试：输出未命中详情
+      console.log(`[video-source-cache] 缓存未命中: ${videoId}`);
+      console.log(`[video-source-cache] 当前缓存中的视频ID:`, this.cache.items.map(i => i.videoId));
       return null;
     }
 
@@ -129,19 +130,18 @@ export class VideoSourceLanguageCacheManager {
     } else {
       // 添加新项（FIFO）
       this.cache.items.push(completeData);
-      
+
       // 检查容量限制
       if (this.cache.items.length > this.cache.maxSize) {
         const removed = this.cache.items.shift();
-        // 简化中间层日志
-        // console.log(`[video-source-cache] FIFO移除: ${removed?.videoId}`);
+        console.log(`[video-source-cache] FIFO移除: ${removed?.videoId}`);
       }
-      
-      // 简化中间层日志
-      // console.log(`[video-source-cache] 添加缓存: ${data.videoId}`);
+
+      console.log(`[video-source-cache] 添加缓存: ${data.videoId}, 源语言: ${data.lastSelectedLanguage}`);
     }
 
     await this.saveCache();
+    console.log(`[video-source-cache] ✓ 缓存已保存到存储`);
   }
 
   /**

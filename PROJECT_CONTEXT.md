@@ -1,10 +1,21 @@
 # YouTube字幕翻译扩展 - 项目上下文快照
-> 最后更新：2025-09-11
+> 最后更新：2025-09-16
 > 用途：新Claude Code会话快速了解当前状态
 
 ## 🎯 当前状态
 
-### 最近修复的Bug (2025-09-11)
+### 最近修复的Bug (2025-09-16)
+**✅ 已修复：V4架构缺少源语言轨道选择**
+- 问题原因：V4架构跳过了字幕轨道获取和智能选择步骤，导致源语言一直是'auto'
+- 解决方案：
+  - 在Stage 3添加轨道获取（GET_SUBTITLE_TRACKS_API）
+  - 使用selectBestSourceLanguage智能选择最佳源语言
+  - 通过setSubtitleTrackAPI设置字幕轨道
+  - 缓存轨道信息到VideoSourceLanguageCache
+- 修复位置：`src/background/handle-toggle-translate-v4.ts` 第151-234行
+- 符合架构文档：`docs/architecture/01-design-principles.md` 3.3.1节
+
+### 之前修复的Bug (2025-09-11)
 **✅ 已修复：Google免费翻译只翻译第一句**
 - 问题原因：Google API在翻译长文本时会插入换行符，使用`\n`作为分隔符导致错误分割（3条变22条）
 - 解决方案：
