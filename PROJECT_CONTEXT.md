@@ -5,10 +5,23 @@
 ## 🎯 当前状态
 
 ### 最近修复的Bug (2025-09-16)
+
+**✅ 已修复：V4架构源语言缓存保存失败**
+- 问题原因：VideoSourceLanguageCacheManager.set()调用参数格式错误
+- 具体表现：第二次点击翻译开关时，源语言仍显示'auto'而非缓存值
+- 解决方案：
+  - 修正set()方法调用从set(videoId, data)改为set(data)
+  - 移除不存在的lastUpdated字段
+  - 同时修复V4架构和旧架构中的相同问题
+- 修复位置：
+  - `src/background/handle-toggle-translate-v4.ts` 第212-216行
+  - `src/background/service-worker.ts` 第2426-2430行
+- 提交记录：f2889e8
+
 **✅ 已修复：V4架构缺少源语言轨道选择**
 - 问题原因：V4架构跳过了字幕轨道获取和智能选择步骤，导致源语言一直是'auto'
 - 解决方案：
-  - 在Stage 3添加轨道获取（GET_SUBTITLE_TRACKS_API）
+  - 在Stage 3添加轨道获取（getSubtitleTracksAPI）
   - 使用selectBestSourceLanguage智能选择最佳源语言
   - 通过setSubtitleTrackAPI设置字幕轨道
   - 缓存轨道信息到VideoSourceLanguageCache

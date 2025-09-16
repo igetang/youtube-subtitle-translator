@@ -1,11 +1,40 @@
 # YouTube字幕翻译助手 - 更新日志
 
 > 📝 **版本更新历史与技术演进记录**
-> **最后更新**: 2025-09-02  
-> **当前版本**: v3.0.0  
+> **最后更新**: 2025-09-16
+> **当前版本**: v3.0.2
 > **架构状态**: ✅ **3状态系统 + YouTube Player API** - 完整实现翻译开关功能
 
-## [3.0.0] - 2025-09-02 (当前版本)
+## [3.0.2] - 2025-09-16 (当前版本)
+
+### 🐛 **Bug修复** (Bug Fixes)
+- **修复V4架构源语言缓存保存失败**：
+  - 问题：第二次点击翻译开关时源语言仍显示'auto'
+  - 原因：`VideoSourceLanguageCacheManager.set()`参数格式错误
+  - 修复：改正方法调用格式，移除不存在的字段
+  - 影响：V4架构和旧架构同时修复
+- **修复V4架构缺少源语言轨道选择**：
+  - 新增Stage 3轨道获取流程
+  - 修正消息类型名称大小写问题
+  - 集成智能源语言选择算法
+
+### 🔧 **环境兼容性** (Compatibility)
+- **项目迁移适配**：从macOS迁移到Windows 11 WSL2 Ubuntu
+  - 修复build-project.sh硬编码路径
+  - 更新.claude/settings.local.json配置
+  - 添加截图目录文档说明
+
+## [3.0.1] - 2025-09-15
+
+### 🚀 **性能优化** (Performance Optimization)
+- **Hash计算优化**: 缓存验证只对关键参数计算hash，不再包含字幕内容
+  - 提升缓存读取性能（减少90%的hash计算量）
+  - 避免JSON字段顺序导致的hash不匹配问题
+  - 简化维护，字幕数据结构变化不会导致缓存失效
+- **缓存键参数**: videoId + sourceLang + targetLang + translationService
+- **设计理念**: 实用主义优先，依赖Chrome存储的可靠性
+
+## [3.0.0] - 2025-09-02
 
 ### 🆕 **YouTube Player API集成** (YouTube Player API Integration)
 - **新增SubtitleAPIController类**: 直接控制YouTube字幕
