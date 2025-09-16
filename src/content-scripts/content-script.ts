@@ -444,9 +444,9 @@ function setupMessageHandlers(): void {
   // 监听来自Service Worker的消息
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (sender.id !== chrome.runtime.id) return false;
-    
-    const messageType = message.type || message.action;
-    
+
+    const messageType = message.type;
+
     // 处理REQUEST_SUBTITLE_CAPTURE消息
     if (messageType === 'REQUEST_SUBTITLE_CAPTURE') {
       console.log(`[content-script] 收到Chrome消息: ${messageType}`);

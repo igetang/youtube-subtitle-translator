@@ -12,7 +12,9 @@
       "Bash(mkdir:*)",
       "Bash(rmdir:*)",
       "Read(/home/k/chrome-9.15/picture/**)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ],
     "deny": []
   }

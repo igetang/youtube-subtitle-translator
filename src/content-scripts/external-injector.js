@@ -41,14 +41,14 @@ function setupMessageListeners() {
   // 监听来自背景脚本的消息
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('[Content Script] 收到消息:', message);
-    
-    if (message.action === 'getVideoInfo') {
+
+    if (message.type === 'getVideoInfo') {
       // 获取当前视频信息
       const videoId = new URLSearchParams(window.location.search).get('v');
       sendResponse({ videoId: videoId });
       return true;
     }
-    
+
     return false;
   });
 }
