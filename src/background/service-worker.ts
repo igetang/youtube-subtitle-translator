@@ -17,6 +17,7 @@ import { UserPreferences, TranslationServiceComplete, TranslationServiceType } f
 import { StorageManager } from '../shared/storage/storage-manager';
 import { TranslationCacheManager } from '../shared/storage/translation-cache-manager';
 import { VideoSourceLanguageCacheManager } from '../shared/storage/video-source-language-cache-manager';
+import { extractOriginalSubtitles } from '../shared/utils/vtt-utils';
 
 // === 批量翻译组件导入（基于07架构文档） ===
 import { TimeGapAnalyzer } from './components/time-gap-analyzer';
@@ -534,6 +535,9 @@ async function routeMessage(
     // 🎯 Popup初始化数据请求 - 新架构核心消息
     case 'getPopupInitData':
       return await handleGetPopupInitData(message, sender);
+
+    case 'updateVideoSourceLanguage':
+      return await handleUpdateVideoSourceLanguage(data);
     
     // 🎯 Popup生命周期消息
     case 'popupOpened':
@@ -1002,12 +1006,13 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
     } else if (availableSourceLanguages.length > 0) {
       // 没有用户选择，进行智能选择
       const targetLang = userPreferences.targetLang || 'zh-CN';
-      detectedSourceLang = selectBestSourceLanguage(
+      const sourceTrack = selectBestSourceLanguage(
         availableSourceLanguages,
         targetLang,
         undefined  // 没有历史选择
       );
-      console.log(`[service-worker] 智能选择源语言: ${detectedSourceLang} (目标语言: ${targetLang})`);
+      detectedSourceLang = sourceTrack.languageCode;
+      console.log(`[service-worker] 智能选择源语言: ${detectedSourceLang}${sourceTrack.kind === 'asr' ? ' (ASR)' : ''} (目标语言: ${targetLang})`);
     } else {
       // 没有可用轨道，保持'auto'
       detectedSourceLang = 'auto';
@@ -1040,6 +1045,34 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
       type: 'popupInitDataResponse',
       popupContext: null,
       error: error instanceof Error ? error.message : '获取初始化数据失败'
+    };
+  }
+}
+
+/**
+ * 处理来自Popup的源语言更新
+ */
+async function handleUpdateVideoSourceLanguage(data: any): Promise<any> {
+  const { videoId, availableSourceLanguages, selectedSourceTrack } = data || {};
+
+  if (!videoId) {
+    console.error('[service-worker] updateVideoSourceLanguage 缺少 videoId');
+    return { success: false, error: 'videoId is required' };
+  }
+
+  try {
+    await videoSourceLanguageCacheManager.upsertFromPopup({
+      videoId,
+      availableSourceLanguages,
+      selectedSourceTrack
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('[service-worker] updateVideoSourceLanguage 失败:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
     };
   }
 }
@@ -2066,17 +2099,17 @@ function selectBestSourceLanguage(
   tracks: Array<{ languageCode: string; name: string; kind?: string }>,
   targetLang: string,
   lastSelectedLanguage?: string
-): string {
+): { languageCode: string; kind?: string } {
   if (!tracks || tracks.length === 0) {
-    return 'en'; // 默认返回英语
+    return { languageCode: 'en' }; // 默认返回英语
   }
 
   // 规则1: 用户历史选择优先
   if (lastSelectedLanguage) {
     const userTrack = tracks.find(t => t.languageCode === lastSelectedLanguage);
     if (userTrack) {
-      console.log(`[service-worker] 使用用户历史选择: ${lastSelectedLanguage}`);
-      return lastSelectedLanguage;
+      console.log(`[service-worker] 使用用户历史选择: ${lastSelectedLanguage}${userTrack.kind === 'asr' ? ' (ASR)' : ''}`);
+      return { languageCode: userTrack.languageCode, kind: userTrack.kind };
     }
   }
 
@@ -2091,26 +2124,26 @@ function selectBestSourceLanguage(
     const englishManual = manualTracks.find(t => t.languageCode.startsWith('en'));
     if (englishManual) {
       console.log(`[service-worker] 选择英语手动字幕: ${englishManual.languageCode}`);
-      return englishManual.languageCode;
+      return { languageCode: englishManual.languageCode, kind: englishManual.kind };
     }
 
     const englishAsr = asrTracks.find(t => t.languageCode.startsWith('en'));
     if (englishAsr) {
       console.log(`[service-worker] 选择英语ASR字幕: ${englishAsr.languageCode}`);
-      return englishAsr.languageCode;
+      return { languageCode: englishAsr.languageCode, kind: englishAsr.kind };
     }
   }
 
   // 规则3: 手动字幕优先（非英语或目标为英语时）
   if (manualTracks.length > 0) {
     console.log(`[service-worker] 选择手动字幕: ${manualTracks[0].languageCode}`);
-    return manualTracks[0].languageCode;
+    return { languageCode: manualTracks[0].languageCode, kind: manualTracks[0].kind };
   }
 
   // 规则4: 降级策略 - 使用第一个可用轨道
   const selected = tracks[0];
   console.log(`[service-worker] 使用默认轨道: ${selected.languageCode} (${selected.kind === 'asr' ? 'ASR' : '手动'})`);
-  return selected.languageCode;
+  return { languageCode: selected.languageCode, kind: selected.kind };
 }
 
 /**
@@ -2217,15 +2250,18 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     const sourceData = await videoSourceManager.get(videoId);
     
     let sourceLang: string = 'auto'; // 默认值
-    
+    let sourceKind: string | undefined;
+
     if (sourceData && sourceData.availableSourceLanguages && sourceData.availableSourceLanguages.length > 0) {
       // 使用智能选择函数
-      sourceLang = selectBestSourceLanguage(
+      const sourceTrack = selectBestSourceLanguage(
         sourceData.availableSourceLanguages,
         preferences.targetLang,
         sourceData.lastSelectedLanguage
       );
-      console.log('[service-worker] 智能选择源语言:', sourceLang, {
+      sourceLang = sourceTrack.languageCode;
+      sourceKind = sourceTrack.kind;
+      console.log('[service-worker] 智能选择源语言:', sourceLang, sourceTrack.kind === 'asr' ? '(ASR)' : '', {
         targetLang: preferences.targetLang,
         lastSelected: sourceData.lastSelectedLanguage,
         availableCount: sourceData.availableSourceLanguages.length
@@ -2255,6 +2291,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     const cachedResult = await cacheManager.get(
       videoId,
       sourceLang,
+      sourceKind,
       preferences.targetLang,
       preferences.translationService
     );
@@ -2276,12 +2313,15 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     
     // Step 4: 查找相同源语言的原始字幕（P1级部分命中）
     console.log('[service-worker] Step 4: 查找可复用的原始字幕');
-    const partialCaches = await cacheManager.findByVideoAndSourceLang(videoId, sourceLang);
+    const partialCaches = await cacheManager.findByVideoAndSourceLang(videoId, sourceLang, sourceKind);
     
     if (partialCaches.length > 0) {
       console.log(`[service-worker] ✓ 找到${partialCaches.length}个相同源语言的缓存，复用原始字幕`);
-      const originalSubtitles = partialCaches[0].originalSubtitles;
-      
+      const originalSubtitlesVtt = partialCaches[0].originalSubtitles;
+
+      // 将VTT字符串解析为字幕数组
+      const originalSubtitles = extractOriginalSubtitles(originalSubtitlesVtt);
+
       // 执行翻译
       console.log('[service-worker] 执行翻译（使用复用的原始字幕）');
       const translatedResult = await executeTranslation(
@@ -2309,9 +2349,11 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
           await cacheManager.set({
             videoId,
             sourceLang,
+            sourceKind,
             targetLang: preferences.targetLang,
             translationService: preferences.translationService,
-            originalSubtitles,
+            availableSourceLanguages: partialCaches[0].availableSourceLanguages || [],
+            originalSubtitles: originalSubtitlesVtt,  // 使用原始的VTT字符串
             translatedSubtitles: translatedResult.translatedSubtitles,
             lastUsed: Date.now(),
             dataHash: ''
@@ -2386,12 +2428,14 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
             
             // Step 5.2: 选择最佳源语言
             if (sourceLang === 'auto') {
-              sourceLang = selectBestSourceLanguage(
+              const sourceTrack = selectBestSourceLanguage(
                 trackResponse.tracks,
                 preferences.targetLang,
                 sourceData?.lastSelectedLanguage
               );
-              console.log('[service-worker] Step 5.2: 选择源语言:', sourceLang);
+              sourceLang = sourceTrack.languageCode;
+              sourceKind = sourceTrack.kind;
+              console.log('[service-worker] Step 5.2: 选择源语言:', sourceLang, sourceTrack.kind === 'asr' ? '(ASR)' : '');
             }
             
             // Step 5.3: 通过Player API设置字幕语言（使用ISO 639-1标准）
@@ -2611,12 +2655,14 @@ async function continueTranslationWithSubtitles(data: any): Promise<any> {
     
     // 如果源语言还是auto，尝试从可用语言列表中选择
     if (sourceLang === 'auto' && sourceData && sourceData.availableSourceLanguages && sourceData.availableSourceLanguages.length > 0) {
-      sourceLang = selectBestSourceLanguage(
+      const sourceTrack = selectBestSourceLanguage(
         sourceData.availableSourceLanguages,
         preferences.targetLang,
         sourceData.lastSelectedLanguage || undefined
       );
-      console.log(`[service-worker] 智能选择源语言: ${sourceLang}`);
+      sourceLang = sourceTrack.languageCode;
+      sourceKind = sourceTrack.kind;
+      console.log(`[service-worker] 智能选择源语言: ${sourceLang}${sourceTrack.kind === 'asr' ? ' (ASR)' : ''}`);
     }
     
     console.log('[service-worker] 开始翻译字幕:', {
@@ -2650,8 +2696,10 @@ async function continueTranslationWithSubtitles(data: any): Promise<any> {
     await cacheManager.set({
       videoId,
       sourceLang,
+      sourceKind,
       targetLang: preferences.targetLang,
       translationService: preferences.translationService,
+      availableSourceLanguages: sourceData?.availableSourceLanguages || [],
       originalSubtitles: subtitles,
       translatedSubtitles: translatedResult.translatedSubtitles,
       lastUsed: Date.now(),

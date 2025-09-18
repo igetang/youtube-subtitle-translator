@@ -9,13 +9,11 @@ import { VideoSettingsLocalStorage, VideoSettings } from '../shared/storage/vide
 import { StorageManager, StorageKeys } from '../shared/storage/storage-manager';
 import { isLanguageRelevantToUI } from '../shared/utils/language-processing';
 import { 
-  VideoSourceLanguageCacheManager,
   UserPreferencesManager
 } from '../shared/storage';
-import { SubtitleMode, TranslationServiceType, UserPreferences, VideoSourceLanguageCache, VideoSourceLanguageItem } from '../shared/types/user-preferences-types';
+import { SubtitleMode, TranslationServiceType, UserPreferences, VideoSourceLanguageCache } from '../shared/types/user-preferences-types';
 import { SimplifiedCaptionTrack, TrackMetadata } from '../shared/types/subtitle-types';
 
-const videoSourceLanguageCacheManager = VideoSourceLanguageCacheManager.getInstance();
 const userPreferencesManager = UserPreferencesManager.getInstance();
 
 // 简化初始化日志
@@ -1266,13 +1264,8 @@ function addEventListeners(): void {
     });
   }
   
-  // 源语言选项点击事件委托
-  if (sourceLangOptions) {
-    console.log('[DEBUG] 绑定源语言选项点击事件监听器');
-    sourceLangOptions.addEventListener('click', handleSourceLanguageOptionClick);
-  } else {
-    console.error('[DEBUG] sourceLangOptions 元素不存在，无法绑定事件监听器');
-  }
+  // 源语言选项点击事件已改为直接绑定（见populateSourceLanguages函数）
+  // 不再使用事件委托，每个选项在创建时直接绑定点击事件
   
   // 点击外部关闭下拉菜单
   document.addEventListener('click', (e) => {
@@ -1428,10 +1421,14 @@ async function requestPopupContextData(): Promise<any> {
     if (response && response.type === 'popupInitDataResponse') {
       const popupContext = response.popupContext;
       console.log('[popup] PopupContext数据已获取:', popupContext);
-      
+
       // 更新全局变量
       if (popupContext) {
+        console.log('[DEBUG-INIT] 从popupContext更新currentVideoId:', popupContext.videoId);
         currentVideoId = popupContext.videoId;
+        console.log('[DEBUG-INIT] currentVideoId更新后的值:', currentVideoId);
+      } else {
+        console.log('[DEBUG-INIT] popupContext为空，currentVideoId未更新');
       }
       
       return popupContext;
@@ -1449,9 +1446,13 @@ async function requestPopupContextData(): Promise<any> {
  * 加载源语言数据并更新UI
  */
 async function loadSourceLanguageData(popupContext: any): Promise<void> {
+  console.log('[DEBUG-LOAD] loadSourceLanguageData开始，currentVideoId:', currentVideoId);
+  console.log('[DEBUG-LOAD] 收到的popupContext:', popupContext);
+
   try {
     if (!currentVideoId) {
       console.log('[popup] 无法加载源语言数据: 缺少视频ID');
+      console.log('[DEBUG-LOAD] currentVideoId确实为空，无法继续');
       return;
     }
     
@@ -1488,7 +1489,10 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
     }
     
     // 先加载用户之前选择的源语言，设置全局变量
+    console.log('[DEBUG-LOAD-1] 准备加载用户之前的源语言选择, videoId:', currentVideoId);
     const selectedTrack = await getSelectedSourceTrack(currentVideoId);
+    console.log('[DEBUG-LOAD-2] getSelectedSourceTrack 返回:', selectedTrack);
+
     if (selectedTrack) {
       currentSourceLang = selectedTrack.languageCode;
       currentSourceTrackKind = selectedTrack.kind || 'standard';
@@ -1650,11 +1654,52 @@ function populateSourceLanguages(searchTerm: string = ''): void {
       }
       
       // 标记当前选中的源语言
-      if (currentSourceLang === trackInfo.languageCode && 
+      if (currentSourceLang === trackInfo.languageCode &&
           currentSourceTrackKind === (trackInfo.kind || 'standard')) {
         option.classList.add('selected');
       }
-      
+
+      // 为每个选项添加点击事件监听器（方案2：直接绑定）
+      option.addEventListener('click', async () => {
+        console.log('[popup][source] 用户点击源语言选项', {
+          videoId: currentVideoId,
+          languageCode: trackInfo.languageCode,
+          trackKind: trackInfo.kind || 'standard',
+          uiTrackCount: uiTrackData.length
+        });
+
+        // 检查是否被禁用
+        if (option.classList.contains('disabled')) {
+          console.log(`[popup] 尝试选择被禁用的源语言: ${trackInfo.languageCode}`);
+          return;
+        }
+
+        // 更新当前选中的源语言
+        currentSourceLang = trackInfo.languageCode;
+        currentSourceTrackKind = trackInfo.kind || 'standard';
+
+        // 更新UI显示
+        updateSourceLanguageDisplay(trackInfo.languageCode, trackInfo.kind || 'standard');
+
+        // 关闭下拉菜单
+        if (sourceLangPanel) {
+          sourceLangPanel.style.display = 'none';
+        }
+
+        // 保存到存储
+        console.log('[popup][source] 用户选择源语言，准备保存', {
+          languageCode: trackInfo.languageCode,
+          trackKind: trackInfo.kind || 'standard',
+          videoId: currentVideoId
+        });
+        await saveSourceLanguage(trackInfo.languageCode, trackInfo.kind || 'standard');
+
+        // 重新填充目标语言列表以应用语言族互斥逻辑
+        populateTargetLanguages();
+
+        console.log(`[popup] 源语言已选择: ${trackInfo.languageCode} (${trackInfo.kind || 'standard'})，目标语言列表已更新`);
+      });
+
       sourceLangOptions!.appendChild(option);
     });
   }
@@ -1666,49 +1711,54 @@ function populateSourceLanguages(searchTerm: string = ''): void {
 
 /**
  * 处理源语言选项点击事件
+ * @deprecated 已改为直接绑定方式，此函数不再使用（保留作为参考）
  */
 function handleSourceLanguageOptionClick(event: Event): void {
   console.log('[DEBUG] handleSourceLanguageOptionClick 被调用，event:', event);
   const target = event.target as HTMLElement;
   console.log('[DEBUG] 点击目标元素:', target, 'classList:', target.classList);
-  if (!target.classList.contains('custom-select-option')) {
-    console.log('[DEBUG] 目标元素不是 custom-select-option，退出');
+
+  // 使用closest查找最近的.custom-select-option元素
+  const optionElement = target.closest('.custom-select-option') as HTMLElement;
+  if (!optionElement) {
+    console.log('[DEBUG] 未找到 custom-select-option 元素，退出');
     return;
   }
-  
-  const languageCode = target.getAttribute('data-value');
-  const trackKind = target.getAttribute('data-kind');
-  
+  console.log('[DEBUG] 找到选项元素:', optionElement);
+
+  const languageCode = optionElement.getAttribute('data-value');
+  const trackKind = optionElement.getAttribute('data-kind');
+
   if (!languageCode || !trackKind) {
     console.error('[popup] 无效的语言选项数据');
     return;
   }
-  
+
   // 检查是否被禁用
-  if (target.classList.contains('disabled')) {
+  if (optionElement.classList.contains('disabled')) {
     console.log(`[popup] 尝试选择被禁用的源语言: ${languageCode}`);
     return; // 禁止选择被禁用的选项
   }
-  
+
   // 更新当前选中的源语言
   currentSourceLang = languageCode;
   currentSourceTrackKind = trackKind;
-  
+
   // 更新UI显示
   updateSourceLanguageDisplay(languageCode, trackKind);
-  
+
   // 关闭下拉菜单
   if (sourceLangPanel) {
     sourceLangPanel.style.display = 'none';
   }
-  
+
   // 保存到存储
   console.log('[DEBUG] 用户点击源语言选项，准备保存:', { languageCode, trackKind, currentVideoId });
   saveSourceLanguage(languageCode, trackKind);
-  
+
   // 重新填充目标语言列表以应用语言族互斥逻辑
   populateTargetLanguages();
-  
+
   console.log(`[popup] 源语言已选择: ${languageCode} (${trackKind})，目标语言列表已更新`);
   console.log(`[popup] 语言族互斥检测已应用，当前源语言: ${languageCode}`);
 }
@@ -1753,6 +1803,7 @@ function updateSourceLanguageDisplay(languageCode: string, trackKind: string): v
  * 保存源语言设置（新架构）
  */
 async function saveSourceLanguage(languageCode: string, trackKind: string): Promise<void> {
+  console.log('[popup][source] saveSourceLanguage 调用', { languageCode, trackKind, videoId: currentVideoId });
   try {
     if (!currentVideoId) {
       console.error('[popup] currentVideoId为空，无法保存源语言');
@@ -1775,6 +1826,10 @@ async function saveSourceLanguage(languageCode: string, trackKind: string): Prom
       };
       
       // 保存轨道信息（只保存元数据）
+      console.log('[popup][source] saveSourceLanguage 准备写入缓存', {
+        videoId: currentVideoId,
+        trackMetadata
+      });
       await saveSelectedSourceTrack(currentVideoId, trackMetadata);
       console.log('[popup] 源语言设置已保存:', trackMetadata);
     } else {
@@ -1971,11 +2026,13 @@ async function getAvailableSourceLanguages(videoId: string): Promise<TrackMetada
       videoId
     });
     
-    if (response && response.success && Array.isArray(response.trackData)) {
+    const trackList = response?.tracks ?? response?.trackData;
+
+    if (response && response.success && Array.isArray(trackList)) {
       // 3. 转换为TrackMetadata格式（不含baseUrl）
-      const availableSourceLanguages: TrackMetadata[] = response.trackData.map((track: any) => ({
+      const availableSourceLanguages: TrackMetadata[] = trackList.map((track: any) => ({
         languageCode: track.languageCode || 'unknown',
-        name: track.languageName || 'Unknown',
+        name: track.languageName || track.name || 'Unknown',
         kind: track.kind
         // 注意：不存储 baseUrl
       }));
@@ -2001,14 +2058,20 @@ async function getAvailableSourceLanguages(videoId: string): Promise<TrackMetada
  * 只返回元数据，不包含baseUrl
  */
 async function getSelectedSourceTrack(videoId: string): Promise<TrackMetadata | null> {
+  console.log('[DEBUG-READ-1] getSelectedSourceTrack 被调用, videoId:', videoId);
   try {
     const result = await chrome.storage.local.get('video_source_language_cache');
+    console.log('[DEBUG-READ-2] 从 chrome.storage.local 读取到的原始数据:', result);
     const cache: VideoSourceLanguageCache = result.video_source_language_cache || { items: [], maxSize: 10 };
-    
-    console.log('[DEBUG] 读取源语言缓存:', { videoId, cacheItems: cache.items.length, cache: cache.items });
+
+    console.log('[DEBUG-READ-3] 解析后的缓存对象:', cache);
+    console.log('[DEBUG-READ-4] 缓存中的所有项:', cache.items);
+
     const cachedItem = cache.items.find(item => item.videoId === videoId);
+    console.log('[DEBUG-READ-5] 找到的缓存项:', cachedItem);
+
     const selectedTrack = cachedItem?.selectedSourceTrack || null;
-    console.log('[DEBUG] 找到的缓存项:', { cachedItem, selectedTrack });
+    console.log('[DEBUG-READ-6] 提取的 selectedSourceTrack:', selectedTrack);
     return selectedTrack;
   } catch (error) {
     console.error('[popup] 获取选中源语言失败:', error);
@@ -2021,42 +2084,34 @@ async function getSelectedSourceTrack(videoId: string): Promise<TrackMetadata | 
  * 只存储元数据，不包含baseUrl
  */
 async function saveVideoSourceLanguageCache(
-  videoId: string, 
-  availableSourceLanguages: TrackMetadata[], 
+  videoId: string,
+  availableSourceLanguages: TrackMetadata[],
   selectedSourceTrack: TrackMetadata | null
 ): Promise<void> {
+  console.log('[popup][source] saveVideoSourceLanguageCache 调用', {
+    videoId,
+    availableCount: availableSourceLanguages.length,
+    selectedSourceTrack
+  });
+
   try {
-    const result = await chrome.storage.local.get('video_source_language_cache');
-    const cache: VideoSourceLanguageCache = result.video_source_language_cache || { items: [], maxSize: 10 };
-    
-    // 查找是否已存在该视频的缓存
-    const existingIndex = cache.items.findIndex(item => item.videoId === videoId);
-    
-    const now = Date.now();
-    const newItem: VideoSourceLanguageItem = {
-      videoId,
-      availableSourceLanguages,
-      selectedSourceTrack: selectedSourceTrack || undefined,
-      fetchedAt: now,
-      lastAccessed: now
-    };
-    
-    if (existingIndex >= 0) {
-      // 更新现有记录
-      cache.items[existingIndex] = newItem;
-    } else {
-      // 添加新记录
-      cache.items.push(newItem);
-      
-      // FIFO策略：超过最大容量时删除最旧的记录
-      if (cache.items.length > cache.maxSize) {
-        cache.items.shift();
+    const response = await chrome.runtime.sendMessage({
+      type: 'updateVideoSourceLanguage',
+      data: {
+        videoId,
+        availableSourceLanguages,
+        selectedSourceTrack
       }
+    });
+
+    if (response && response.success) {
+      console.log('[popup][source] saveVideoSourceLanguageCache 后台同步成功', {
+        videoId,
+        availableCount: availableSourceLanguages.length
+      });
+    } else {
+      console.warn('[popup][source] saveVideoSourceLanguageCache 后台返回失败', response);
     }
-    
-    await chrome.storage.local.set({ video_source_language_cache: cache });
-    console.log('[DEBUG] 源语言缓存保存成功:', { videoId, selectedTrack: selectedSourceTrack, cacheSize: cache.items.length });
-    
   } catch (error) {
     console.error('[popup] 保存源语言缓存失败:', error);
   }
@@ -2069,8 +2124,27 @@ async function saveVideoSourceLanguageCache(
 async function saveSelectedSourceTrack(videoId: string, selectedTrack: TrackMetadata): Promise<void> {
   try {
     // 获取当前缓存
-    const availableLanguages = await getAvailableSourceLanguages(videoId);
+    let availableLanguages = await getAvailableSourceLanguages(videoId);
+
+    // 如果通过API/缓存未能获取到列表，退化为使用当前UI数据（剔除自动检测项）
+    if (!availableLanguages || availableLanguages.length === 0) {
+      availableLanguages = uiTrackData
+        .filter(track => track.languageCode !== 'auto')
+        .map(track => ({
+          languageCode: track.languageCode,
+          name: track.languageName,
+          kind: track.kind === 'standard' ? undefined : track.kind as 'asr' | 'forced' | undefined
+        }));
+      console.log('[popup] saveSelectedSourceTrack: 使用UI数据回填源语言列表');
+    }
     
+    console.log('[popup][source] saveSelectedSourceTrack 入参', {
+      videoId,
+      selectedTrack,
+      availableCount: availableLanguages.length,
+      availableLanguages
+    });
+
     // 更新选中的轨道
     await saveVideoSourceLanguageCache(videoId, availableLanguages, selectedTrack);
     
@@ -2095,9 +2169,12 @@ async function initializePopupUI(): Promise<void> {
     console.log(`[popup] 当前标签页ID: ${currentTabId}`);
     
     // 2. 检查是否为YouTube页面
+    console.log('[DEBUG-INIT] 检查URL:', tab.url);
+    console.log('[DEBUG-INIT] isYoutubeUrl结果:', tab.url ? isYoutubeUrl(tab.url) : 'URL为空');
     if (tab.url && isYoutubeUrl(tab.url)) {
       isYouTubePage = true;
       currentVideoId = extractVideoIdFromUrl(tab.url);
+      console.log('[DEBUG-INIT] extractVideoIdFromUrl返回:', currentVideoId);
       console.log(`[popup] YouTube页面，视频ID: ${currentVideoId || '未检测到'}`);
       
       // 初始化YouTube功能界面

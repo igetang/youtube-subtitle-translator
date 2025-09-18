@@ -193,6 +193,77 @@ export class VideoSourceLanguageCacheManager {
   }
 
   /**
+   * 来自Popup的源语言更新入口
+   * 保证后台内存缓存与storage保持一致
+   */
+  public async upsertFromPopup(data: {
+    videoId: string;
+    availableSourceLanguages?: TrackMetadata[];
+    selectedSourceTrack?: TrackMetadata | null;
+  }): Promise<void> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    const { videoId, availableSourceLanguages, selectedSourceTrack } = data;
+    const now = Date.now();
+    const existingIndex = this.cache.items.findIndex(item => item.videoId === videoId);
+
+    const normalizeTrack = (track?: TrackMetadata | null): TrackMetadata | undefined => {
+      if (!track) return undefined;
+      return {
+        languageCode: track.languageCode,
+        name: track.name,
+        kind: track.kind
+      };
+    };
+
+    if (existingIndex >= 0) {
+      const existing = this.cache.items[existingIndex];
+      const updated: VideoSourceLanguageData = {
+        ...existing,
+        availableSourceLanguages: (availableSourceLanguages && availableSourceLanguages.length > 0)
+          ? availableSourceLanguages
+          : existing.availableSourceLanguages,
+        selectedSourceTrack: normalizeTrack(selectedSourceTrack) || existing.selectedSourceTrack,
+        lastSelectedLanguage: selectedSourceTrack?.languageCode || existing.lastSelectedLanguage,
+        fetchedAt: existing.fetchedAt,
+        lastAccessed: now
+      };
+
+      this.cache.items[existingIndex] = updated;
+      console.log('[video-source-cache] upsertFromPopup 更新缓存项', {
+        videoId,
+        availableCount: updated.availableSourceLanguages.length,
+        lastSelectedLanguage: updated.lastSelectedLanguage
+      });
+    } else {
+      const normalizedTrack = normalizeTrack(selectedSourceTrack);
+      const newItem: VideoSourceLanguageData = {
+        videoId,
+        availableSourceLanguages: availableSourceLanguages || [],
+        selectedSourceTrack: normalizedTrack,
+        lastSelectedLanguage: normalizedTrack?.languageCode,
+        fetchedAt: now,
+        lastAccessed: now
+      };
+
+      this.cache.items.push(newItem);
+      if (this.cache.items.length > this.cache.maxSize) {
+        this.cache.items.shift();
+      }
+
+      console.log('[video-source-cache] upsertFromPopup 新增缓存项', {
+        videoId,
+        availableCount: newItem.availableSourceLanguages.length,
+        lastSelectedLanguage: newItem.lastSelectedLanguage
+      });
+    }
+
+    await this.saveCache();
+  }
+
+  /**
    * 清除指定视频的缓存
    */
   public async clear(videoId: string): Promise<void> {
