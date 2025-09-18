@@ -54,29 +54,47 @@ interface SimplifiedCaptionTrack {
 }
 ```
 
-### 4.2 字幕事件
+### 4.2 字幕数据格式（统一规范）
 
+> 详细的字幕数据格式架构请参考：[09-subtitle-data-format-architecture.md](./09-subtitle-data-format-architecture.md)
+
+#### 4.2.1 YouTube原始格式
 ```typescript
-interface SubtitleEvent {
+interface YouTubeSubtitle {
   start: number;           // 开始时间(秒)
-  end: number;             // 结束时间(秒)
-  text: string;            // 文本内容
-  langCode: string;        // 语言代码
+  dur: number;             // 持续时间(秒) - 注意是dur不是duration
+  text: string;            // 字幕文本
 }
 ```
 
-### 4.3 处理后的字幕事件
-
+#### 4.2.2 统一处理格式
 ```typescript
-interface ProcessedSubtitleEvent {
+interface SubtitleEntry {
   start: number;           // 开始时间(秒)
-  end: number;             // 结束时间(秒)
-  sourceText: string;      // 源语言文本
-  targetText: string|null; // 目标语言文本
-  sourceLangCode: string;  // 源语言代码
-  targetLangCode: string;  // 目标语言代码
+  duration: number;        // 持续时间(秒) - 统一使用duration
+  text: string;            // 原文
+  translation?: string;    // 译文（可选）
+  id?: string;            // 唯一标识（通常用start时间）
+  isUrgent?: boolean;     // 是否为紧急翻译（可选）
 }
 ```
+
+#### 4.2.3 存储格式
+```typescript
+// 缓存存储使用VTT字符串格式
+interface StoredSubtitles {
+  originalSubtitles: string;    // VTT格式的原始字幕
+  translatedSubtitles: string;  // VTT格式的翻译字幕
+}
+```
+
+### 4.3 格式使用原则
+
+| 场景 | 使用格式 | 原因 |
+|------|----------|------|
+| 实时传输 | `SubtitleEntry[]` | 无需序列化，处理效率高 |
+| 缓存存储 | VTT String | 节省30-40%空间，标准格式 |
+| 显示渲染 | `SubtitleEntry[]` | 便于时间查找和条件渲染 |
 
 ### 4.4 UI层专用数据结构 ⭐ **双重架构支持**
 

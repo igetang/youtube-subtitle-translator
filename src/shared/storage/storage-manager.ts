@@ -172,10 +172,12 @@ export class StorageManager {
       // 1. 通配符 '*' 监听器 (但需要注意字幕相关事件可能触发重操作)
       // 2. 明确匹配的键
       // 3. 前缀匹配的键
-      const shouldNotify = 
+      const shouldNotify =
         (key === '*' && (!isSubtitleRelatedChange || key.includes('subtitle') || key.includes('translations'))) || // 通配符情况特殊处理
-        Object.keys(changes).some(changedKey => 
-          changedKey === key || changedKey.startsWith(`${key}.`)
+        Object.keys(changes).some(changedKey =>
+          changedKey === key ||
+          changedKey.startsWith(`${key}.`) ||
+          changedKey.startsWith(key)  // 支持前缀匹配（无点号）
         );
       
       if (shouldNotify) {

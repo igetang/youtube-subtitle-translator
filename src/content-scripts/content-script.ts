@@ -373,9 +373,9 @@ function requestSubtitleCapture(): void {
 /**
  * 显示翻译后的字幕
  */
-function displayTranslatedSubtitles(data: any): void {
+async function displayTranslatedSubtitles(data: any): Promise<void> {
   // 移除冗余日志，show方法内部会打印
-  subtitleOverlay.show(data);
+  await subtitleOverlay.show(data);
   // 状态更新由Background通过STATE_CHANGED消息统一管理，避免重复更新
   // stateManager?.updateState('translateActive', 'active');
 }
@@ -492,20 +492,28 @@ function setupMessageHandlers(): void {
     if (messageType === 'TRANSLATION_UPDATE') {
       if (subtitleOverlay && message.data) {
         const { updateType, translatedSubtitles, batchIndex, totalBatches } = message.data;
-        
+
         if (updateType === 'urgent') {
           // 紧急翻译：立即替换显示
           console.log(`[content-script] 🚀 收到紧急翻译(${translatedSubtitles?.length || 0}条)，立即显示`);
           subtitleOverlay.updateTranslations(translatedSubtitles, true);
         } else if (updateType === 'progressive') {
-          // 渐进式翻译：追加更新
+          // 批量翻译：完全覆盖紧急翻译
           if (batchIndex && totalBatches) {
             console.log(`[content-script] ✅ 收到批次翻译 ${batchIndex}/${totalBatches} (${translatedSubtitles?.length || 0}条)`);
           } else {
-            console.log(`[content-script] ✅ 收到最终翻译(${translatedSubtitles?.length || 0}条)`);
+            console.log(`[content-script] ✅ 收到批量翻译(${translatedSubtitles?.length || 0}条)，完全覆盖`);
           }
-          
-          subtitleOverlay.updateTranslations(translatedSubtitles, false);
+
+          // 调试：检查接收到的批量翻译数据的isUrgent标记
+          const urgentIncoming = translatedSubtitles?.filter((s: any) => s.isUrgent === true).length || 0;
+          if (urgentIncoming > 0) {
+            console.warn(`[content-script] ⚠️ 接收到的批量翻译中有 ${urgentIncoming}/${translatedSubtitles?.length || 0} 条标记为紧急！前3条:`,
+              translatedSubtitles?.slice(0, 3).map((s: any) => ({ start: s.start, isUrgent: s.isUrgent })));
+          }
+
+          // 批量翻译也使用完全覆盖模式
+          subtitleOverlay.updateTranslations(translatedSubtitles, true);
         } else {
           console.log(`[content-script] 收到翻译更新: ${updateType}`);
           subtitleOverlay.updateTranslations(translatedSubtitles, false);

@@ -36,6 +36,7 @@ import {
   triggerSubtitleLoadWithSignal 
 } from './components/message-with-signal';
 import { TwoPhaseTranslatorV4 } from './components/two-phase-translator-v4';
+import { createVttString } from '../shared/utils/vtt-utils';
 
 /**
  * 处理翻译开关切换 - 使用AbortController架构v4.0
@@ -351,13 +352,16 @@ export async function handleToggleTranslateV4(
     if (urgentResults.length > 0) {
       console.log('[service-worker-v4] → 发送紧急翻译结果到前端显示');
 
-      // 构建紧急翻译的字幕数据
+      // 构建紧急翻译的字幕数据 - 统一为SubtitleEntry格式
       const urgentSubtitles = subtitleData.subtitles.map((sub: any, idx: number) => {
         const result = urgentResults.find(r => r.index === idx);
         if (result) {
           return {
-            ...sub,
+            start: sub.start,
+            duration: sub.end - sub.start,
+            text: sub.text,
             translation: result.translatedText,
+            id: String(sub.start),
             isUrgent: true  // 标记为紧急翻译
           };
         }
@@ -370,7 +374,7 @@ export async function handleToggleTranslateV4(
           type: 'TRANSLATION_UPDATE',
           data: {
             updateType: 'urgent',
-            translatedSubtitles: urgentSubtitles
+            translatedSubtitles: urgentSubtitles  // SubtitleEntry[]格式
           }
         });
         console.log(`[service-worker-v4] ✓ 已发送 ${urgentSubtitles.length} 条紧急翻译`);
@@ -425,13 +429,16 @@ export async function handleToggleTranslateV4(
     if (batchResults.length > 0) {
       console.log('[service-worker-v4] → 发送批量翻译结果到前端更新');
 
-      // 构建批量翻译的字幕数据
+      // 构建批量翻译的字幕数据 - 统一为SubtitleEntry格式
       const batchSubtitles = subtitleData.subtitles.map((sub: any, idx: number) => {
         const result = batchResults.find(r => r.index === idx);
         if (result) {
           return {
-            ...sub,
+            start: sub.start,
+            duration: sub.end - sub.start,
+            text: sub.text,
             translation: result.translatedText,
+            id: String(sub.start),
             isUrgent: false  // 标记为批量翻译
           };
         }
@@ -444,7 +451,7 @@ export async function handleToggleTranslateV4(
           type: 'TRANSLATION_UPDATE',
           data: {
             updateType: 'progressive',
-            translatedSubtitles: batchSubtitles
+            translatedSubtitles: batchSubtitles  // SubtitleEntry[]格式
           }
         });
         console.log(`[service-worker-v4] ✓ 已发送 ${batchSubtitles.length} 条批量翻译`);
@@ -456,41 +463,104 @@ export async function handleToggleTranslateV4(
     // 合并结果
     const allResults = [...urgentResults, ...batchResults];
     
-    // 构建最终结果映射
+    // 构建最终结果映射 - 统一格式为SubtitleEntry
     const translatedSubtitles = subtitleData.subtitles.map((sub: any, idx: number) => {
       const result = allResults.find(r => r.index === idx);
       return {
-        ...sub,
-        translation: result?.translatedText || sub.text,  // 修改字段名为translation，与subtitle-overlay期待的一致
-        isUrgent: result?.isUrgent || false
+        start: sub.start,
+        duration: sub.end - sub.start,  // 计算duration
+        text: sub.text,                 // 原文
+        translation: result?.translatedText || sub.text,  // 译文
+        id: String(sub.start),          // 使用start时间作为ID
+        isUrgent: false  // 最终结果全部标记为非紧急（白色），批量翻译完全覆盖
       };
     });
-    
-    // ========== Stage 5: 完成 ==========
+
+    // 为缓存准备VTT格式（原始字幕）
+    const originalVtt = createVttString(
+      subtitleData.subtitles.map((sub: any) => ({
+        start: sub.start,
+        duration: sub.end - sub.start,
+        text: sub.text,
+        id: String(sub.start)
+      }))
+    );
+
+    // 为缓存准备VTT格式（翻译字幕）
+    const translatedVtt = createVttString(
+      translatedSubtitles.map(sub => ({
+        start: sub.start,
+        duration: sub.duration,
+        text: sub.translation || sub.text,
+        id: sub.id
+      }))
+    );
+
+    // ========== Stage 5: 发送最终完整结果 ==========
+    // 批量翻译完成后，发送完整的翻译结果（全部为白色）
+    if (batchResults.length > 0) {
+      console.log('[service-worker-v4] → 发送最终完整翻译结果');
+      const finalSubtitles = subtitleData.subtitles.map((sub: any, idx: number) => {
+        const result = allResults.find(r => r.index === idx);
+        return {
+          start: sub.start,
+          duration: sub.end - sub.start,
+          text: sub.text,
+          translation: result?.translatedText || sub.text,
+          id: String(sub.start),
+          isUrgent: false  // 最终结果全部标记为非紧急（白色）
+        };
+      });
+
+      try {
+        // 调试：检查最终字幕的isUrgent标记
+        const urgentCount = finalSubtitles.filter(s => s.isUrgent === true).length;
+        console.log(`[service-worker-v4] 🔍 最终字幕isUrgent检查: ${urgentCount}/${finalSubtitles.length} 条标记为紧急`);
+        if (urgentCount > 0) {
+          console.warn('[service-worker-v4] ⚠️ 警告：最终字幕中仍有紧急标记！前3条示例:',
+            finalSubtitles.slice(0, 3).map(s => ({ start: s.start, isUrgent: s.isUrgent })));
+        }
+
+        await chrome.tabs.sendMessage(tabId, {
+          type: 'TRANSLATION_UPDATE',
+          data: {
+            updateType: 'progressive',
+            translatedSubtitles: finalSubtitles  // 完整的字幕列表
+          }
+        });
+        console.log(`[service-worker-v4] ✓ 已发送最终完整翻译 ${finalSubtitles.length} 条（全部白色）`);
+      } catch (err) {
+        console.error('[service-worker-v4] 发送最终翻译失败:', err);
+      }
+    }
+
+    // ========== Stage 6: 完成 ==========
     console.log('[service-worker-v4] → 设置状态为 ACTIVE');
     await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
     session.complete();
-    
+
     // 通知UI
     console.log('[service-worker-v4] → 通知UI状态变更: ACTIVE');
     await notifyStateChange(tabId, 'translateActive', TranslateActiveState.ACTIVE);
-    
-    // 异步保存缓存
+
+    // 异步保存缓存（使用VTT格式）
     saveTranslationCacheAsync(
       videoId,
       sourceLang,
       preferences,
-      subtitleData.subtitles,
-      translatedSubtitles,
+      originalVtt,      // VTT格式
+      translatedVtt,    // VTT格式
       translationCacheManager
     );
-    
+
     return {
       success: true,
-      action: 'translated',  // 修改为translated，与content-script期待的一致
+      action: 'translated',
       data: {
+        // 实时显示用数组格式
+        translatedSubtitles: translatedSubtitles,  // SubtitleEntry[]格式
+        // 兼容旧代码
         originalSubtitles: subtitleData.subtitles,
-        translatedSubtitles: translatedSubtitles,
         sourceLang,
         targetLang: preferences.targetLang
       }
@@ -556,8 +626,8 @@ function saveTranslationCacheAsync(
   videoId: string,
   sourceLang: string,
   preferences: any,
-  originalSubtitles: any[],
-  translatedSubtitles: any[],
+  originalVtt: string,      // 改为VTT字符串
+  translatedVtt: string,    // 改为VTT字符串
   cacheManager: any
 ): void {
   Promise.resolve().then(async () => {
@@ -567,8 +637,8 @@ function saveTranslationCacheAsync(
         sourceLang,
         targetLang: preferences.targetLang,
         translationService: preferences.translationService,
-        originalSubtitles,
-        translatedSubtitles,
+        originalSubtitles: originalVtt,      // VTT格式
+        translatedSubtitles: translatedVtt,  // VTT格式
         lastUsed: Date.now(),
         dataHash: ''
       });

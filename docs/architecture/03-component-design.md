@@ -603,23 +603,25 @@ interface SubtitleCache {
 
 #### 7.1.7 **TranslationCacheData** - 完整翻译缓存数据
 
+> 📌 **重要**：字幕内容使用VTT格式字符串存储以节省空间，详见 [09-subtitle-data-format-architecture.md](./09-subtitle-data-format-architecture.md)
+
 ```typescript
 interface TranslationCacheData {
   // === 标识信息 ===
   videoId: string;                              // 视频ID
   sourceLang: string;                           // 源语言（用于匹配）
   targetLang: string;                           // 目标语言（用于匹配）
-  
+
   // === 翻译服务配置（安全版本） ===
   translationService: {                         // 服务配置（不含API密钥）
     type: TranslationServiceType;               // 服务类型
     model?: string;                             // AI模型（如果适用）
     temperature?: number;                        // 温度参数（如果适用）
   };
-  
+
   // === 原始和翻译内容 ===
-  originalSubtitles: string;                    // 原始字幕（VTT格式）
-  translatedSubtitles: string;                  // 翻译后的字幕（VTT格式）
+  originalSubtitles: string;                    // 原始字幕（VTT格式字符串，非数组）
+  translatedSubtitles: string;                  // 翻译后的字幕（VTT格式字符串，非数组）
   
   // === 缓存管理 ===
   createdAt: number;                            // 创建时间戳

@@ -4,6 +4,9 @@
  */
 
 import type { TranslationCacheData } from '../shared/types/storage-types';
+import { UserPreferencesManager } from '../shared/storage';
+import { SubtitleMode, UserPreferenceChangeEvent } from '../shared/types/user-preferences-types';
+import { parseVttString, mergeSubtitles } from '../shared/utils/vtt-utils';
 
 export interface SubtitleEntry {
   start: number;      // 开始时间（秒）
@@ -24,10 +27,33 @@ export class SubtitleOverlay {
   private animationFrameId: number | null = null;
   private isActive: boolean = false;
   private currentLanguageMode: 'bilingual' | 'targetOnly' = 'bilingual';
-  private isUrgentTranslation: boolean = false; // 标记是否为紧急翻译
-  
+  private userPreferencesManager: UserPreferencesManager;
+
   constructor() {
     console.log('[SubtitleOverlay] 初始化字幕显示层');
+    this.userPreferencesManager = UserPreferencesManager.getInstance();
+    this.initializePreferencesListener();
+  }
+
+  /**
+   * 初始化用户偏好监听器
+   */
+  private async initializePreferencesListener(): Promise<void> {
+    // 初始化UserPreferencesManager
+    await this.userPreferencesManager.initialize();
+
+    // 监听字幕模式变化，实现实时切换
+    this.userPreferencesManager.addChangeListener(
+      UserPreferenceChangeEvent.SUBTITLE_MODE_CHANGED,
+      async (newMode: SubtitleMode) => {
+        console.log('[SubtitleOverlay] 字幕模式变更为:', newMode);
+        this.updateDisplayMode(newMode === SubtitleMode.BILINGUAL ? 'bilingual' : 'targetOnly');
+        // 立即刷新当前显示的字幕
+        if (this.isActive) {
+          this.forceUpdateDisplay();
+        }
+      }
+    );
   }
   
   /**
@@ -96,40 +122,68 @@ export class SubtitleOverlay {
   }
   
   /**
-   * 显示翻译后的字幕
+   * 显示翻译后的字幕 - 智能识别输入格式
    */
-  public show(translationData: TranslationCacheData): void {
-    console.log('[SubtitleOverlay] 显示翻译字幕，数据条数:', translationData.translatedSubtitles?.length);
-    
-    if (!translationData.translatedSubtitles || translationData.translatedSubtitles.length === 0) {
-      console.warn('[SubtitleOverlay] 没有可显示的翻译字幕');
-      return;
-    }
-    
-    // 转换字幕格式
-    this.currentSubtitles = translationData.translatedSubtitles.map(item => ({
-      start: item.start,
-      duration: item.duration,
-      text: item.text,
-      translation: item.translation
-    }));
-    
-    // 设置显示模式（默认使用双语模式）
-    this.currentLanguageMode = 'bilingual';
-    
-    this.isActive = true;
+  public async show(translationData: any): Promise<void> {
+    console.log('[SubtitleOverlay] 显示翻译字幕');
 
-    // 确保覆盖层存在
-    if (!this.overlayElement) {
-      this.initialize();
-    }
+    try {
+      // 智能识别输入格式
+      // 情况1: 直接传入数组（纯数组格式）
+      if (Array.isArray(translationData)) {
+        console.log('[SubtitleOverlay] 输入格式: 纯数组');
+        this.currentSubtitles = translationData;
+      }
+      // 情况2: V4架构当前格式（translatedSubtitles是数组）
+      else if (translationData.translatedSubtitles && Array.isArray(translationData.translatedSubtitles)) {
+        console.log('[SubtitleOverlay] 输入格式: V4架构数组格式');
+        this.currentSubtitles = translationData.translatedSubtitles;
+      }
+      // 情况3: 缓存格式（VTT字符串）
+      else if (translationData.translatedSubtitles && typeof translationData.translatedSubtitles === 'string') {
+        console.log('[SubtitleOverlay] 输入格式: VTT字符串格式');
 
-    // 确保覆盖层可见（修复视频切换后的显示问题）
-    if (this.overlayElement) {
-      this.overlayElement.style.display = '';
-    }
+        if (!translationData.originalSubtitles) {
+          console.warn('[SubtitleOverlay] 缺少原始字幕');
+          return;
+        }
 
-    console.log('[SubtitleOverlay] 字幕数据已加载，开始显示');
+        // 解析VTT格式
+        const originalSubtitles = parseVttString(translationData.originalSubtitles);
+        const translatedSubtitles = parseVttString(translationData.translatedSubtitles, true);
+
+        // 合并原文和译文
+        this.currentSubtitles = mergeSubtitles(originalSubtitles, translatedSubtitles);
+      }
+      // 无法识别的格式
+      else {
+        console.error('[SubtitleOverlay] 无法识别的数据格式:', translationData);
+        return;
+      }
+
+      console.log('[SubtitleOverlay] 解析后的字幕条数:', this.currentSubtitles.length);
+
+      // 从用户偏好读取显示模式
+      const userPrefs = await this.userPreferencesManager.getUserPreferences();
+      this.currentLanguageMode = userPrefs.subtitleMode === SubtitleMode.BILINGUAL ? 'bilingual' : 'targetOnly';
+      console.log('[SubtitleOverlay] 使用字幕模式:', this.currentLanguageMode);
+
+      this.isActive = true;
+
+      // 确保覆盖层存在
+      if (!this.overlayElement) {
+        this.initialize();
+      }
+
+      // 确保覆盖层可见（修复视频切换后的显示问题）
+      if (this.overlayElement) {
+        this.overlayElement.style.display = '';
+      }
+
+      console.log('[SubtitleOverlay] 字幕数据已加载，开始显示');
+    } catch (error) {
+      console.error('[SubtitleOverlay] 显示字幕失败:', error);
+    }
   }
   
   /**
@@ -168,21 +222,27 @@ export class SubtitleOverlay {
    */
   private updateSubtitleDisplay(currentTime: number): void {
     if (!this.subtitleContainer) return;
-    
+
     // 查找当前应该显示的字幕
     const currentSubtitle = this.currentSubtitles.find(subtitle => {
       const endTime = subtitle.start + subtitle.duration;
       return currentTime >= subtitle.start && currentTime < endTime;
     });
-    
+
     if (currentSubtitle) {
       // 根据显示模式构建字幕HTML
       let subtitleHTML = '';
-      
+
       // 根据是否为紧急翻译决定译文颜色
       // 紧急翻译：黄色高亮 (#ffeb3b) - 保持原有样式
       // 批量翻译：与原文相同的白色 (#ffffff) - 新的样式
       const translationColor = currentSubtitle.isUrgent ? '#ffeb3b' : '#ffffff';
+
+      // 调试：首次显示某条字幕时，输出其isUrgent状态
+      if (!(currentSubtitle as any)._debugShown) {
+        console.log(`[SubtitleOverlay] 🎬 显示字幕 [${currentSubtitle.start.toFixed(1)}s]: isUrgent=${currentSubtitle.isUrgent}, 颜色=${translationColor}`);
+        (currentSubtitle as any)._debugShown = true;
+      }
       
       if (this.currentLanguageMode === 'bilingual') {
         // 双语模式：显示原文和译文
@@ -227,17 +287,66 @@ export class SubtitleOverlay {
     this.currentLanguageMode = mode;
     console.log('[SubtitleOverlay] 更新显示模式:', mode);
   }
+
+  /**
+   * 强制刷新当前显示的字幕
+   * 用于字幕模式切换时立即更新显示
+   */
+  private forceUpdateDisplay(): void {
+    if (!this.videoElement || !this.subtitleContainer || !this.isActive) {
+      return;
+    }
+
+    const currentTime = this.videoElement.currentTime;
+
+    // 找到当前时间对应的字幕
+    const currentSubtitle = this.currentSubtitles.find(subtitle => {
+      const end = subtitle.start + subtitle.duration;
+      return currentTime >= subtitle.start && currentTime < end;
+    });
+
+    if (currentSubtitle) {
+      // 构建字幕HTML
+      let subtitleHTML = '';
+
+      if (this.currentLanguageMode === 'bilingual') {
+        // 双语模式：显示原文和译文
+        subtitleHTML = `
+          <div style="color: #ffffff; font-size: 20px; line-height: 1.4; margin-bottom: 4px;">
+            ${this.escapeHtml(currentSubtitle.text)}
+          </div>
+          <div style="color: #ffffff; font-size: 22px; line-height: 1.4; font-weight: 500;">
+            ${this.escapeHtml(currentSubtitle.translation || currentSubtitle.text)}
+          </div>
+        `;
+      } else {
+        // 仅目标语言模式：只显示译文
+        subtitleHTML = `
+          <div style="color: #ffffff; font-size: 22px; line-height: 1.4; font-weight: 500;">
+            ${this.escapeHtml(currentSubtitle.translation || currentSubtitle.text)}
+          </div>
+        `;
+      }
+
+      // 更新显示
+      this.subtitleContainer.innerHTML = subtitleHTML;
+      this.subtitleContainer.style.display = 'block';
+    } else {
+      // 当前时间没有字幕，隐藏容器
+      this.subtitleContainer.style.display = 'none';
+    }
+  }
   
   /**
    * 更新翻译（渐进式）
    * @param translatedSubtitles 翻译后的字幕数组
    * @param replaceAll 是否替换所有字幕（true用于紧急翻译，false用于渐进式更新）
    */
-  public updateTranslations(translatedSubtitles: SubtitleEntry[], replaceAll: boolean = false): void {
+  public async updateTranslations(translatedSubtitles: SubtitleEntry[], replaceAll: boolean = false): Promise<void> {
     if (!translatedSubtitles || translatedSubtitles.length === 0) {
       return;
     }
-    
+
     // 确保覆盖层已初始化
     if (!this.overlayElement) {
       this.initialize();
@@ -250,15 +359,42 @@ export class SubtitleOverlay {
     if (this.overlayElement) {
       this.overlayElement.style.display = '';
     }
-    
+
+    // 同步读取最新的用户字幕模式设置
+    const userPrefs = await this.userPreferencesManager.getUserPreferences();
+    this.currentLanguageMode = userPrefs.subtitleMode === SubtitleMode.BILINGUAL ? 'bilingual' : 'targetOnly';
+    console.log('[SubtitleOverlay] 更新翻译时字幕模式:', this.currentLanguageMode);
+
     if (replaceAll) {
-      // 紧急翻译：直接替换所有字幕
-      // 给每条字幕添加紧急标记
-      this.currentSubtitles = translatedSubtitles.map(sub => ({
-        ...sub,
-        isUrgent: true
-      }));
-      this.isUrgentTranslation = true; // 标记为紧急翻译
+      // 完全替换模式：用于紧急翻译和批量翻译
+      // 根据字幕中的isUrgent标记判断是否为紧急翻译
+      const hasUrgentMark = translatedSubtitles.some(sub => sub.isUrgent === true);
+
+      if (hasUrgentMark) {
+        // 紧急翻译：保持黄色标记
+        this.currentSubtitles = translatedSubtitles.map(sub => ({
+          ...sub,
+          isUrgent: true
+        }));
+        this.isUrgentTranslation = true;
+        console.log('[SubtitleOverlay] 紧急翻译模式，黄色显示');
+      } else {
+        // 批量翻译：全部标记为白色
+        this.currentSubtitles = translatedSubtitles.map(sub => ({
+          ...sub,
+          isUrgent: false
+        }));
+        this.isUrgentTranslation = false;
+
+        // 调试：验证设置后的isUrgent状态
+        const urgentAfter = this.currentSubtitles.filter(s => s.isUrgent === true).length;
+        console.log('[SubtitleOverlay] 批量翻译完全覆盖，白色显示');
+        console.log(`[SubtitleOverlay] 🔍 设置后isUrgent检查: ${urgentAfter}/${this.currentSubtitles.length} 条标记为紧急`);
+        if (urgentAfter > 0) {
+          console.warn('[SubtitleOverlay] ⚠️ 警告：设置后仍有紧急标记！前3条:',
+            this.currentSubtitles.slice(0, 3).map(s => ({ start: s.start, isUrgent: s.isUrgent })));
+        }
+      }
     } else {
       // 渐进式更新：合并新翻译
       this.isUrgentTranslation = false; // 标记为最终翻译
