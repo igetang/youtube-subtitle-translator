@@ -1739,6 +1739,218 @@ graph TD
     G --> M[10秒后自动销毁]
 ```
 
+### 5.16 源语言实时变更机制 ⭐ **2025-09-19 新增**
+
+#### 5.16.1 设计理念
+
+**基于存储监听的事件驱动架构**
+
+源语言变更采用与 UserPreferences（目标语言、字幕模式、翻译服务）相同的存储监听机制，确保架构统一性和可维护性。
+
+**核心原则**：
+- **统一性**：与其他参数采用相同的存储监听机制
+- **智能缓存**：优先使用已有的翻译缓存，避免重复翻译
+- **用户体验**：实时UI反馈，清晰的状态提示
+
+#### 5.16.2 数据流架构
+
+```
+用户选择源语言 → Popup更新存储 → Storage事件触发 → Content Script响应 → 智能切换
+                                                                    ↓
+                                                        有缓存 → 直接显示
+                                                        无缓存 → 重新翻译
+```
+
+#### 5.16.3 存储结构设计
+
+**存储键**：`VIDEO_SOURCE_LANGUAGE_CACHE`（固定单一键）
+
+```typescript
+interface VideoSourceLanguageCache {
+  items: VideoSourceLanguageData[];  // FIFO数组，最大10个视频
+  maxSize: 10;
+}
+
+interface VideoSourceLanguageData {
+  videoId: string;
+  availableSourceLanguages: TrackMetadata[];
+  lastSelectedLanguage?: string;
+  selectedSourceTrack?: TrackMetadata;
+  fetchedAt: number;
+  lastAccessed: number;
+}
+```
+
+**覆盖策略**：相同videoId的新数据覆盖旧数据，而非追加
+
+#### 5.16.4 状态管理与UI对应
+
+| 场景 | 初始状态 | 中间状态 | 最终状态 | UI表现 |
+|------|---------|---------|---------|--------|
+| 源语言变更（有缓存） | ACTIVE | ACTIVE | ACTIVE | 瞬间切换到缓存字幕 |
+| 源语言变更（无缓存） | ACTIVE | PENDING | ACTIVE/INACTIVE | "源语言切换，重新进行字幕翻译..."（脉动动画） |
+| 翻译未激活时变更 | INACTIVE | INACTIVE | INACTIVE | 无UI变化 |
+
+#### 5.16.5 Content Script监听器实现
+
+```typescript
+// 1. 注册存储监听器
+function setupSourceLanguageChangeListener(): void {
+  StorageManager.getInstance().addChangeListener(
+    StorageKeys.VIDEO_SOURCE_LANGUAGE_CACHE,
+    handleSourceLanguageCacheChange
+  );
+}
+
+// 2. 处理源语言变更
+async function handleSourceLanguageCacheChange(
+  changes: { [key: string]: chrome.storage.StorageChange },
+  area: string
+): Promise<void> {
+  // 获取新旧缓存数据
+  const newCache = changes[StorageKeys.VIDEO_SOURCE_LANGUAGE_CACHE]?.newValue;
+  const oldCache = changes[StorageKeys.VIDEO_SOURCE_LANGUAGE_CACHE]?.oldValue;
+
+  // 检测当前视频的源语言是否变化
+  const currentVideoId = getVideoId();
+  const newVideoData = newCache?.items.find(item => item.videoId === currentVideoId);
+  const oldVideoData = oldCache?.items?.find(item => item.videoId === currentVideoId);
+
+  // 只在源语言真正变化且翻译激活时处理
+  if (newVideoData?.lastSelectedLanguage !== oldVideoData?.lastSelectedLanguage &&
+      await isTranslateActive()) {
+    await handleSourceLanguageChange(
+      newVideoData.lastSelectedLanguage,
+      oldVideoData?.lastSelectedLanguage
+    );
+  }
+}
+```
+
+#### 5.16.6 智能切换逻辑
+
+**核心流程**：
+1. **立即响应**：清除当前字幕，显示PENDING UI
+2. **缓存检查**：查找新源语言的翻译缓存
+3. **分支处理**：
+   - 有缓存：直接使用，隐藏PENDING UI
+   - 无缓存：保持PENDING UI，触发重新翻译
+
+```typescript
+async function handleSourceLanguageChange(
+  newSourceLang: string,
+  oldSourceLang?: string
+): Promise<void> {
+  // 1. 立即清除并显示切换提示
+  subtitleOverlay.clearSubtitles();
+  subtitleOverlay.showPendingState('源语言切换，重新进行字幕翻译...');
+
+  // 2. 尝试从缓存获取
+  const cacheKey = {
+    videoId: getVideoId(),
+    sourceLang: newSourceLang,
+    targetLang: userPrefs.targetLang,
+    service: userPrefs.translationService
+  };
+
+  const cachedTranslation = await checkTranslationCache(cacheKey);
+
+  if (cachedTranslation) {
+    // 3A. 有缓存：直接使用
+    subtitleOverlay.hidePendingState();
+    subtitleOverlay.show(cachedTranslation);
+  } else {
+    // 3B. 无缓存：触发重新翻译
+    await triggerRetranslate(newSourceLang);
+  }
+}
+```
+
+#### 5.16.7 PENDING状态UI设计
+
+```typescript
+class SubtitleOverlay {
+  /**
+   * 显示PENDING状态UI（带脉动动画）
+   */
+  public showPendingState(message: string): void {
+    // 创建带动画的提示元素
+    this.pendingElement.style.cssText = `
+      background: rgba(0, 0, 0, 0.85);
+      color: #ffeb3b;
+      padding: 16px 24px;
+      border-radius: 8px;
+      font-size: 18px;
+      text-align: center;
+      animation: pulse 1.5s infinite;
+    `;
+
+    this.pendingElement.textContent = message;
+    this.pendingElement.style.display = 'block';
+  }
+}
+
+// 不同场景的PENDING消息
+const PENDING_MESSAGES = {
+  SOURCE_LANG_CHANGE: '源语言切换，重新进行字幕翻译...',
+  TARGET_LANG_CHANGE: '目标语言切换，重新翻译中...',
+  SERVICE_CHANGE: '翻译服务切换，重新翻译中...'
+};
+```
+
+#### 5.16.8 缓存策略
+
+**保留策略**：
+- 不清理旧源语言的翻译缓存
+- 保留所有源语言组合的翻译，提高切换时的命中率
+- 依靠TranslationCacheManager的LRU/FIFO机制自动管理空间
+
+**缓存键格式**：
+```
+${videoId}_${sourceLang}_${targetLang}_${service.type}_${service.model}_${service.temperature}
+```
+
+#### 5.16.9 Service Worker配合
+
+```typescript
+// 1. 缓存检查支持
+case 'checkTranslationCache':
+  const cachedData = await translationCacheManager.get(
+    data.videoId,
+    data.sourceLang,
+    data.targetLang,
+    data.service
+  );
+  return { success: !!cachedData, data: cachedData };
+
+// 2. 重启翻译支持（设置PENDING状态）
+case 'toggleTranslate':
+  if (data?.action === 'restart') {
+    // 设置为PENDING表示正在处理
+    await runtimeStateManager.setTranslateActiveState(
+      TranslateActiveState.PENDING
+    );
+    // 继续执行翻译流程，不清理缓存
+  }
+```
+
+#### 5.16.10 优势分析
+
+**性能优势**：
+- 缓存命中时瞬间切换，无需网络请求
+- 多个源语言的翻译可以共存，快速切换
+- 减少API调用，降低成本
+
+**用户体验**：
+- 实时反馈，清晰的状态提示
+- 平滑过渡，无闪烁
+- 5秒超时保护，防止卡死
+
+**架构优势**：
+- 与现有UserPreferences机制统一
+- 复用StorageManager的监听器
+- 代码维护性好，扩展方便
+
 ---
 
 ## 📝 **架构变更总结**
@@ -1765,6 +1977,12 @@ graph TD
 4. **用户反馈**: 持续收集Popup方案的用户反馈，迭代优化
 
 ### **📅 版本更新记录**
+- **2025-09-19**: 添加5.16节 - 源语言实时变更机制
+  - 基于存储监听的事件驱动架构
+  - 智能缓存优先策略
+  - PENDING状态UI设计
+  - 与UserPreferences统一的变更机制
+
 - **2025-01-16**: 更新5.15节 - 完整Fetch拦截架构设计（最终版）
   - 统一5秒超时机制（Service Worker/拦截器/兜底）
   - 完善三层超时保护设计
