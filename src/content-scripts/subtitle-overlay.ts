@@ -472,18 +472,64 @@ export class SubtitleOverlay {
    */
   public adjustPosition(): void {
     if (!this.overlayElement || !this.videoElement) return;
-    
+
     // 检查是否全屏
-    const isFullscreen = document.fullscreenElement || 
-                        (document as any).webkitFullscreenElement || 
+    const isFullscreen = document.fullscreenElement ||
+                        (document as any).webkitFullscreenElement ||
                         (document as any).mozFullScreenElement;
-    
+
     if (isFullscreen) {
       // 全屏模式下调整位置
       this.overlayElement.style.bottom = '180px';
     } else {
       // 正常模式
       this.overlayElement.style.bottom = '140px';
+    }
+  }
+
+  /**
+   * 显示PENDING状态消息
+   * 用于源语言切换等需要重新加载的场景
+   */
+  public showPendingMessage(message: string): void {
+    if (!this.subtitleContainer) {
+      // 如果容器不存在，先初始化
+      this.initialize();
+    }
+
+    if (this.subtitleContainer) {
+      // 显示黄色脉动文字
+      this.subtitleContainer.innerHTML = `
+        <div style="
+          color: #ffeb3b;
+          font-size: 20px;
+          line-height: 1.4;
+          animation: subtitlePulse 1.5s infinite;
+        ">
+          ${this.escapeHtml(message)}
+        </div>
+      `;
+      this.subtitleContainer.style.display = 'block';
+
+      // 确保overlay也显示
+      if (this.overlayElement) {
+        this.overlayElement.style.display = '';
+      }
+
+      // 添加CSS动画（如果还没有）
+      if (!document.getElementById('subtitle-pulse-animation')) {
+        const style = document.createElement('style');
+        style.id = 'subtitle-pulse-animation';
+        style.textContent = `
+          @keyframes subtitlePulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+          }
+        `;
+        document.head.appendChild(style);
+      }
+
+      console.log('[SubtitleOverlay] 显示PENDING消息:', message);
     }
   }
 }

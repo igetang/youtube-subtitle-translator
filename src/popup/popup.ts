@@ -40,7 +40,7 @@ function getBaseLangCode(langCode: string): string {
  * 数字越小优先级越高
  */
 const COMMON_LANGUAGES_PRIORITY: Record<string, number> = {
-  'auto': 0,   // 自动检测 - 最高优先级
+  'auto': 0,   // 可选语言 - 最高优先级
   'zh-CN': 1,  // 中文简体
   'zh-TW': 2,  // 中文繁体
   'en': 3,     // 英语
@@ -662,7 +662,7 @@ function sortTrackData(trackData: any[], searchTerm: string = ''): any[] {
     .filter(track => matchTrackData(track, searchTerm).match) // 匹配→显示，不匹配→隐藏
     .sort((a, b) => {
       if (!searchTerm.trim()) {
-        // "自动检测"排在第一位，其他保持API原始顺序
+        // "可选语言"排在第一位，其他保持API原始顺序
         if (a.languageCode === 'auto') return -1;
         if (b.languageCode === 'auto') return 1;
         
@@ -1475,7 +1475,7 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
         // 首先添加"自动检测"选项
         {
           languageCode: 'auto',
-          languageName: '自动检测',
+          languageName: '可选语言',
           kind: 'auto'
         },
         // 然后添加实际的轨道数据
@@ -1485,7 +1485,7 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
           kind: track.kind || 'standard'
         }))
       ];
-      console.log('[popup] 源语言列表已获取（包含自动检测）:', uiTrackData);
+      console.log('[popup] 源语言列表已获取（包含可选语言）:', uiTrackData);
     }
     
     // 先加载用户之前选择的源语言，设置全局变量
@@ -1615,7 +1615,7 @@ function populateSourceLanguages(searchTerm: string = ''): void {
     console.log('[DEBUG] 排序后的 sortedTracks:', sortedTracks.map(t => `${t.languageCode}(${t.languageName})`));
     
     // 如果有搜索词但没有匹配结果，显示提示
-    if (sortedTracks.length === 0 && searchTerm.trim() && !('自动检测'.includes(searchTerm.trim()) || 'auto'.toLowerCase().includes(searchTerm.toLowerCase()))) {
+    if (sortedTracks.length === 0 && searchTerm.trim() && !('可选语言'.includes(searchTerm.trim()) || 'auto'.toLowerCase().includes(searchTerm.toLowerCase()))) {
       const noResultOption = document.createElement('div');
       noResultOption.className = 'custom-select-option disabled';
       noResultOption.textContent = `未找到匹配 "${searchTerm}" 的语言`;
@@ -1777,7 +1777,7 @@ function updateSourceLanguageDisplay(languageCode: string, trackKind: string): v
   let displayText: string;
   
   if (languageCode === 'auto') {
-    displayText = '自动检测';
+    displayText = '可选语言';
   } else {
     // 查找对应的轨道信息
     const trackInfo = uiTrackData.find(track => 

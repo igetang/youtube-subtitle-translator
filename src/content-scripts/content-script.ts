@@ -8,6 +8,8 @@ import { UIRenderer } from '@shared/components/ui-renderer';
 import { StateManager } from '@shared/components/state-manager';
 import { TranslateActiveState } from '@shared/types/runtime-state-types';
 import { subtitleOverlay } from './subtitle-overlay';
+import { StorageManager, StorageKeys } from '@shared/storage/storage-manager';
+import { UserPreferencesManager } from '@shared/storage/user-preferences-manager';
 
 // ==================== 初始化 ====================
 
@@ -876,6 +878,9 @@ async function initialize(): Promise<void> {
     // 启动视频切换检测
     startVideoChangeDetection();
 
+    // 设置源语言变更监听器
+    setupSourceLanguageChangeListener();
+
     isInitialized = true;
     // 保留最终初始化完成日志
     console.log('[content-script] ✅ 初始化完成');
@@ -1115,6 +1120,131 @@ if (document.readyState === 'loading') {
 }
 
 // 测试代码已移除（v3.0 无重试架构）
+
+// ==================== 源语言实时变更功能 ====================
+
+/**
+ * 设置源语言变更监听器
+ * 复用现有的StorageManager监听机制
+ */
+function setupSourceLanguageChangeListener(): void {
+  console.log('[content-script] 设置源语言变更监听器');
+
+  // 复用现有的StorageManager监听机制
+  StorageManager.getInstance().addChangeListener(
+    StorageKeys.VIDEO_SOURCE_LANGUAGE_CACHE,
+    handleSourceLanguageCacheChange
+  );
+}
+
+/**
+ * 处理源语言缓存变化
+ */
+async function handleSourceLanguageCacheChange(
+  changes: { [key: string]: chrome.storage.StorageChange },
+  area: string
+): Promise<void> {
+  if (area !== 'local') return;
+
+  // 获取变更数据
+  const change = changes[StorageKeys.VIDEO_SOURCE_LANGUAGE_CACHE];
+  if (!change) return;
+
+  const newCache = change.newValue;
+  const oldCache = change.oldValue;
+
+  // 复用现有的getVideoId()函数
+  const currentVideoId = getVideoId();
+  if (!currentVideoId) return;
+
+  // 查找当前视频的数据
+  const newVideoData = newCache?.items?.find((item: any) => item.videoId === currentVideoId);
+  const oldVideoData = oldCache?.items?.find((item: any) => item.videoId === currentVideoId);
+
+  // 检查源语言是否变化
+  if (newVideoData?.lastSelectedLanguage &&
+      newVideoData.lastSelectedLanguage !== oldVideoData?.lastSelectedLanguage) {
+
+    // 复用stateManager获取当前翻译状态
+    const translateState = stateManager?.getState('translateActive');
+    const isActive = translateState === TranslateActiveState.ACTIVE || translateState === 'active';
+
+    if (isActive) {
+      console.log('[content-script] 检测到源语言变更:', {
+        old: oldVideoData?.lastSelectedLanguage,
+        new: newVideoData.lastSelectedLanguage
+      });
+
+      // 处理源语言变更
+      await handleSourceLanguageChange(newVideoData.lastSelectedLanguage);
+    }
+  }
+}
+
+/**
+ * 处理源语言变更（最大化复用现有功能）
+ */
+async function handleSourceLanguageChange(newSourceLang: string): Promise<void> {
+  console.log('[content-script] 开始处理源语言变更:', newSourceLang);
+
+  try {
+    // 1. 复用hide()清除字幕，复用updateState设置PENDING
+    subtitleOverlay.hide();
+    stateManager?.updateState('translateActive', 'pending');
+
+    // 2. 使用新添加的showPendingMessage方法
+    subtitleOverlay.showPendingMessage('源语言切换，重新进行字幕翻译...');
+
+    // 3. 复用UserPreferencesManager获取偏好
+    const userPrefs = await UserPreferencesManager.getInstance().getUserPreferences();
+
+    // 4. 通过消息调用Service Worker的缓存检查
+    const cacheResponse = await chrome.runtime.sendMessage({
+      type: 'checkTranslationCache',
+      data: {
+        videoId: getVideoId(),
+        sourceLang: newSourceLang,
+        targetLang: userPrefs.targetLang,
+        service: userPrefs.translationService
+      }
+    });
+
+    if (cacheResponse.success && cacheResponse.data) {
+      // 5A. 有缓存：复用show()方法显示
+      console.log('[content-script] 使用缓存的翻译结果');
+      await subtitleOverlay.show(cacheResponse.data);
+      stateManager?.updateState('translateActive', 'active');
+    } else {
+      // 5B. 无缓存：复用现有的TOGGLE_TRANSLATE消息触发重新翻译
+      console.log('[content-script] 无缓存，触发重新翻译');
+
+      // 获取当前播放时间
+      const videoElement = document.querySelector('video');
+      const currentTime = videoElement ? videoElement.currentTime : 0;
+
+      const response = await chrome.runtime.sendMessage({
+        type: 'TOGGLE_TRANSLATE',
+        data: {
+          videoId: getVideoId(),
+          newState: true,  // 始终开启
+          currentTime: currentTime,
+          isRestart: true,  // 标识是重新翻译
+          sourceLang: newSourceLang  // 指定新的源语言
+        }
+      });
+
+      // 复用现有的响应处理
+      if (response.action === 'translated' || response.action === 'cached') {
+        displayTranslatedSubtitles(response.data);
+      }
+    }
+  } catch (error) {
+    console.error('[content-script] 处理源语言变更失败:', error);
+    // 恢复到非活动状态
+    stateManager?.updateState('translateActive', 'inactive');
+    subtitleOverlay.hide();
+  }
+}
 
 // 导出给测试使用
 export {

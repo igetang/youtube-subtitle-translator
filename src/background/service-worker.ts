@@ -18,6 +18,7 @@ import { StorageManager } from '../shared/storage/storage-manager';
 import { TranslationCacheManager } from '../shared/storage/translation-cache-manager';
 import { VideoSourceLanguageCacheManager } from '../shared/storage/video-source-language-cache-manager';
 import { extractOriginalSubtitles } from '../shared/utils/vtt-utils';
+import { SimplifiedCaptionTrack } from '../shared/types/subtitle-types';
 
 // === 批量翻译组件导入（基于07架构文档） ===
 import { TimeGapAnalyzer } from './components/time-gap-analyzer';
@@ -1987,8 +1988,42 @@ async function handleGetTranslationConfig(data: any): Promise<any> {
 }
 
 async function handleCheckTranslationCache(data: any): Promise<any> {
-  console.warn('[service-worker] ⚠️ handleCheckTranslationCache 尚未实现');
-  return { success: false, error: 'Function not implemented yet' };
+  try {
+    console.log('[service-worker] 检查翻译缓存', {
+      videoId: data.videoId,
+      sourceLang: data.sourceLang,
+      targetLang: data.targetLang,
+      service: data.service?.type
+    });
+
+    // 复用现有的translationCacheManager
+    const cachedData = await translationCacheManager.get(
+      data.videoId,
+      data.sourceLang,
+      data.targetLang,
+      data.service
+    );
+
+    if (cachedData) {
+      console.log('[service-worker] ✓ 找到翻译缓存');
+      return {
+        success: true,
+        data: cachedData
+      };
+    } else {
+      console.log('[service-worker] 翻译缓存未命中');
+      return {
+        success: false,
+        data: null
+      };
+    }
+  } catch (error) {
+    console.error('[service-worker] 检查翻译缓存失败:', error);
+    return {
+      success: false,
+      error: (error as Error).message || 'Cache check failed'
+    };
+  }
 }
 
 async function handleTranslateSubtitles(data: any): Promise<any> {
@@ -2253,6 +2288,13 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     let sourceKind: string | undefined;
 
     if (sourceData && sourceData.availableSourceLanguages && sourceData.availableSourceLanguages.length > 0) {
+      // 调试：检查lastSelectedLanguage的类型
+      console.log('[service-worker] Step 2 调试 - sourceData.lastSelectedLanguage:', {
+        value: sourceData.lastSelectedLanguage,
+        type: typeof sourceData.lastSelectedLanguage,
+        isObject: sourceData.lastSelectedLanguage && typeof sourceData.lastSelectedLanguage === 'object'
+      });
+
       // 使用智能选择函数
       const sourceTrack = selectBestSourceLanguage(
         sourceData.availableSourceLanguages,
@@ -2291,7 +2333,6 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     const cachedResult = await cacheManager.get(
       videoId,
       sourceLang,
-      sourceKind,
       preferences.targetLang,
       preferences.translationService
     );
@@ -2313,7 +2354,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     
     // Step 4: 查找相同源语言的原始字幕（P1级部分命中）
     console.log('[service-worker] Step 4: 查找可复用的原始字幕');
-    const partialCaches = await cacheManager.findByVideoAndSourceLang(videoId, sourceLang, sourceKind);
+    const partialCaches = await cacheManager.findByVideoAndSourceLang(videoId, sourceLang);
     
     if (partialCaches.length > 0) {
       console.log(`[service-worker] ✓ 找到${partialCaches.length}个相同源语言的缓存，复用原始字幕`);
@@ -2349,7 +2390,6 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
           await cacheManager.set({
             videoId,
             sourceLang,
-            sourceKind,
             targetLang: preferences.targetLang,
             translationService: preferences.translationService,
             availableSourceLanguages: partialCaches[0].availableSourceLanguages || [],
@@ -2428,6 +2468,13 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
             
             // Step 5.2: 选择最佳源语言
             if (sourceLang === 'auto') {
+              // 调试：检查lastSelectedLanguage的类型
+              console.log('[service-worker] Step 5.2 调试 - sourceData?.lastSelectedLanguage:', {
+                value: sourceData?.lastSelectedLanguage,
+                type: typeof sourceData?.lastSelectedLanguage,
+                isObject: sourceData?.lastSelectedLanguage && typeof sourceData?.lastSelectedLanguage === 'object'
+              });
+
               const sourceTrack = selectBestSourceLanguage(
                 trackResponse.tracks,
                 preferences.targetLang,
@@ -2645,7 +2692,8 @@ async function continueTranslationWithSubtitles(data: any): Promise<any> {
     
     // 优先使用传递的源语言，其次缓存，最后默认值
     let sourceLang = passedSourceLang || sourceData?.lastSelectedLanguage || 'auto';
-    
+    let sourceKind: string | undefined;
+
     // 记录源语言的来源
     if (passedSourceLang) {
       console.log(`[service-worker] 使用传递的源语言: ${passedSourceLang}`);
@@ -2693,13 +2741,20 @@ async function continueTranslationWithSubtitles(data: any): Promise<any> {
     
     // 保存到缓存
     const cacheManager = TranslationCacheManager.getInstance();
+    // 将TrackMetadata转换为SimplifiedCaptionTrack
+    const simplifiedTracks: SimplifiedCaptionTrack[] = (sourceData?.availableSourceLanguages || []).map(track => ({
+      baseUrl: '',  // 缓存中不需要baseUrl
+      languageCode: track.languageCode,
+      name: track.name,
+      kind: track.kind as 'asr' | 'forced' | undefined
+    }));
+
     await cacheManager.set({
       videoId,
       sourceLang,
-      sourceKind,
       targetLang: preferences.targetLang,
       translationService: preferences.translationService,
-      availableSourceLanguages: sourceData?.availableSourceLanguages || [],
+      availableSourceLanguages: simplifiedTracks,
       originalSubtitles: subtitles,
       translatedSubtitles: translatedResult.translatedSubtitles,
       lastUsed: Date.now(),
