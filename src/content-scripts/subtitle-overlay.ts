@@ -127,7 +127,6 @@ export class SubtitleOverlay {
    */
   public async show(translationData: any): Promise<void> {
     console.log('[SubtitleOverlay] 显示翻译字幕');
-    console.log('[DEBUG] show()被调用，调用栈:', new Error().stack);
 
     try {
       // 智能识别输入格式
@@ -339,7 +338,6 @@ export class SubtitleOverlay {
    * @param replaceAll 是否替换所有字幕（true用于紧急翻译，false用于渐进式更新）
    */
   public async updateTranslations(translatedSubtitles: SubtitleEntry[], replaceAll: boolean = false): Promise<void> {
-    console.log('[DEBUG] updateTranslations()被调用，replaceAll=' + replaceAll + '，调用栈:', new Error().stack);
     if (!translatedSubtitles || translatedSubtitles.length === 0) {
       return;
     }
