@@ -18,13 +18,16 @@ const TIMEOUT_CONFIG = {
 // 并发控制标志
 let isInitializing = false;
 
-// 🔧 简化后的消息转发器 - 使用标准消息机制
+// 🔧 统一的消息处理器 - 合并事件转发和业务逻辑处理
 class MainWorldMessenger {
   private static instance: MainWorldMessenger;
   private initTime: number;
+  private messageHandlers: Map<string, (data: any) => Promise<void> | void>;
 
   constructor() {
     this.initTime = Date.now();
+    this.messageHandlers = new Map();
+    this.registerBusinessHandlers();
   }
 
   static getInstance(): MainWorldMessenger {
@@ -32,6 +35,32 @@ class MainWorldMessenger {
       MainWorldMessenger.instance = new MainWorldMessenger();
     }
     return MainWorldMessenger.instance;
+  }
+
+  /**
+   * 注册业务处理器
+   */
+  private registerBusinessHandlers(): void {
+    // 注册字幕相关的业务处理器
+    this.messageHandlers.set('REQUEST_SUBTITLE_CAPTURE', (data) => this.handleSubtitleCapture(data));
+    this.messageHandlers.set('DESTROY_SUBTITLE_INTERCEPTOR', () => this.handleDestroyInterceptor());
+    this.messageHandlers.set('REQUEST_CAPTION_TRACKS', (data) => this.handleRequestCaptionTracks(data));
+    this.messageHandlers.set('GET_SUBTITLE_TRACKS_API', (data) => this.handleGetSubtitleTracksAPI(data));
+    this.messageHandlers.set('SET_SUBTITLE_TRACK_API', (data) => this.handleSetSubtitleTrackAPI(data));
+  }
+
+  /**
+   * 统一的消息处理入口
+   */
+  async handleMessage(type: string, data: any): Promise<void> {
+    const handler = this.messageHandlers.get(type);
+    if (handler) {
+      // 执行业务处理器
+      await handler(data);
+    } else {
+      // 默认转发行为（用于事件消息）
+      this.sendMessage(type, data);
+    }
   }
 
   /**
@@ -47,6 +76,154 @@ class MainWorldMessenger {
       }, '*');
     } catch (error) {
       console.error(`[MainWorldMessenger] 发送消息 "${messageType}" 时出错:`, error);
+    }
+  }
+
+  /**
+   * 发送响应消息（用于业务逻辑）
+   */
+  private sendResponse(type: string, payload?: any, requestId?: string): void {
+    const message: any = {
+      source: 'main-world',
+      type: type,
+      payload: payload
+    };
+    if (requestId) {
+      message._requestId = requestId;
+    }
+    window.postMessage(message, '*');
+  }
+
+  // ============ 业务处理器方法 ============
+
+  /**
+   * 处理字幕捕获请求
+   */
+  private handleSubtitleCapture(data: any): void {
+    console.log('[Main World] 收到字幕捕获请求');
+
+    const { sourceLang, sourceKind } = data;
+    console.log(`[Main World] 接收到源语言: ${sourceLang}, 字幕类型: ${sourceKind}`);
+
+    // 并发控制：防止重复初始化
+    if (!SubtitleInterceptor.isActive() && !isInitializing) {
+      isInitializing = true;
+
+      const interceptor = SubtitleInterceptor.getInstance();
+      const success = interceptor.initialize(sourceLang, sourceKind);
+
+      isInitializing = false;
+
+      if (success) {
+        console.log('[Main World] 初始化成功，触发字幕按钮');
+        interceptor.triggerSubtitleButton();
+      } else {
+        console.error('[Main World] 初始化失败');
+        // 发送失败消息
+        this.sendResponse('INTERCEPTOR_INIT_FAILED', { error: '初始化失败' });
+      }
+    } else {
+      console.log('[Main World] 拦截器已激活或正在初始化，跳过');
+    }
+  }
+
+  /**
+   * 处理销毁拦截器请求
+   */
+  private handleDestroyInterceptor(): void {
+    console.log('[Main World] 收到销毁拦截器请求');
+    const interceptor = SubtitleInterceptor.getInstance();
+    interceptor.destroy();
+
+    // 发送销毁确认
+    this.sendResponse('INTERCEPTOR_DESTROYED', {
+      success: true,
+      timestamp: Date.now()
+    });
+  }
+
+  /**
+   * 处理获取字幕轨道请求
+   */
+  private handleRequestCaptionTracks(data: any): void {
+    console.log('[Main World] 收到字幕轨道请求');
+    const requestId = data._requestId;
+
+    try {
+      const player = document.getElementById('movie_player');
+      if (player && typeof (player as any).getPlayerResponse === 'function') {
+        const playerResponse = (player as any).getPlayerResponse();
+        const captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+
+        if (captionTracks && captionTracks.length > 0) {
+          console.log(`[Main World] 从API获取到${captionTracks.length}条字幕轨道:`, captionTracks);
+        } else {
+          console.log('[Main World] API返回空的字幕轨道数据');
+        }
+
+        // 向content-script发送轨道数据
+        this.sendResponse('CAPTION_TRACKS_RESPONSE', {
+          captionTracks: captionTracks || null
+        }, requestId);
+
+      } else {
+        console.warn('[Main World] 未找到movie_player或getPlayerResponse函数');
+        this.sendResponse('CAPTION_TRACKS_RESPONSE', null, requestId);
+      }
+    } catch (error) {
+      console.error('[Main World] 访问getPlayerResponse时出错:', error);
+      this.sendResponse('CAPTION_TRACKS_RESPONSE', null, requestId);
+    }
+  }
+
+  /**
+   * 处理通过API获取字幕轨道
+   */
+  private async handleGetSubtitleTracksAPI(data: any): Promise<void> {
+    const requestId = data._requestId;
+    console.log('[Main World] 收到获取字幕轨道API请求');
+
+    // 初始化API控制器（如果还没有）
+    if (!subtitleAPIController) {
+      subtitleAPIController = new SubtitleAPIController();
+    }
+
+    try {
+      const tracks = await subtitleAPIController.getAvailableTracks();
+      this.sendResponse('SUBTITLE_TRACKS_API_RESPONSE', {
+        tracks: tracks,
+        success: true
+      }, requestId);
+    } catch (error: any) {
+      this.sendResponse('SUBTITLE_TRACKS_API_RESPONSE', {
+        success: false,
+        error: error.message
+      }, requestId);
+    }
+  }
+
+  /**
+   * 处理设置字幕语言
+   */
+  private async handleSetSubtitleTrackAPI(data: any): Promise<void> {
+    const { langCode, _requestId: requestId } = data;
+    console.log(`[Main World] 收到设置字幕语言API请求: ${langCode}`);
+
+    if (!subtitleAPIController) {
+      subtitleAPIController = new SubtitleAPIController();
+    }
+
+    try {
+      const success = await subtitleAPIController.setSubtitleTrack(langCode);
+      this.sendResponse('SET_SUBTITLE_TRACK_API_RESPONSE', {
+        success: success,
+        langCode: langCode
+      }, requestId);
+    } catch (error: any) {
+      this.sendResponse('SET_SUBTITLE_TRACK_API_RESPONSE', {
+        success: false,
+        error: error.message
+      }, requestId);
     }
   }
 }
@@ -564,13 +741,14 @@ try {
   
   console.log('[Main World] MainWorldMessenger实例已创建，时间戳:', timestamp);
   
-  // 通过闭包而不是全局变量来引用事件总线
-  const handleContentScriptMessage = (event: MessageEvent) => {
+  // 统一的消息监听器 - 处理所有来自content-script的消息
+  const handleContentScriptMessage = async (event: MessageEvent) => {
     if (event.source !== window) return;
     const { data } = event;
-    
-    // 处理来自content-script的消息发送请求
-    if (data && data.source === 'content-script-messenger' && data.type === 'SEND_MESSAGE') {
+    if (!data || typeof data !== 'object') return;
+
+    // 处理来自content-script-messenger的事件转发请求
+    if (data.source === 'content-script-messenger' && data.type === 'SEND_MESSAGE') {
       try {
         const { messageType, messageData } = data;
         if (messageType) {
@@ -581,205 +759,26 @@ try {
         console.error('[Main World] 处理content-script消息请求时出错:', e);
       }
     }
+
+    // 处理来自content-script的业务请求
+    if (data.source === 'content-script') {
+      const { type } = data;
+      if (type) {
+        console.log(`[Main World] 处理业务请求: ${type}`);
+        await messengerInstance.handleMessage(type, data);
+      }
+    }
   };
-  
-  // 添加消息监听器处理来自content-script的事件请求
+
+  // 只需要一个监听器处理所有消息
   window.addEventListener('message', handleContentScriptMessage);
   
   } catch (error) {
     console.error('[Main World] MainWorldMessenger初始化时出错:', error);
   }
 
-// 🔥 架构重构：移除ready消息机制，实现解耦设计
-// main-world脚本专注于页面交互，不需要向content-script发送就绪消息
-
-// 🔥 架构重构：移除立即发送就绪消息
-
-// 简化为一个监听器处理各种content-script请求
-window.addEventListener('message', (event: MessageEvent) => {
-  // 基本安全检查
-  if (event.source !== window) return;
-  const { data } = event;
-  if (!data || typeof data !== 'object') return;
-  
-  // 仅处理来自content-script的消息
-  if (data.source === 'content-script') {
-    const { type } = data;  // 解构出type属性，修复未定义错误
-    // 🔥 架构重构：移除就绪状态请求处理，不再需要ready消息机制
-    
-    // 处理字幕捕获请求
-    if (type === 'REQUEST_SUBTITLE_CAPTURE') {
-      console.log('[Main World] 收到字幕捕获请求');
-
-      // 提取sourceLang和sourceKind参数
-      const { sourceLang, sourceKind } = data;
-      console.log(`[Main World] 接收到源语言: ${sourceLang}, 字幕类型: ${sourceKind}`);
-
-      // 并发控制：防止重复初始化
-      if (!SubtitleInterceptor.isActive() && !isInitializing) {
-        isInitializing = true;
-
-        const interceptor = SubtitleInterceptor.getInstance();
-        const success = interceptor.initialize(sourceLang, sourceKind);
-
-        isInitializing = false;
-
-        if (success) {
-          console.log('[Main World] 初始化成功，触发字幕按钮');
-          interceptor.triggerSubtitleButton();
-        } else {
-          console.error('[Main World] 初始化失败');
-          // 发送失败消息
-          window.postMessage({
-            source: 'main-world',
-            type: 'INTERCEPTOR_INIT_FAILED',
-            payload: { error: '初始化失败' }
-          }, '*');
-        }
-      } else {
-        console.log('[Main World] 拦截器已激活或正在初始化，跳过');
-      }
-    }
-
-    // 处理拦截器销毁请求
-    if (type === 'DESTROY_SUBTITLE_INTERCEPTOR') {
-      console.log('[Main World] 收到销毁拦截器请求');
-      const interceptor = SubtitleInterceptor.getInstance();
-      interceptor.destroy();
-
-      // 发送销毁确认
-      window.postMessage({
-        source: 'main-world',
-        type: 'INTERCEPTOR_DESTROYED',
-        payload: {
-          success: true,
-          timestamp: Date.now()
-        }
-      }, '*');
-    }
-    
-    // 处理轨道请求
-    if (type === 'REQUEST_CAPTION_TRACKS') {
-      console.log('[Main World] 收到字幕轨道请求');
-      const requestId = data._requestId; // 🔧 新增：获取requestId
-      
-      try {
-        const player = document.getElementById('movie_player');
-        if (player && typeof (player as any).getPlayerResponse === 'function') {
-          const playerResponse = (player as any).getPlayerResponse();
-          const captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-
-          if (captionTracks && captionTracks.length > 0) {
-            console.log(`[Main World] 从API获取到${captionTracks.length}条字幕轨道:`, captionTracks);
-          } else {
-            console.log('[Main World] API返回空的字幕轨道数据');
-          }
-
-          // 向content-script发送轨道数据时携带requestId
-          window.postMessage({
-            source: 'main-world',
-            type: 'CAPTION_TRACKS_RESPONSE',
-            payload: {
-              captionTracks: captionTracks || null
-            },
-            _requestId: requestId  // 🔧 新增：携带相同的requestId
-          }, '*');
-
-        } else {
-          console.warn('[Main World] 未找到movie_player或getPlayerResponse函数');
-          window.postMessage({
-            source: 'main-world',
-            type: 'CAPTION_TRACKS_RESPONSE',
-            error: '找不到播放器或API',
-            _requestId: requestId  // 🔧 新增：错误时也携带requestId
-          }, '*');
-        }
-      } catch (error) {
-        console.error('[Main World] 访问getPlayerResponse时出错:', error);
-        window.postMessage({
-          source: 'main-world',
-            type: 'CAPTION_TRACKS_RESPONSE',
-          error: error instanceof Error ? error.message : '未知错误',
-          _requestId: requestId  // 🔧 新增：异常时也携带requestId
-        }, '*');
-      }
-    }
-    
-    // 方法1（REQUEST_SUBTITLE_DATA）已被移除
-    // 原因：主动API调用方式频繁失败，已完全迁移到方法2（字幕拦截器）
-    // 详见：/docs/guides/decision-log.md #23
-    
-    // 处理Player API字幕控制消息
-    if (type === 'GET_SUBTITLE_TRACKS_API') {
-      const requestId = data._requestId;
-      console.log('[Main World] 收到获取字幕轨道API请求');
-      
-      // 初始化API控制器（如果还没有）
-      if (!subtitleAPIController) {
-        subtitleAPIController = new SubtitleAPIController();
-      }
-      
-      // 获取可用轨道
-      subtitleAPIController.getAvailableTracks().then(tracks => {
-        window.postMessage({
-          source: 'main-world',
-          type: 'SUBTITLE_TRACKS_API_RESPONSE',
-          payload: {
-            tracks: tracks,
-            success: true
-          },
-          _requestId: requestId
-        }, '*');
-      }).catch(error => {
-        window.postMessage({
-          source: 'main-world',
-          type: 'SUBTITLE_TRACKS_API_RESPONSE',
-          payload: {
-            success: false,
-            error: error.message
-          },
-          _requestId: requestId
-        }, '*');
-      });
-    }
-    
-    // 处理设置字幕语言消息
-    if (type === 'SET_SUBTITLE_TRACK_API') {
-      const { langCode } = data;
-      const requestId = data._requestId;
-      console.log(`[Main World] 收到设置字幕语言API请求: ${langCode}`);
-      
-      // 初始化API控制器（如果还没有）
-      if (!subtitleAPIController) {
-        subtitleAPIController = new SubtitleAPIController();
-      }
-      
-      // 设置字幕语言（使用ISO 639-1标准）
-      subtitleAPIController.setSubtitleTrack(langCode).then(success => {
-        window.postMessage({
-          source: 'main-world',
-          type: 'SET_SUBTITLE_TRACK_API_RESPONSE',
-          payload: {
-            success: success,
-            langCode: langCode
-          },
-          _requestId: requestId
-        }, '*');
-      }).catch(error => {
-        window.postMessage({
-          source: 'main-world',
-          type: 'SET_SUBTITLE_TRACK_API_RESPONSE',
-          payload: {
-            success: false,
-            error: error.message
-          },
-          _requestId: requestId
-        }, '*');
-      });
-    }
-  }
-});
-
+// 🔥 架构重构：已将所有消息处理整合到MainWorldMessenger
+// 不再需要第二个监听器，所有消息通过统一的handleContentScriptMessage处理
 // 🔥 架构重构：移除页面加载就绪消息发送，简化架构
 window.addEventListener('load', () => {
   console.log('[Main World] 页面加载完成');

@@ -2103,7 +2103,7 @@ interface ToggleTranslateRequest {
  */
 interface ToggleTranslateResponse {
   success: boolean;
-  action: 'cached' | 'translated' | 'needFetch' | 'stopped' | 'error';
+  action: 'cached' | 'translated' | 'needFetch' | 'stopped' | 'error' | 'streamed';
   data?: any;
   message?: string;
   error?: string;

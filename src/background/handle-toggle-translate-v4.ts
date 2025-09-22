@@ -507,15 +507,9 @@ export async function handleToggleTranslateV4(
 
     return {
       success: true,
-      action: 'translated',
-      data: {
-        // 实时显示用数组格式 - 注意这里返回的是finalSubtitles
-        translatedSubtitles: finalSubtitles,  // SubtitleEntry[]格式
-        // 兼容旧代码
-        originalSubtitles: subtitleData.subtitles,
-        sourceLang,
-        targetLang: preferences.targetLang
-      }
+      action: 'streamed',  // V4架构标识：数据已通过TRANSLATION_UPDATE事件推送
+      message: '翻译已通过实时更新完成'
+      // 不返回data字段，避免重复处理
     };
     
   } catch (error: any) {

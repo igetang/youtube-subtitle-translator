@@ -336,6 +336,10 @@ async function toggleTranslation(): Promise<void> {
       case 'translated':
         displayTranslatedSubtitles(response.data);
         break;
+      case 'streamed':
+        // V4架构：数据已通过TRANSLATION_UPDATE事件推送，无需额外处理
+        console.log('[content-script] V4流式传输完成');
+        break;
       case 'needFetch':
         // Service Worker会自动发送REQUEST_SUBTITLE_CAPTURE，不需要重复发送
         // 遵循单一消息源原则：Service Worker控制，Content Script只响应
@@ -376,6 +380,7 @@ function requestSubtitleCapture(): void {
  * 显示翻译后的字幕
  */
 async function displayTranslatedSubtitles(data: any): Promise<void> {
+  console.log('[DEBUG] displayTranslatedSubtitles被调用，调用栈:', new Error().stack);
   // 移除冗余日志，show方法内部会打印
   await subtitleOverlay.show(data);
   // 状态更新由Background通过STATE_CHANGED消息统一管理，避免重复更新
@@ -499,6 +504,7 @@ function setupMessageHandlers(): void {
         if (updateType === 'urgent') {
           // 紧急翻译：立即替换显示
           console.log(`[content-script] 🚀 收到紧急翻译(${translatedSubtitles?.length || 0}条)，立即显示`);
+          console.log('[DEBUG] 紧急翻译调用updateTranslations，调用栈:', new Error().stack);
           subtitleOverlay.updateTranslations(translatedSubtitles, true);
         } else if (updateType === 'progressive') {
           // 批量翻译：完全覆盖紧急翻译
@@ -516,6 +522,7 @@ function setupMessageHandlers(): void {
           }
 
           // 批量翻译也使用完全覆盖模式
+          console.log('[DEBUG] 批量翻译调用updateTranslations，调用栈:', new Error().stack);
           subtitleOverlay.updateTranslations(translatedSubtitles, true);
         } else {
           console.log(`[content-script] 收到翻译更新: ${updateType}`);
