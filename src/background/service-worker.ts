@@ -2597,9 +2597,10 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
       console.log('[service-worker] Step 5.5: 触发字幕拦截器');
       await chrome.tabs.sendMessage(tabId, {
         type: 'REQUEST_SUBTITLE_CAPTURE',
-        data: { 
+        data: {
           videoId,
-          sourceLang // 传递选定的源语言
+          sourceLang, // 传递选定的源语言
+          sourceKind  // 传递字幕类型（手动/ASR）
         }
       }).catch(error => {
         console.log('[service-worker] 触发字幕拦截器失败:', error);

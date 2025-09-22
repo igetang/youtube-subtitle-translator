@@ -248,6 +248,8 @@ class SubtitleInterceptor {
   private capturedUrl: string | null = null;
   private isActive: boolean = false;  // 简化状态管理
   private destroyTimer: number | null = null;  // 超时保护
+  private targetSourceLang: string | null = null;  // 目标源语言
+  private targetSourceKind: string | null = null;  // 目标字幕类型（手动/asr）
 
   static getInstance(): SubtitleInterceptor {
     // 单例模式，确保全局只有一个实例
@@ -263,11 +265,16 @@ class SubtitleInterceptor {
   }
 
   // 初始化返回成功状态
-  initialize(): boolean {
+  initialize(sourceLang?: string, sourceKind?: string): boolean {
     if (this.isActive) {
       console.log('[SubtitleInterceptor] 拦截器已激活，跳过初始化');
       return true;
     }
+
+    // 保存目标参数
+    this.targetSourceLang = sourceLang || null;
+    this.targetSourceKind = sourceKind || null;
+    console.log(`[SubtitleInterceptor] 目标字幕: lang=${this.targetSourceLang}, kind=${this.targetSourceKind}`);
 
     try {
       console.log('[SubtitleInterceptor] 🚀 按需初始化拦截器...');
@@ -278,6 +285,7 @@ class SubtitleInterceptor {
       window.fetch = async function(...args) {
         const url = typeof args[0] === 'string' ? args[0] : (args[0] instanceof Request ? args[0].url : args[0]?.toString());
 
+        // 直接拦截所有timedtext请求，因为YouTube已经在请求我们通过API选定的字幕轨道
         if (url && url.includes('timedtext')) {
           console.log('[SubtitleInterceptor] 🎯 捕获到字幕URL (Fetch):', url);
           self.capturedUrl = url;
@@ -297,6 +305,7 @@ class SubtitleInterceptor {
       // 劫持XMLHttpRequest
       XMLHttpRequest.prototype.open = function(method: string, url: string | URL, async: boolean = true, username?: string | null, password?: string | null) {
         const urlString = url.toString();
+        // 直接拦截所有timedtext请求，因为YouTube已经在请求我们通过API选定的字幕轨道
         if (urlString && urlString.includes('timedtext')) {
           console.log('[SubtitleInterceptor] 🎯 捕获到字幕URL (XHR):', urlString);
           self.capturedUrl = urlString;
@@ -602,12 +611,16 @@ window.addEventListener('message', (event: MessageEvent) => {
     if (type === 'REQUEST_SUBTITLE_CAPTURE') {
       console.log('[Main World] 收到字幕捕获请求');
 
+      // 提取sourceLang和sourceKind参数
+      const { sourceLang, sourceKind } = data;
+      console.log(`[Main World] 接收到源语言: ${sourceLang}, 字幕类型: ${sourceKind}`);
+
       // 并发控制：防止重复初始化
       if (!SubtitleInterceptor.isActive() && !isInitializing) {
         isInitializing = true;
 
         const interceptor = SubtitleInterceptor.getInstance();
-        const success = interceptor.initialize();
+        const success = interceptor.initialize(sourceLang, sourceKind);
 
         isInitializing = false;
 

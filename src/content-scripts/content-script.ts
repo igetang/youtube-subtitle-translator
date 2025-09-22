@@ -454,13 +454,14 @@ function setupMessageHandlers(): void {
       // 保存源语言信息
       if (message.data?.sourceLang) {
         capturedSourceLang = message.data.sourceLang;
-        console.log(`[content-script] 保存源语言: ${capturedSourceLang}`);
+        console.log(`[content-script] 保存源语言: ${capturedSourceLang}, kind: ${message.data.sourceKind || '未指定'}`);
       }
       window.postMessage({
         source: 'content-script',
         type: 'REQUEST_SUBTITLE_CAPTURE',
         videoId: message.data?.videoId || getVideoId(),
-        sourceLang: message.data?.sourceLang // 传递给main-world
+        sourceLang: message.data?.sourceLang, // 传递给main-world
+        sourceKind: message.data?.sourceKind   // 传递字幕类型
       }, '*');
       sendResponse({ success: true });
       return false;
@@ -551,14 +552,20 @@ function setupMessageHandlers(): void {
     // 处理TRIGGER_SUBTITLE_LOAD消息 - 触发字幕加载
     if (messageType === 'TRIGGER_SUBTITLE_LOAD') {
       console.log('[content-script] 收到触发字幕加载请求');
-      
-      // 通知main-world开始捕获字幕
+
+      // 提取sourceLang和sourceKind参数
+      const { sourceLang, sourceKind } = message;
+      console.log(`[content-script] 收到源语言: ${sourceLang}, 字幕类型: ${sourceKind}`);
+
+      // 通知main-world开始捕获字幕，传递参数
       window.postMessage({
         source: 'content-script',
-        type: 'REQUEST_SUBTITLE_CAPTURE'
+        type: 'REQUEST_SUBTITLE_CAPTURE',
+        sourceLang: sourceLang,
+        sourceKind: sourceKind
       }, '*');
-      
-      console.log('[content-script] 已发送字幕捕获请求到main-world');
+
+      console.log('[content-script] 已发送字幕捕获请求到main-world（包含源语言参数）');
       sendResponse({ success: true });
       return false;
     }

@@ -1,3 +1,4 @@
 {
-    "chatgpt.openOnStartup": false
+    "chatgpt.openOnStartup": false,
+    "remote.autoForwardPortsFallback": 0
 }

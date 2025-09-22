@@ -127,15 +127,18 @@ export async function handleToggleTranslateV4(
     console.log('[service-worker-v4] → Stage 2: 获取源语言信息');
     const sourceData = await videoSourceLanguageCacheManager.get(videoId);
     let sourceLang = 'auto';
+    let sourceKind: string | undefined;
 
     // 如果有缓存的轨道信息，先尝试使用缓存选择源语言
     if (sourceData?.availableSourceLanguages?.length > 0) {
-      sourceLang = selectBestSourceLanguage(
+      const sourceTrack = selectBestSourceLanguage(
         sourceData.availableSourceLanguages,
         preferences.targetLang,
         sourceData.lastSelectedLanguage
       );
-      console.log(`[service-worker-v4] 使用缓存的轨道信息选择源语言: ${sourceLang}`);
+      sourceLang = sourceTrack.languageCode;
+      sourceKind = sourceTrack.kind;
+      console.log(`[service-worker-v4] 使用缓存的轨道信息选择源语言: ${sourceLang}${sourceKind === 'asr' ? ' (ASR)' : ''}`);
     }
 
     // 检查完整缓存（使用初步选择的源语言）
@@ -190,12 +193,14 @@ export async function handleToggleTranslateV4(
           console.log(`[service-worker-v4] 获取到 ${trackResponse.tracks.length} 条轨道信息`);
 
           // 使用智能选择算法选择最佳源语言
-          sourceLang = selectBestSourceLanguage(
+          const sourceTrack = selectBestSourceLanguage(
             trackResponse.tracks,
             preferences.targetLang,
             sourceData?.lastSelectedLanguage
           );
-          console.log(`[service-worker-v4] 智能选择源语言: ${sourceLang}`);
+          sourceLang = sourceTrack.languageCode;
+          sourceKind = sourceTrack.kind;
+          console.log(`[service-worker-v4] 智能选择源语言: ${sourceLang}${sourceKind === 'asr' ? ' (ASR)' : ''}`);
 
           // 通过Player API设置字幕语言
           if (sourceLang && sourceLang !== 'auto') {
@@ -257,7 +262,9 @@ export async function handleToggleTranslateV4(
       async (signal) => {
         console.log('[service-worker-v4] 触发字幕加载');
         await chrome.tabs.sendMessage(tabId, {
-          type: 'TRIGGER_SUBTITLE_LOAD'
+          type: 'TRIGGER_SUBTITLE_LOAD',
+          sourceLang: sourceLang,
+          sourceKind: sourceKind
         });
         return true;
       },
@@ -425,54 +432,17 @@ export async function handleToggleTranslateV4(
 
     // 批量翻译完成日志已在 TwoPhaseTranslatorV4 中打印
 
-    // 发送批量翻译结果到content-script更新显示
-    if (batchResults.length > 0) {
-      console.log('[service-worker-v4] → 发送批量翻译结果到前端更新');
-
-      // 构建批量翻译的字幕数据 - 统一为SubtitleEntry格式
-      const batchSubtitles = subtitleData.subtitles.map((sub: any, idx: number) => {
-        const result = batchResults.find(r => r.index === idx);
-        if (result) {
-          return {
-            start: sub.start,
-            duration: sub.end - sub.start,
-            text: sub.text,
-            translation: result.translatedText,
-            id: String(sub.start),
-            isUrgent: false  // 标记为批量翻译
-          };
-        }
-        return null;
-      }).filter(Boolean);  // 过滤掉null值
-
-      // 发送到content-script
-      try {
-        await chrome.tabs.sendMessage(tabId, {
-          type: 'TRANSLATION_UPDATE',
-          data: {
-            updateType: 'progressive',
-            translatedSubtitles: batchSubtitles  // SubtitleEntry[]格式
-          }
-        });
-        console.log(`[service-worker-v4] ✓ 已发送 ${batchSubtitles.length} 条批量翻译`);
-      } catch (err) {
-        console.error('[service-worker-v4] 发送批量翻译失败:', err);
-      }
-    }
-
-    // 合并结果
-    const allResults = [...urgentResults, ...batchResults];
-    
-    // 构建最终结果映射 - 统一格式为SubtitleEntry
-    const translatedSubtitles = subtitleData.subtitles.map((sub: any, idx: number) => {
-      const result = allResults.find(r => r.index === idx);
+    // ========== Stage 5: 构建和发送最终完整结果 ==========
+    // 构建完整字幕数据（基于批量翻译结果）
+    const finalSubtitles = subtitleData.subtitles.map((sub: any, idx: number) => {
+      const result = batchResults.find(r => r.index === idx);
       return {
         start: sub.start,
-        duration: sub.end - sub.start,  // 计算duration
-        text: sub.text,                 // 原文
-        translation: result?.translatedText || sub.text,  // 译文
-        id: String(sub.start),          // 使用start时间作为ID
-        isUrgent: false  // 最终结果全部标记为非紧急（白色），批量翻译完全覆盖
+        duration: sub.end - sub.start,
+        text: sub.text,
+        translation: result?.translatedText || sub.text,
+        id: String(sub.start),
+        isUrgent: false  // 全部标记为非紧急（白色显示）
       };
     });
 
@@ -486,9 +456,9 @@ export async function handleToggleTranslateV4(
       }))
     );
 
-    // 为缓存准备VTT格式（翻译字幕）
+    // 为缓存准备VTT格式（翻译字幕）- 基于finalSubtitles
     const translatedVtt = createVttString(
-      translatedSubtitles.map(sub => ({
+      finalSubtitles.map(sub => ({
         start: sub.start,
         duration: sub.duration,
         text: sub.translation || sub.text,
@@ -496,31 +466,11 @@ export async function handleToggleTranslateV4(
       }))
     );
 
-    // ========== Stage 5: 发送最终完整结果 ==========
-    // 批量翻译完成后，发送完整的翻译结果（全部为白色）
+    // 批量翻译完成后，发送完整的翻译结果（完全覆盖紧急翻译）
     if (batchResults.length > 0) {
-      console.log('[service-worker-v4] → 发送最终完整翻译结果');
-      const finalSubtitles = subtitleData.subtitles.map((sub: any, idx: number) => {
-        const result = allResults.find(r => r.index === idx);
-        return {
-          start: sub.start,
-          duration: sub.end - sub.start,
-          text: sub.text,
-          translation: result?.translatedText || sub.text,
-          id: String(sub.start),
-          isUrgent: false  // 最终结果全部标记为非紧急（白色）
-        };
-      });
+      console.log('[service-worker-v4] → 发送批量翻译完整结果（完全覆盖）');
 
       try {
-        // 调试：检查最终字幕的isUrgent标记
-        const urgentCount = finalSubtitles.filter(s => s.isUrgent === true).length;
-        console.log(`[service-worker-v4] 🔍 最终字幕isUrgent检查: ${urgentCount}/${finalSubtitles.length} 条标记为紧急`);
-        if (urgentCount > 0) {
-          console.warn('[service-worker-v4] ⚠️ 警告：最终字幕中仍有紧急标记！前3条示例:',
-            finalSubtitles.slice(0, 3).map(s => ({ start: s.start, isUrgent: s.isUrgent })));
-        }
-
         await chrome.tabs.sendMessage(tabId, {
           type: 'TRANSLATION_UPDATE',
           data: {
@@ -528,20 +478,13 @@ export async function handleToggleTranslateV4(
             translatedSubtitles: finalSubtitles  // 完整的字幕列表
           }
         });
-        console.log(`[service-worker-v4] ✓ 已发送最终完整翻译 ${finalSubtitles.length} 条（全部白色）`);
+        console.log(`[service-worker-v4] ✓ 已发送批量翻译 ${finalSubtitles.length} 条（完全覆盖紧急翻译）`);
       } catch (err) {
-        console.error('[service-worker-v4] 发送最终翻译失败:', err);
+        console.error('[service-worker-v4] 发送批量翻译失败:', err);
       }
+    } else {
+      console.log('[service-worker-v4] ⚠️ 批量翻译结果为空，使用紧急翻译结果');
     }
-
-    // ========== Stage 6: 完成 ==========
-    console.log('[service-worker-v4] → 设置状态为 ACTIVE');
-    await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
-    session.complete();
-
-    // 通知UI
-    console.log('[service-worker-v4] → 通知UI状态变更: ACTIVE');
-    await notifyStateChange(tabId, 'translateActive', TranslateActiveState.ACTIVE);
 
     // 异步保存缓存（使用VTT格式）
     saveTranslationCacheAsync(
@@ -553,12 +496,21 @@ export async function handleToggleTranslateV4(
       translationCacheManager
     );
 
+    // ========== Stage 6: 完成 ==========
+    console.log('[service-worker-v4] → 设置状态为 ACTIVE');
+    await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
+    session.complete();
+
+    // 通知UI
+    console.log('[service-worker-v4] → 通知UI状态变更: ACTIVE');
+    await notifyStateChange(tabId, 'translateActive', TranslateActiveState.ACTIVE);
+
     return {
       success: true,
       action: 'translated',
       data: {
-        // 实时显示用数组格式
-        translatedSubtitles: translatedSubtitles,  // SubtitleEntry[]格式
+        // 实时显示用数组格式 - 注意这里返回的是finalSubtitles
+        translatedSubtitles: finalSubtitles,  // SubtitleEntry[]格式
         // 兼容旧代码
         originalSubtitles: subtitleData.subtitles,
         sourceLang,

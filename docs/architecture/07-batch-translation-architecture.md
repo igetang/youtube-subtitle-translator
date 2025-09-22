@@ -335,86 +335,105 @@ class IntelligentSegmenter {
 40条全部发送
 ```
 
-### 3.3 两阶段翻译策略（并行执行版）
+### 3.3 两阶段翻译策略（完全覆盖版 - 2025-09更新）
+
+#### 设计理念
+- **紧急翻译**：快速显示，让用户先看到部分翻译（300ms内）
+- **批量翻译**：完整翻译全部字幕，完成后一次性覆盖紧急翻译
+- **无需合并**：批量翻译结果直接覆盖，简化逻辑
+- **并行执行**：紧急翻译完成后立即开始批量翻译，不等待
 
 ```javascript
 class TwoPhaseTranslator {
-  private isComplete = false;               // 批量翻译完成标志
-  private urgentCoverageComplete = false;   // 紧急翻译覆盖全部标志
-  
+
   async translateVideo(allSubtitles, currentIndex) {
-    // 重置标志
-    this.isComplete = false;
-    this.urgentCoverageComplete = false;
-    
-    // 并行执行两个阶段
-    const [urgentResult, batchResult] = await Promise.allSettled([
-      this.executeUrgentTranslation(allSubtitles, currentIndex),
-      this.executeBatchTranslation(allSubtitles, currentIndex)
-    ]);
-    
-    return { urgentResult, batchResult };
+    // Phase 1: 紧急翻译（前9后30）
+    const urgentResults = await this.executeUrgentTranslation(allSubtitles, currentIndex);
+
+    // Phase 2: 立即开始批量翻译（不等待）
+    // 注：5秒延迟仅用于调试观察，生产环境已移除
+    const batchResults = await this.executeBatchTranslation(allSubtitles);
+
+    // Phase 3: 批量完成后一次性覆盖
+    await this.sendCompletedTranslation(batchResults, allSubtitles);
+
+    return { urgentResults, batchResults };
   }
-  
+
   async executeUrgentTranslation(allSubtitles, currentIndex) {
-    // 计算紧急翻译范围：前9后30，共40条
+    // 计算紧急翻译范围：前9后30，共约40条
     const urgentStart = Math.max(0, currentIndex - 9);
     const urgentEnd = Math.min(allSubtitles.length, currentIndex + 31);
     const urgentBatch = allSubtitles.slice(urgentStart, urgentEnd);
-    
-    // 判断是否覆盖全部字幕
-    if (urgentBatch.length === allSubtitles.length) {
-      this.urgentCoverageComplete = true;
-      console.log('[紧急翻译] 已覆盖全部字幕，批量翻译将跳过');
-    }
-    
+
     // 执行翻译
     const results = await this.translateBatch(urgentBatch);
-    
-    // 显示逻辑：检查批量翻译是否已完成
-    if (!this.isComplete) {
-      this.displayResults(results);
-      console.log('[紧急翻译] 显示结果');
-    } else {
-      console.log('[紧急翻译] 批量已完成，忽略紧急结果');
-    }
-    
+
+    // 立即发送显示
+    await this.sendTranslation(results, 'urgent');
+    console.log(`[紧急翻译] 已发送 ${results.length} 条`);
+
     return results;
   }
-  
-  async executeBatchTranslation(allSubtitles, currentIndex) {
-    // 前置判断：是否需要执行批量翻译
-    if (this.urgentCoverageComplete) {
-      console.log('[批量翻译] 跳过：紧急翻译已覆盖全部');
-      this.isComplete = true;
-      return null;
-    }
-    
+
+  async executeBatchTranslation(allSubtitles) {
+    // 批量翻译全部字幕（包括之前紧急翻译过的）
+    // 理由：1. 获得更好的上下文 2. 提升翻译质量 3. 保持一致性
+
     // 使用智能断句创建批次
     const batches = this.createSmartBatches(allSubtitles);
-    const results = new Map();
-    
-    // 顺序执行批次，每批延迟200ms
+    const results = [];
+
+    console.log(`[批量翻译] 开始翻译 ${allSubtitles.length} 条，分 ${batches.length} 批`);
+
+    // 顺序执行批次，每批前都延迟200ms（包括第一批）
     for (let i = 0; i < batches.length; i++) {
-      if (i > 0) {
-        await this.delay(200);  // 防止API限流
-      }
-      
+      // 每批次前延迟200ms，防止API限流
+      await this.delay(200);
+
       const batch = batches[i];
-      const translated = await this.translateBatch(batch);
-      
+      const translated = await this.translateBatch(batch.subtitles);
+
       // 存储结果
       translated.forEach((text, idx) => {
-        results.set(batch.startIdx + idx, text);
+        results.push({
+          index: batch.startIdx + idx,
+          originalText: batch.subtitles[idx].text,
+          translatedText: text,
+          isUrgent: false
+        });
       });
+
+      console.log(`[批量翻译] 完成批次 ${i+1}/${batches.length}`);
     }
-    
-    // 标记完成并覆盖显示
-    this.isComplete = true;
-    this.displayResults(results);
-    console.log('[批量翻译] 完成，覆盖所有内容');
-    
+
     return results;
+  }
+
+  async sendCompletedTranslation(batchResults, allSubtitles) {
+    // 构建完整字幕数据（基于批量翻译结果）
+    const finalSubtitles = allSubtitles.map((sub, idx) => {
+      const result = batchResults.find(r => r.index === idx);
+      return {
+        start: sub.start,
+        duration: sub.end - sub.start,
+        text: sub.text,
+        translation: result?.translatedText || sub.text,
+        id: String(sub.start),
+        isUrgent: false  // 全部标记为非紧急（白色显示）
+      };
+    });
+
+    // 一次性发送，完全覆盖紧急翻译
+    await chrome.tabs.sendMessage(tabId, {
+      type: 'TRANSLATION_UPDATE',
+      data: {
+        updateType: 'complete',  // 完整覆盖类型
+        translatedSubtitles: finalSubtitles
+      }
+    });
+
+    console.log(`[批量翻译] 已发送 ${finalSubtitles.length} 条（完全覆盖紧急翻译）`);
   }
   
   createSmartBatches(allSubtitles) {

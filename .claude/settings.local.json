@@ -17,5 +17,11 @@
       "Bash(git commit:*)"
     ],
     "deny": []
-  }
+  },
+  "enabledMcpjsonServers": [
+    "context7",
+    "browsermcp",
+    "playwright",
+    "spec-workflow"
+  ]
 }

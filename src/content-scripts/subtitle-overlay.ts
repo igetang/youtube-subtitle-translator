@@ -28,6 +28,7 @@ export class SubtitleOverlay {
   private isActive: boolean = false;
   private currentLanguageMode: 'bilingual' | 'targetOnly' = 'bilingual';
   private userPreferencesManager: UserPreferencesManager;
+  private isUrgentTranslation: boolean = false;
 
   constructor() {
     console.log('[SubtitleOverlay] 初始化字幕显示层');
@@ -238,12 +239,6 @@ export class SubtitleOverlay {
       // 批量翻译：与原文相同的白色 (#ffffff) - 新的样式
       const translationColor = currentSubtitle.isUrgent ? '#ffeb3b' : '#ffffff';
 
-      // 调试：首次显示某条字幕时，输出其isUrgent状态
-      if (!(currentSubtitle as any)._debugShown) {
-        console.log(`[SubtitleOverlay] 🎬 显示字幕 [${currentSubtitle.start.toFixed(1)}s]: isUrgent=${currentSubtitle.isUrgent}, 颜色=${translationColor}`);
-        (currentSubtitle as any)._debugShown = true;
-      }
-      
       if (this.currentLanguageMode === 'bilingual') {
         // 双语模式：显示原文和译文
         subtitleHTML = `
@@ -377,7 +372,6 @@ export class SubtitleOverlay {
           isUrgent: true
         }));
         this.isUrgentTranslation = true;
-        console.log('[SubtitleOverlay] 紧急翻译模式，黄色显示');
       } else {
         // 批量翻译：全部标记为白色
         this.currentSubtitles = translatedSubtitles.map(sub => ({
@@ -385,15 +379,6 @@ export class SubtitleOverlay {
           isUrgent: false
         }));
         this.isUrgentTranslation = false;
-
-        // 调试：验证设置后的isUrgent状态
-        const urgentAfter = this.currentSubtitles.filter(s => s.isUrgent === true).length;
-        console.log('[SubtitleOverlay] 批量翻译完全覆盖，白色显示');
-        console.log(`[SubtitleOverlay] 🔍 设置后isUrgent检查: ${urgentAfter}/${this.currentSubtitles.length} 条标记为紧急`);
-        if (urgentAfter > 0) {
-          console.warn('[SubtitleOverlay] ⚠️ 警告：设置后仍有紧急标记！前3条:',
-            this.currentSubtitles.slice(0, 3).map(s => ({ start: s.start, isUrgent: s.isUrgent })));
-        }
       }
     } else {
       // 渐进式更新：合并新翻译

@@ -1,0 +1,16 @@
+{
+  "sandbox_mode": "workspace-write",
+  "network_access": "enabled",
+  "approval_policy": "on-request",
+  "mcpServers": {
+    "spec-workflow": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@pimzino/spec-workflow-mcp@latest",
+        "/home/k/chrome-9.15",
+        "--AutoStartDashboard"
+      ]
+    }
+  }
+}
