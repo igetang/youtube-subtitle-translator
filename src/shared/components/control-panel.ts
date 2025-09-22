@@ -108,7 +108,6 @@ export class ControlPanel {
       RuntimeStateChangeEvent.TRANSLATE_ACTIVE_CHANGED,
       (newValue, oldValue) => {
         this.handleTranslateActiveChanged(newValue, oldValue);
-        console.log('[control-panel] 状态变更: translateActive [', oldValue, '→', newValue, ']');
       }
     );
     

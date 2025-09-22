@@ -40,8 +40,7 @@ export class RuntimeStateManager {
     
     // 添加存储变更监听器
     this.setupStorageListener();
-  }
-
+}
   /**
    * 获取单例实例
    */
@@ -50,7 +49,7 @@ export class RuntimeStateManager {
       RuntimeStateManager.instance = new RuntimeStateManager();
     }
     return RuntimeStateManager.instance;
-  }
+}
 
   /**
    * 设置存储变更监听器
@@ -72,10 +71,10 @@ export class RuntimeStateManager {
               console.warn('[runtime-state-manager] 存储监听器检测到布尔值，进行转换:', newValue);
               newValue = newValue ? TranslateActiveState.ACTIVE : TranslateActiveState.INACTIVE;
             }
-            
+
             // 更新运行时缓存
             (this.runtimeCache as any)[stateKey] = newValue;
-            
+
             // 触发变更事件
             this.triggerChangeEvent(stateKey, newValue, change.oldValue);
           }
@@ -144,7 +143,10 @@ export class RuntimeStateManager {
     if (!this.changeHandlers.has(event)) {
       this.changeHandlers.set(event, new Set());
     }
-    this.changeHandlers.get(event)!.add(handler);
+    const currentHandlers = this.changeHandlers.get(event)!;
+    currentHandlers.add(handler);
+
+    this.changeHandlers.set(event, currentHandlers);
   }
 
   /**
@@ -319,9 +321,6 @@ export class RuntimeStateManager {
     
     // 批量保存到存储
     await this.storageManager.setBatch(storageData, RUNTIME_STATE_CONFIG.STORAGE_AREA);
-    
-    console.log(`[runtime-state-manager] ✓ 保存到${RUNTIME_STATE_CONFIG.STORAGE_AREA}:`, storageData);
-    
     // 更新运行时缓存
     this.runtimeCache = { ...state };
   }
@@ -385,26 +384,27 @@ export class RuntimeStateManager {
     if (!this.initialized) {
       await this.initialize();
     }
-    
-    // 检查状态转换是否合法
-    const currentState = await this.getTranslateState();
-    if (!TranslateStateHelper.canTransition(currentState, state)) {
-      console.warn(`[runtime-state-manager] 非法的状态转换: ${currentState} -> ${state}`);
-      return;
-    }
-    
+
+    // 检查缓存（先检查缓存，防止并发）
     if (this.runtimeCache.translateActive === state) {
       return; // 值未变化，无需保存
     }
-    
-    // 更新运行时缓存
+
+    // 获取当前状态（用于日志）
+    const currentState = this.runtimeCache.translateActive || DEFAULT_RUNTIME_STATE.translateActive;
+
+    // 检查状态转换是否合法
+    if (!TranslateStateHelper.canTransition(currentState, state)) {
+      console.warn(`[RSM] 非法的状态转换: ${currentState} -> ${state}`);
+      return;
+    }
+
+    // 立即更新运行时缓存
     this.runtimeCache.translateActive = state;
-    
+
     // 获取完整的状态并保存
     const fullState = await this.getAllState();
     await this.saveToStorage(fullState);
-    
-    console.log(`[runtime-state-manager] 状态变更: translateActive [${currentState} → ${state}]`);
   }
 
   /**
@@ -491,4 +491,4 @@ export class RuntimeStateManager {
     }
     return { ...this.runtimeCache };
   }
-} 
+}

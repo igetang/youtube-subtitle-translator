@@ -28,6 +28,11 @@
 - 修复位置：`src/background/handle-toggle-translate-v4.ts` 第151-234行
 - 符合架构文档：`docs/architecture/01-design-principles.md` 3.3.1节
 
+**✅ 已修复：translateActive 状态日志重复打印**
+- 问题原因：StorageManager 为 local/sync/session 重复注册 `chrome.storage.onChanged`，一次写入触发三次回调
+- 解决方案：监听回调按 `areaName` 过滤，仅分发来源区域事件
+- 影响范围：后台 translateActive 状态事件恢复单次触发，避免重复日志
+
 ### 之前修复的Bug (2025-09-11)
 **✅ 已修复：Google免费翻译只翻译第一句**
 - 问题原因：Google API在翻译长文本时会插入换行符，使用`\n`作为分隔符导致错误分割（3条变22条）

@@ -503,7 +503,6 @@ export class UIManager {
         // 🚀 使用统一状态刷新机制，一次获取所有状态
         await this.refreshAllStates();
         
-        console.log(`[ui-manager] ✓ 导航状态刷新完成: isVideoPage=${this.state.isVideoPage}, translateActive=${this.state.translateActive}, popupOpen=${this.state.popupOpen}`);
       } catch (error) {
         console.error('[ui-manager] 页面导航状态刷新失败:', error);
         // 设置默认状态
@@ -1198,7 +1197,6 @@ export class UIManager {
       // 如果翻译已激活，触发翻译开始事件
       // 🔧 修复：使用 isActiveState 方法正确判断翻译状态
       if (this.isActiveState(this.state.translateActive)) {
-        console.log(`[ui-manager] 翻译状态已激活(${this.state.translateActive})，自动开始翻译`);
         // ✅ 发送翻译开始请求
         if (this.messageBus) {
           this.messageBus.sendMessage({
@@ -1207,7 +1205,6 @@ export class UIManager {
           });
         }
       } else {
-        console.log(`[ui-manager] 翻译状态未激活(${this.state.translateActive})，不自动开始翻译`);
       }
       
       // Popup会在用户点击时打开，不需要自动打开逻辑

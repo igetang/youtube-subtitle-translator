@@ -17,6 +17,11 @@
   - 新增Stage 3轨道获取流程
   - 修正消息类型名称大小写问题
   - 集成智能源语言选择算法
+- **修复`translateActive`状态日志重复**：
+  - 问题：单次状态写入在后台打印三条`translateActiveChanged`
+  - 原因：`StorageManager`按`local/sync/session`重复注册`chrome.storage.onChanged`
+  - 修复：监听回调按`areaName`过滤，仅分发来源区域事件
+  - 影响：后台日志恢复单次输出，避免重复触发下游逻辑
 
 ### 🔧 **环境兼容性** (Compatibility)
 - **项目迁移适配**：从macOS迁移到Windows 11 WSL2 Ubuntu

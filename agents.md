@@ -67,3 +67,6 @@
 ## 10. Updating This Brief
 - Update this file whenever architecture shifts, message contracts change, or new workflows are introduced.
 - Keep sections concise; the goal is a 2-minute read that enables Codex to contribute safely and effectively each session.
+
+## 11. Environment Customizations
+- 本会话调整了`.claude/settings.local.json` 与 `.vscode/settings.json` 以适配本地工具提示，这些改动仅用于本地环境，提交代码时保持不纳入版本控制。

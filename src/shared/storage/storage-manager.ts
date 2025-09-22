@@ -144,7 +144,11 @@ export class StorageManager {
     
     areas.forEach(area => {
       const listener = (changes: { [key: string]: chrome.storage.StorageChange }, areaName: string) => {
-        this.notifyChangeHandlers(changes, areaName as StorageArea);
+        if (areaName !== area) {
+          return;
+        }
+
+        this.notifyChangeHandlers(changes, area);
       };
       
       chrome.storage.onChanged.addListener(listener);
@@ -474,4 +478,4 @@ export class StorageManager {
     
     return result as Record<StorageArea, StorageQuotaInfo>;
   }
-} 
+}
