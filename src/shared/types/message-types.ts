@@ -656,6 +656,8 @@ export interface MessageSendResult<T = any> {
 export interface ToggleTranslateRequest {
   videoId: string;
   newState: boolean;
+  currentTime?: number;
+  originalSubtitleState?: boolean;
 }
 
 /**

@@ -305,12 +305,17 @@ async function toggleTranslation(): Promise<void> {
     console.error('[content-script] 无法获取视频ID');
     return;
   }
-  
+
+  // 在任何操作之前，先记录字幕按钮的原始状态
+  const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
+  const originalSubtitleState = subtitleBtn?.getAttribute('aria-pressed') === 'true';
+  console.log(`[content-script] 翻译开始前，字幕按钮原始状态: ${originalSubtitleState ? '开启' : '关闭'}`);
+
   // 立即设置为PENDING状态，提供即时反馈
   if (isEnabling) {
     stateManager?.updateState('translateActive', 'pending');
   }
-  
+
   // 获取当前播放时间
   let currentTime = 0;
   const videoElement = document.querySelector('video');
@@ -318,14 +323,15 @@ async function toggleTranslation(): Promise<void> {
     currentTime = videoElement.currentTime;
     console.log(`[content-script] 当前播放时间: ${currentTime}s`);
   }
-  
+
   try {
     const response = await chrome.runtime.sendMessage({
       type: 'TOGGLE_TRANSLATE',
       data: {
         videoId: videoId,
         newState: isEnabling,
-        currentTime: currentTime  // 添加当前播放时间
+        currentTime: currentTime,  // 添加当前播放时间
+        originalSubtitleState: originalSubtitleState  // 传递原始状态
       }
     });
     
@@ -452,7 +458,7 @@ function setupMessageHandlers(): void {
 
     const messageType = message.type;
 
-    // 处理REQUEST_SUBTITLE_CAPTURE消息
+    // 处理REQUEST_SUBTITLE_CAPTURE消息（旧路径，保留兼容）
     if (messageType === 'REQUEST_SUBTITLE_CAPTURE') {
       console.log(`[content-script] 收到Chrome消息: ${messageType}`);
       // 保存源语言信息
@@ -461,10 +467,15 @@ function setupMessageHandlers(): void {
         console.log(`[content-script] 保存源语言: ${capturedSourceLang}, kind: ${message.data.sourceKind || '未指定'}`);
       }
 
-      // 记录当前字幕按钮状态
-      const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
-      const originalSubtitleState = subtitleBtn?.getAttribute('aria-pressed') === 'true';
-      console.log(`[content-script] 记录字幕按钮原始状态: ${originalSubtitleState ? '开启' : '关闭'}`);
+      // 优先使用传递的状态，没有则读取当前状态（兼容旧代码）
+      let originalSubtitleState = message.data?.originalSubtitleState;
+      if (originalSubtitleState === undefined) {
+        const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
+        originalSubtitleState = subtitleBtn?.getAttribute('aria-pressed') === 'true';
+        console.log(`[content-script] (兼容模式)读取字幕按钮当前状态: ${originalSubtitleState ? '开启' : '关闭'}`);
+      } else {
+        console.log(`[content-script] 使用传递的字幕按钮原始状态: ${originalSubtitleState ? '开启' : '关闭'}`);
+      }
 
       window.postMessage({
         source: 'content-script',
@@ -564,14 +575,19 @@ function setupMessageHandlers(): void {
     if (messageType === 'TRIGGER_SUBTITLE_LOAD') {
       console.log('[content-script] 收到触发字幕加载请求');
 
-      // 提取sourceLang和sourceKind参数
-      const { sourceLang, sourceKind } = message;
+      // 提取sourceLang、sourceKind和originalSubtitleState参数
+      const { sourceLang, sourceKind, originalSubtitleState } = message;
       console.log(`[content-script] 收到源语言: ${sourceLang}, 字幕类型: ${sourceKind}`);
 
-      // 记录当前字幕按钮状态
-      const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
-      const originalSubtitleState = subtitleBtn?.getAttribute('aria-pressed') === 'true';
-      console.log(`[content-script] 记录字幕按钮原始状态: ${originalSubtitleState ? '开启' : '关闭'}`);
+      // 使用传递过来的原始状态，而不是重新读取
+      if (originalSubtitleState !== undefined) {
+        console.log(`[content-script] 使用传递的字幕按钮原始状态: ${originalSubtitleState ? '开启' : '关闭'}`);
+      } else {
+        // 兜底：如果没有传递状态，才读取当前状态
+        const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
+        const currentState = subtitleBtn?.getAttribute('aria-pressed') === 'true';
+        console.log(`[content-script] 未传递原始状态，读取当前状态: ${currentState ? '开启' : '关闭'}`);
+      }
 
       // 通知main-world开始捕获字幕，传递参数
       window.postMessage({

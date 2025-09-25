@@ -62,7 +62,7 @@ export async function handleToggleTranslateV4(
     notifyStateChange
   } = dependencies;
   
-  const { videoId, newState } = data;
+  const { videoId, newState, originalSubtitleState } = data;
   const tabId = sender.tab?.id;
   
   if (!tabId) {
@@ -264,7 +264,8 @@ export async function handleToggleTranslateV4(
         await chrome.tabs.sendMessage(tabId, {
           type: 'TRIGGER_SUBTITLE_LOAD',
           sourceLang: sourceLang,
-          sourceKind: sourceKind
+          sourceKind: sourceKind,
+          originalSubtitleState: originalSubtitleState  // 传递原始状态
         });
         return true;
       },
