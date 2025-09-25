@@ -30,6 +30,10 @@ export class SubtitleOverlay {
   private userPreferencesManager: UserPreferencesManager;
   private isUrgentTranslation: boolean = false;
 
+  // 响应式字幕相关属性
+  private playerObserver: ResizeObserver | null = null;
+  private playerElement: HTMLElement | null = null;
+
   constructor() {
     console.log('[SubtitleOverlay] 初始化字幕显示层');
     this.userPreferencesManager = UserPreferencesManager.getInstance();
@@ -67,10 +71,16 @@ export class SubtitleOverlay {
       console.error('[SubtitleOverlay] 未找到视频元素');
       return;
     }
-    
+
+    // 查找播放器元素
+    this.findPlayerElement();
+
     // 创建字幕覆盖层
     this.createOverlay();
-    
+
+    // 设置响应式监听
+    this.setupResponsiveObserver();
+
     // 开始监听视频播放
     this.startTimeUpdate();
   }
@@ -87,6 +97,11 @@ export class SubtitleOverlay {
     // 创建覆盖层容器
     this.overlayElement = document.createElement('div');
     this.overlayElement.id = 'youtube-subtitle-overlay';
+    // 初始化默认值
+    const defaultWidth = 1280;
+    const defaultFontSize = defaultWidth * 0.025;  // 32px
+    const defaultFontSizeSmall = defaultWidth * 0.0225;  // 28.8px
+
     this.overlayElement.style.cssText = `
       position: absolute;
       bottom: 140px;
@@ -95,8 +110,13 @@ export class SubtitleOverlay {
       z-index: 2100;
       pointer-events: none;
       width: 90%;
-      max-width: 800px;
       text-align: center;
+      --subtitle-base-ratio: 2.5;
+      --subtitle-min-size: 10px;       /* 降低最小值，允许更小的字体 */
+      --subtitle-max-size: 48px;
+      --player-width: ${defaultWidth};  /* 播放器宽度，将被动态更新 */
+      --calculated-font-size: ${defaultFontSize}px;  /* 预计算的主字体大小 */
+      --calculated-font-size-small: ${defaultFontSizeSmall}px;  /* 预计算的小字体大小 */
     `;
     
     // 创建字幕容器
@@ -241,18 +261,20 @@ export class SubtitleOverlay {
 
       if (this.currentLanguageMode === 'bilingual') {
         // 双语模式：显示原文和译文
+        // 使用预计算的响应式字体大小（精确匹配YouTube）
         subtitleHTML = `
-          <div style="color: #ffffff; font-size: 20px; line-height: 1.4; margin-bottom: 4px;">
+          <div class="subtitle-original" style="color: #ffffff; font-size: var(--calculated-font-size-small); line-height: 1.4; margin-bottom: 4px;">
             ${this.escapeHtml(currentSubtitle.text)}
           </div>
-          <div style="color: ${translationColor}; font-size: 22px; line-height: 1.4; font-weight: 500;">
+          <div class="subtitle-translation" style="color: ${translationColor}; font-size: var(--calculated-font-size); line-height: 1.4; font-weight: 500;">
             ${this.escapeHtml(currentSubtitle.translation || currentSubtitle.text)}
           </div>
         `;
       } else {
         // 仅目标语言模式
+        // 使用预计算的响应式字体大小（精确匹配YouTube）
         subtitleHTML = `
-          <div style="color: ${translationColor}; font-size: 22px; line-height: 1.4; font-weight: 500;">
+          <div class="subtitle-translation" style="color: ${translationColor}; font-size: var(--calculated-font-size); line-height: 1.4; font-weight: 500;">
             ${this.escapeHtml(currentSubtitle.translation || currentSubtitle.text)}
           </div>
         `;
@@ -307,17 +329,17 @@ export class SubtitleOverlay {
       if (this.currentLanguageMode === 'bilingual') {
         // 双语模式：显示原文和译文
         subtitleHTML = `
-          <div style="color: #ffffff; font-size: 20px; line-height: 1.4; margin-bottom: 4px;">
+          <div style="color: #ffffff; font-size: var(--calculated-font-size-small); line-height: 1.4; margin-bottom: 4px;">
             ${this.escapeHtml(currentSubtitle.text)}
           </div>
-          <div style="color: #ffffff; font-size: 22px; line-height: 1.4; font-weight: 500;">
+          <div style="color: #ffffff; font-size: var(--calculated-font-size); line-height: 1.4; font-weight: 500;">
             ${this.escapeHtml(currentSubtitle.translation || currentSubtitle.text)}
           </div>
         `;
       } else {
         // 仅目标语言模式：只显示译文
         subtitleHTML = `
-          <div style="color: #ffffff; font-size: 22px; line-height: 1.4; font-weight: 500;">
+          <div style="color: #ffffff; font-size: var(--calculated-font-size); line-height: 1.4; font-weight: 500;">
             ${this.escapeHtml(currentSubtitle.translation || currentSubtitle.text)}
           </div>
         `;
@@ -428,29 +450,6 @@ export class SubtitleOverlay {
     }
   }
   
-  /**
-   * 销毁字幕层
-   */
-  public destroy(): void {
-    console.log('[SubtitleOverlay] 销毁字幕层');
-    
-    // 停止动画循环
-    if (this.animationFrameId) {
-      cancelAnimationFrame(this.animationFrameId);
-      this.animationFrameId = null;
-    }
-    
-    // 移除DOM元素
-    if (this.overlayElement) {
-      this.overlayElement.remove();
-      this.overlayElement = null;
-    }
-    
-    this.subtitleContainer = null;
-    this.videoElement = null;
-    this.currentSubtitles = [];
-    this.isActive = false;
-  }
   
   /**
    * 调整字幕位置（响应全屏等变化）
@@ -516,6 +515,128 @@ export class SubtitleOverlay {
 
       console.log('[SubtitleOverlay] 显示PENDING消息:', message);
     }
+  }
+
+  /**
+   * 查找播放器元素
+   */
+  private findPlayerElement(): void {
+    // 优先查找video-stream元素（实际的播放器视频大小）
+    this.playerElement = document.querySelector('.video-stream.html5-main-video') as HTMLElement ||
+                        document.querySelector('.html5-video-player') as HTMLElement;
+
+    // 初始设置播放器宽度和预计算字体大小
+    if (this.playerElement && this.overlayElement) {
+      const width = this.playerElement.clientWidth || 1280;
+      const fontSize = width * 0.025;
+      const fontSizeSmall = width * 0.0225;
+
+      this.overlayElement.style.setProperty('--player-width', width.toString());
+      this.overlayElement.style.setProperty('--calculated-font-size', `${fontSize}px`);
+      this.overlayElement.style.setProperty('--calculated-font-size-small', `${fontSizeSmall}px`);
+
+      console.log(`[SubtitleOverlay] 初始播放器宽度: ${width}px, 字体大小: ${fontSize}px / ${fontSizeSmall}px`);
+    }
+  }
+
+  /**
+   * 设置ResizeObserver监听播放器大小变化
+   */
+  private setupResponsiveObserver(): void {
+    if (!this.playerElement) return;
+
+    // 如果已有监听器，先断开
+    if (this.playerObserver) {
+      this.playerObserver.disconnect();
+    }
+
+    // 创建新的监听器
+    this.playerObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const width = entry.contentRect.width;
+        const height = entry.contentRect.height;
+
+        // 更新CSS变量：播放器宽度和计算后的字体大小
+        if (this.overlayElement) {
+          this.overlayElement.style.setProperty('--player-width', width.toString());
+          // 直接计算并设置精确的字体大小
+          const fontSize = width * 0.025;
+          const fontSizeSmall = width * 0.0225;
+          this.overlayElement.style.setProperty('--calculated-font-size', `${fontSize}px`);
+          this.overlayElement.style.setProperty('--calculated-font-size-small', `${fontSizeSmall}px`);
+          console.log(`[SubtitleOverlay] 更新播放器宽度: ${width}px, 字体: ${fontSize}px`);
+        }
+
+        // 调试：获取YouTube原生字幕大小
+        const nativeSubtitle = document.querySelector('.ytp-caption-segment');
+        let nativeFontSize = 0;
+        if (nativeSubtitle) {
+          const nativeStyles = window.getComputedStyle(nativeSubtitle);
+          nativeFontSize = parseFloat(nativeStyles.fontSize);
+        }
+
+        // 获取我们的字幕大小
+        let ourFontSize = 0;
+        if (this.overlayElement) {
+          const subtitleEl = this.overlayElement.querySelector('.subtitle-translation, .subtitle-original') as HTMLElement;
+          if (subtitleEl) {
+            const ourStyles = window.getComputedStyle(subtitleEl);
+            ourFontSize = parseFloat(ourStyles.fontSize);
+          }
+        }
+
+        // 计算理论值
+        const theoreticalSize = width * 0.025; // 2.5%播放器宽度
+        const viewportWidth = window.innerWidth;
+
+        // 获取容器实际宽度
+        const containerWidth = this.overlayElement ? this.overlayElement.offsetWidth : 0;
+        const containerPercent = width > 0 ? (containerWidth / width * 100).toFixed(1) : 0;
+
+        console.log(`%c[响应式字幕调试] ===========================`, 'color: #00ff00; font-weight: bold');
+        console.log(`📐 窗口宽度: ${viewportWidth}px | 播放器宽度: ${width}px | 播放器高度: ${height}px`);
+        console.log(`📦 字幕容器: ${containerWidth}px (播放器的${containerPercent}%)`);
+        console.log(`🎯 YouTube原生字幕: ${nativeFontSize.toFixed(2)}px`);
+        console.log(`📝 我们的字幕(新): ${ourFontSize.toFixed(2)}px`);
+        console.log(`📊 理论值(2.5%播放器): ${theoreticalSize.toFixed(2)}px`);
+        console.log(`✅ 匹配度: 原生vs我们=${Math.abs(nativeFontSize - ourFontSize).toFixed(2)}px 差异`);
+        console.log(`%c=========================================`, 'color: #00ff00; font-weight: bold');
+      }
+    });
+
+    this.playerObserver.observe(this.playerElement);
+  }
+
+
+  /**
+   * 重写销毁方法，清理ResizeObserver
+   */
+  public destroy(): void {
+    console.log('[SubtitleOverlay] 销毁字幕层');
+
+    // 断开ResizeObserver
+    if (this.playerObserver) {
+      this.playerObserver.disconnect();
+      this.playerObserver = null;
+    }
+
+    // 停止动画循环
+    if (this.animationFrameId) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+
+    // 移除DOM元素
+    if (this.overlayElement) {
+      this.overlayElement.remove();
+      this.overlayElement = null;
+    }
+
+    this.subtitleContainer = null;
+    this.videoElement = null;
+    this.playerElement = null;
+    this.currentSubtitles = [];
+    this.isActive = false;
   }
 }
 
