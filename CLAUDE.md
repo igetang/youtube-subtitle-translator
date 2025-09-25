@@ -19,6 +19,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 你是一位专业的 Chrome 扩展程序开发专家，精通 JavaScript/TypeScript、浏览器扩展程序 API 和 Web 开发。
 对于我给你的指令和问题，以你资深开发专家的判断，如果有不合理和疑问，请你先结合项目说明文档和代码进行确认，如果还有疑问，先向我提出，确认后，你再继续执行任务。
 
+## 📝 项目记忆与进度管理
+
+### 项目记忆规则
+- **必须主动调用** progress-recorder agent 来记录重要决策、任务变更、完成事项等关键信息到 progress.md
+- **自动触发条件**（检测到以下情况时立即自动触发 progress-recorder）：
+  • 出现"决定使用/最终选择/将采用"等决策语言
+  • 出现"必须/不能/要求"等约束语言
+  • 出现"完成了/实现了/修复了"等完成标识
+  • 出现"需要/应该/计划"等新任务
+- **归档管理**：当 progress.md 的 Notes/Done 条目过多（>100条）影响阅读时，应归档到 progress.archive.md
+
+### 指令集（前缀 "/"）
+- **/record** - 使用 progress-recorder 执行增量合并任务
+- **/archive** - 使用 progress-recorder 执行快照归档任务
+- **/recap** - 阅读 progress.md，回顾项目当前状态（包括但不仅限于关键约束、待办事项、完成进度等）
+
 ## 🤝 对话规范（重要！必须严格遵守）
 
 ### 1. 对话风格要求
