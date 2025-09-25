@@ -102,15 +102,19 @@ class MainWorldMessenger {
   private handleSubtitleCapture(data: any): void {
     console.log('[Main World] 收到字幕捕获请求');
 
-    const { sourceLang, sourceKind } = data;
+    const { sourceLang, sourceKind, originalSubtitleState } = data;
     console.log(`[Main World] 接收到源语言: ${sourceLang}, 字幕类型: ${sourceKind}`);
+    if (originalSubtitleState !== undefined) {
+      console.log(`[Main World] 字幕按钮原始状态: ${originalSubtitleState ? '开启' : '关闭'}`);
+    }
 
     // 并发控制：防止重复初始化
     if (!SubtitleInterceptor.isActive() && !isInitializing) {
       isInitializing = true;
 
       const interceptor = SubtitleInterceptor.getInstance();
-      const success = interceptor.initialize(sourceLang, sourceKind);
+      // 传递原始状态给拦截器
+      const success = interceptor.initialize(sourceLang, sourceKind, originalSubtitleState);
 
       isInitializing = false;
 
@@ -427,6 +431,7 @@ class SubtitleInterceptor {
   private destroyTimer: number | null = null;  // 超时保护
   private targetSourceLang: string | null = null;  // 目标源语言
   private targetSourceKind: string | null = null;  // 目标字幕类型（手动/asr）
+  private originalSubtitleState: boolean | null = null;  // 保存原始字幕按钮状态
 
   static getInstance(): SubtitleInterceptor {
     // 单例模式，确保全局只有一个实例
@@ -442,7 +447,7 @@ class SubtitleInterceptor {
   }
 
   // 初始化返回成功状态
-  initialize(sourceLang?: string, sourceKind?: string): boolean {
+  initialize(sourceLang?: string, sourceKind?: string, originalSubtitleState?: boolean): boolean {
     if (this.isActive) {
       console.log('[SubtitleInterceptor] 拦截器已激活，跳过初始化');
       return true;
@@ -451,7 +456,11 @@ class SubtitleInterceptor {
     // 保存目标参数
     this.targetSourceLang = sourceLang || null;
     this.targetSourceKind = sourceKind || null;
+    this.originalSubtitleState = originalSubtitleState ?? null;
     console.log(`[SubtitleInterceptor] 目标字幕: lang=${this.targetSourceLang}, kind=${this.targetSourceKind}`);
+    if (this.originalSubtitleState !== null) {
+      console.log(`[SubtitleInterceptor] 保存原始字幕状态: ${this.originalSubtitleState ? '开启' : '关闭'}`);
+    }
 
     try {
       console.log('[SubtitleInterceptor] 🚀 按需初始化拦截器...');
@@ -544,6 +553,7 @@ class SubtitleInterceptor {
     this.capturedSubtitles = [];
     this.capturedUrl = null;
     this.isActive = false;
+    this.originalSubtitleState = null;  // 清理原始状态
 
     // 清理全局字幕数据
     delete (window as any).__capturedSubtitles;
@@ -676,14 +686,16 @@ class SubtitleInterceptor {
     this.capturedSubtitles = subtitles;
     (window as any).__capturedSubtitles = subtitles;
     
-    // 通知content-script
+    // 通知content-script，包含原始状态信息
     window.postMessage({
       source: 'main-world',
       type: 'SUBTITLE_CAPTURED',
       payload: {
         subtitles: subtitles,
         url: this.capturedUrl,
-        count: subtitles.length
+        count: subtitles.length,
+        originalSubtitleState: this.originalSubtitleState,  // 传递原始状态
+        needsRestore: this.originalSubtitleState === false  // 如果原本是关闭的，需要恢复
       }
     }, '*');
     

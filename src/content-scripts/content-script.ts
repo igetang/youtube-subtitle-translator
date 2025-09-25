@@ -460,12 +460,19 @@ function setupMessageHandlers(): void {
         capturedSourceLang = message.data.sourceLang;
         console.log(`[content-script] 保存源语言: ${capturedSourceLang}, kind: ${message.data.sourceKind || '未指定'}`);
       }
+
+      // 记录当前字幕按钮状态
+      const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
+      const originalSubtitleState = subtitleBtn?.getAttribute('aria-pressed') === 'true';
+      console.log(`[content-script] 记录字幕按钮原始状态: ${originalSubtitleState ? '开启' : '关闭'}`);
+
       window.postMessage({
         source: 'content-script',
         type: 'REQUEST_SUBTITLE_CAPTURE',
         videoId: message.data?.videoId || getVideoId(),
         sourceLang: message.data?.sourceLang, // 传递给main-world
-        sourceKind: message.data?.sourceKind   // 传递字幕类型
+        sourceKind: message.data?.sourceKind,  // 传递字幕类型
+        originalSubtitleState: originalSubtitleState  // 传递原始状态
       }, '*');
       sendResponse({ success: true });
       return false;
@@ -561,12 +568,18 @@ function setupMessageHandlers(): void {
       const { sourceLang, sourceKind } = message;
       console.log(`[content-script] 收到源语言: ${sourceLang}, 字幕类型: ${sourceKind}`);
 
+      // 记录当前字幕按钮状态
+      const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
+      const originalSubtitleState = subtitleBtn?.getAttribute('aria-pressed') === 'true';
+      console.log(`[content-script] 记录字幕按钮原始状态: ${originalSubtitleState ? '开启' : '关闭'}`);
+
       // 通知main-world开始捕获字幕，传递参数
       window.postMessage({
         source: 'content-script',
         type: 'REQUEST_SUBTITLE_CAPTURE',
         sourceLang: sourceLang,
-        sourceKind: sourceKind
+        sourceKind: sourceKind,
+        originalSubtitleState: originalSubtitleState  // 传递原始状态
       }, '*');
 
       console.log('[content-script] 已发送字幕捕获请求到main-world（包含源语言参数）');
@@ -821,6 +834,18 @@ function handleSubtitleCaptured(payload: any): void {
     source: 'content-script',
     type: 'DESTROY_SUBTITLE_INTERCEPTOR'
   }, '*');
+
+  // 恢复原始字幕按钮状态（如果需要）
+  if (payload.needsRestore && payload.originalSubtitleState === false) {
+    console.log('[content-script] 检测到需要恢复字幕按钮状态为关闭');
+    setTimeout(() => {
+      const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
+      if (subtitleBtn && subtitleBtn.getAttribute('aria-pressed') === 'true') {
+        console.log('[content-script] 恢复字幕按钮为关闭状态');
+        subtitleBtn.click();
+      }
+    }, 1000); // 延迟1秒确保拦截完全结束
+  }
 
   const videoId = getVideoId();
   if (!videoId) {
