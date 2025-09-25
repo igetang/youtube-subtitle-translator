@@ -101,7 +101,6 @@ const params = new URLSearchParams({
   sl: sourceLang,      // 源语言
   tl: targetLang,      // 目标语言
   dt: 't',            // 数据类型（translation）
-  format: 'text',     // 重要：使用text格式，不是html
   q: textToTranslate  // 查询文本
 });
 
@@ -118,14 +117,31 @@ const translatedText = data[0].map(item => item[0]).join('');
 const translatedArray = translatedText.split('\n').map(t => t.trim());
 ```
 
-#### 2.3.3 方案优势
+#### 2.3.3 双端点自动切换（2025-09-22 更新）
+
+```mermaid
+flowchart LR
+  A[translate_a/single] -->|成功| R[返回翻译结果]
+  A -->|HTTP/解析失败| B[translate_a/t]
+  B -->|成功| R
+  B -->|失败| F[Fallback 原文 + 报错]
+```
+
+1. **尝试顺序**：默认先调用 `/translate_a/single`（客户端 `gtx`）。若请求或解析失败，再调用 `/translate_a/t`。
+2. **解析差异**：
+   - `single` 返回多层数组，继续沿用既有解析逻辑（含条数校验与比例降级）。
+   - `t` 返回简单数组（`["译文"]` 或 `[["译文片段"]]`），使用专用解析函数拼装成与批量流程兼容的结果。
+3. **透明切换**：整个流程对上层调用者透明；若两条路径都失败，统一抛出翻译错误，让业务回退为原文显示。
+4. **日志**：成功路径记为 `Google endpoint=single|t success`；单条失败时输出 `single failed -> fallback to t` 便于排查。
+
+#### 2.3.4 方案优势
 
 1. **简单可靠**：无需复杂的分隔符处理逻辑
 2. **API友好**：换行符是Google API原生支持的句子边界
 3. **准确分割**：翻译后能准确还原字幕数量
 4. **维护上下文**：虽然独立翻译，但在同一请求中保持一定上下文
 
-#### 2.3.4 注意事项
+#### 2.3.5 注意事项
 
 ```javascript
 // ⚠️ 重要：必须先清理字幕内部的换行符

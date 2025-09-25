@@ -36,5 +36,8 @@
     "typescript": "^5.8.3",
     "vite": "^6.3.5",
     "vite-plugin-static-copy": "^2.3.1"
+  },
+  "dependencies": {
+    "@pimzino/spec-workflow-mcp": "^1.0.1"
   }
 }

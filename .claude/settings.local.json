@@ -22,6 +22,8 @@
     "context7",
     "browsermcp",
     "playwright",
-    "spec-workflow"
-  ]
+    "spec-workflow",
+    "chrome-devtools"
+  ],
+  "enableAllProjectMcpServers": true
 }

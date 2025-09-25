@@ -419,7 +419,6 @@ export class TwoPhaseTranslatorV4 {
             sl: sourceLang === 'auto' ? 'auto' : sourceLang,
             tl: targetLang,
             dt: 't',
-            format: 'text',  // 添加：保留换行符作为文本的一部分，而不是句子分隔符
             q: combinedText
           });
           

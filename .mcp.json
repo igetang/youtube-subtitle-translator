@@ -10,8 +10,16 @@
       "args": ["@browsermcp/mcp@latest"]
     },
     "spec-workflow": {
+      "command": "node",
+      "args": ["/home/k/chrome-9.15/node_modules/@pimzino/spec-workflow-mcp/dist/index.js", "/home/k/chrome-9.15"],
+      "env": {}
+    },
+    "chrome-devtools": {
       "command": "npx",
-      "args": ["-y", "@pimzino/spec-workflow-mcp@latest", "/home/k/chrome-9.15", "--AutoStartDashboard"]
+      "args": ["@chrome/chrome-devtools-mcp"],
+      "env": {
+        "CHROME_PATH": "/mnt/c/Program Files/Google/Chrome/Application/chrome.exe"
+      }
     }
   }
 }
