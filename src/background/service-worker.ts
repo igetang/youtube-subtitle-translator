@@ -2098,6 +2098,8 @@ interface ToggleTranslateRequest {
   tabId?: number;
   originalSubtitleState?: boolean;
   sourceLang?: string;
+  targetLang?: string;
+  reuseOriginalSubtitles?: boolean;
 }
 
 /**

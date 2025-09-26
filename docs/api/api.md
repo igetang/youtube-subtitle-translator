@@ -108,17 +108,92 @@ URL: https://fanyi.youdao.com/translate
   - i: 待翻译文本
 ```
 
-#### 微软翻译API
+#### 微软翻译API（免费Edge版）
+
+##### 1. 获取认证令牌
+```
+URL: https://edge.microsoft.com/translate/auth
+方法: GET
+必需Headers:
+  User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0
+  Accept: */*
+  Origin: https://www.bing.com
+  Referer: https://www.bing.com/translator
+响应: JWT令牌字符串（纯文本）
+有效期: 通常很长（数月）
+```
+
+##### 2. 路径A - 主要翻译接口（推荐）
 ```
 URL: https://api.cognitive.microsofttranslator.com/translate
 方法: POST
-参数:
-  - api-version: 3.0
+查询参数:
+  - api-version: 3.0（必需）
+  - from: 源语言代码（如：en, zh-Hans）
+  - to: 目标语言代码（如：zh-Hans, en）
+必需Headers:
+  Authorization: Bearer {JWT令牌}
+  Content-Type: application/json
+  User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0
+  Accept: application/json
+  Origin: https://www.bing.com
+  Referer: https://www.bing.com/translator
+请求体:
+  [
+    {"Text": "要翻译的文本1"},
+    {"Text": "要翻译的文本2"}
+  ]
+响应格式:
+  [
+    {"translations": [{"text": "翻译结果1", "to": "zh-Hans"}]},
+    {"translations": [{"text": "翻译结果2", "to": "zh-Hans"}]}
+  ]
+批量限制: 建议每批最多10条
+```
+
+##### 3. 路径B - 备用翻译接口（故障转移）
+```
+URL: https://api-edge.cognitive.microsofttranslator.com/translate
+方法: POST
+查询参数:
+  - api-version: 3.0（必需）
   - from: 源语言代码
   - to: 目标语言代码
-请求体:
-  - JSON数组，每项包含text字段
+  - includeSentenceLength: true（可选，返回句子长度信息）
+Headers和请求体: 同路径A
+响应格式:
+  [
+    {
+      "translations": [{
+        "text": "翻译结果",
+        "to": "zh-Hans",
+        "sentLen": {
+          "srcSentLen": [27],    // 源语言句子长度
+          "transSentLen": [11]   // 翻译后句子长度
+        }
+      }]
+    }
+  ]
 ```
+
+##### 4. 语言代码
+支持标准ISO语言代码，常用：
+- zh-Hans（简体中文）、zh-Hant（繁体中文）
+- en（英语）、ja（日语）、ko（韩语）
+- es（西班牙语）、fr（法语）、de（德语）
+- ru（俄语）、ar（阿拉伯语）、pt（葡萄牙语）
+
+##### 5. 错误处理策略
+- 路径A失败→自动切换路径B
+- 认证失败→重新获取令牌
+- 批量过大→拆分成更小批次
+- 建议批次间延迟500ms避免限流
+
+##### 6. 测试验证（2025-09-26）
+✅ 认证令牌获取：正常工作
+✅ 路径A翻译：正常工作，响应快速
+✅ 路径B翻译：正常工作，包含句子长度信息
+✅ 双向翻译：中英互译均正常
 
 ### 2.2 Chrome扩展API
 

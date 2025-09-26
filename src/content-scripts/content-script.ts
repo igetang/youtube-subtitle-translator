@@ -10,6 +10,7 @@ import { TranslateActiveState } from '@shared/types/runtime-state-types';
 import { subtitleOverlay } from './subtitle-overlay';
 import { StorageManager, StorageKeys } from '@shared/storage/storage-manager';
 import { UserPreferencesManager } from '@shared/storage/user-preferences-manager';
+import { UserPreferenceChangeEvent } from '@shared/types/user-preferences-types';
 
 // ==================== 初始化 ====================
 
@@ -930,8 +931,13 @@ async function initialize(): Promise<void> {
     // 启动视频切换检测
     startVideoChangeDetection();
 
-    // 设置源语言变更监听器
+    // 初始化用户偏好管理器，确保监听器可用
+    const userPreferencesManager = UserPreferencesManager.getInstance();
+    await userPreferencesManager.initialize();
+
+    // 设置源语言、目标语言变更监听器
     setupSourceLanguageChangeListener();
+    setupTargetLanguageChangeListener();
 
     isInitialized = true;
     // 保留最终初始化完成日志
@@ -1189,6 +1195,34 @@ function setupSourceLanguageChangeListener(): void {
   );
 }
 
+function setupTargetLanguageChangeListener(): void {
+  console.log('[content-script] 设置目标语言变更监听器');
+
+  const prefsManager = UserPreferencesManager.getInstance();
+  prefsManager.addChangeListener(
+    UserPreferenceChangeEvent.TARGET_LANG_CHANGED,
+    async (newLang: string, oldLang: string) => {
+      try {
+        if (!newLang || newLang === oldLang) {
+          return;
+        }
+
+        const translateState = stateManager?.getState('translateActive');
+        const isActive = translateState === TranslateActiveState.ACTIVE || translateState === 'active';
+
+        if (!isActive) {
+          console.log('[content-script] 目标语言变更但翻译未激活，忽略实时更新');
+          return;
+        }
+
+        await handleTargetLanguageChangeRealtime(newLang, oldLang);
+      } catch (error) {
+        console.error('[content-script] 处理目标语言变更监听失败:', error);
+      }
+    }
+  );
+}
+
 /**
  * 处理源语言缓存变化
  */
@@ -1296,6 +1330,94 @@ async function handleSourceLanguageChange(newSourceLang: string): Promise<void> 
     stateManager?.updateState('translateActive', 'inactive');
     subtitleOverlay.hide();
   }
+}
+
+async function handleTargetLanguageChangeRealtime(newTargetLang: string, oldTargetLang?: string): Promise<void> {
+  console.log('[content-script] 开始处理目标语言变更:', { newTargetLang, oldTargetLang });
+
+  try {
+    subtitleOverlay.hide();
+    stateManager?.updateState('translateActive', 'pending');
+    subtitleOverlay.showPendingMessage('目标语言切换，重新翻译中...');
+
+    const videoId = getVideoId();
+    if (!videoId) {
+      console.warn('[content-script] 无法获取视频ID，终止目标语言变更处理');
+      return;
+    }
+
+    const sourceLang = await getCurrentSourceLanguageForRealtime(videoId);
+    capturedSourceLang = sourceLang;
+
+    const prefsManager = UserPreferencesManager.getInstance();
+    const userPrefs = await prefsManager.getUserPreferences();
+
+    const cacheResponse = await chrome.runtime.sendMessage({
+      type: 'checkTranslationCache',
+      data: {
+        videoId,
+        sourceLang,
+        targetLang: newTargetLang,
+        service: userPrefs.translationService
+      }
+    });
+
+    if (cacheResponse.success && cacheResponse.data) {
+      console.log('[content-script] 使用目标语言缓存的翻译结果');
+      await subtitleOverlay.show(cacheResponse.data);
+      stateManager?.updateState('translateActive', 'active');
+      return;
+    }
+
+    console.log('[content-script] 目标语言缓存未命中，触发重新翻译');
+
+    const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
+    const originalSubtitleState = subtitleBtn?.getAttribute('aria-pressed') === 'true';
+
+    const videoElement = document.querySelector('video');
+    const currentTime = videoElement ? videoElement.currentTime : 0;
+
+    const response = await chrome.runtime.sendMessage({
+      type: 'TOGGLE_TRANSLATE',
+      data: {
+        videoId,
+        newState: true,
+        currentTime,
+        originalSubtitleState,
+        sourceLang,
+        targetLang: newTargetLang,
+        reuseOriginalSubtitles: true,
+        isRestart: true
+      }
+    });
+
+    if (response?.action === 'translated' || response?.action === 'cached') {
+      displayTranslatedSubtitles(response.data);
+    }
+  } catch (error) {
+    console.error('[content-script] 处理目标语言变更失败:', error);
+    stateManager?.updateState('translateActive', 'inactive');
+    subtitleOverlay.hide();
+  }
+}
+
+async function getCurrentSourceLanguageForRealtime(videoId: string): Promise<string> {
+  if (capturedSourceLang) {
+    return capturedSourceLang;
+  }
+
+  try {
+    const result = await chrome.storage.local.get(StorageKeys.VIDEO_SOURCE_LANGUAGE_CACHE);
+    const cache = result[StorageKeys.VIDEO_SOURCE_LANGUAGE_CACHE];
+    const cachedItem = cache?.items?.find((item: any) => item.videoId === videoId);
+    if (cachedItem?.lastSelectedLanguage) {
+      return cachedItem.lastSelectedLanguage;
+    }
+  } catch (error) {
+    console.warn('[content-script] 获取源语言缓存失败:', error);
+  }
+
+  return 'auto';
 }
 
 // 导出给测试使用

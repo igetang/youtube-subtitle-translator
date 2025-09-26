@@ -36,7 +36,7 @@ import {
   triggerSubtitleLoadWithSignal 
 } from './components/message-with-signal';
 import { TwoPhaseTranslatorV4 } from './components/two-phase-translator-v4';
-import { createVttString } from '../shared/utils/vtt-utils';
+import { createVttString, parseVttString } from '../shared/utils/vtt-utils';
 
 /**
  * 处理翻译开关切换 - 使用AbortController架构v4.0
@@ -62,7 +62,14 @@ export async function handleToggleTranslateV4(
     notifyStateChange
   } = dependencies;
   
-  const { videoId, newState, originalSubtitleState, sourceLang: requestedSourceLang } = data;
+  const {
+    videoId,
+    newState,
+    originalSubtitleState,
+    sourceLang: requestedSourceLang,
+    targetLang: requestedTargetLang,
+    reuseOriginalSubtitles
+  } = data;
   const tabId = sender.tab?.id;
   
   if (!tabId) {
@@ -121,6 +128,11 @@ export async function handleToggleTranslateV4(
     console.log('[service-worker-v4] → 获取用户偏好:', {
       targetLang: preferences.targetLang,
       service: preferences.translationService?.type
+    });
+    console.debug('[debug][service-worker-v4] 请求附加参数', {
+      requestedSourceLang,
+      requestedTargetLang,
+      reuseOriginalSubtitles
     });
     
     // ========== Stage 2: 获取源语言信息 ==========
@@ -323,85 +335,116 @@ export async function handleToggleTranslateV4(
 
     // ========== Stage 4: 获取字幕（5秒超时）==========
     console.log('[service-worker-v4] → Stage 4: 获取字幕');
-    
-    // 先触发字幕加载
-    await session.executeStage(
-      'trigger_load',
-      async (signal) => {
-        const triggerPayload = {
-          type: 'TRIGGER_SUBTITLE_LOAD',
-          sourceLang: sourceLang,
-          sourceKind: sourceKind,
-          originalSubtitleState: originalSubtitleState  // 传递原始状态
-        };
-        console.debug('[debug][service-worker-v4] → TRIGGER_SUBTITLE_LOAD 请求', {
-          tabId,
-          payload: triggerPayload
-        });
-        await chrome.tabs.sendMessage(tabId, triggerPayload);
-        console.debug('[debug][service-worker-v4] ← TRIGGER_SUBTITLE_LOAD 已发送');
-        return true;
-      },
-      { timeoutMs: 2000 }
-    );
-    
-    // 等待字幕数据（关键的5秒超时）
-    console.log('[service-worker-v4] 等待字幕数据响应...');
-    const subtitleData: SubtitleData = await session.executeStage(
-      'subtitle_fetch',
-      async (signal) => {
-        return new Promise((resolve, reject) => {
-          let resolved = false;
-          
-          // 设置消息监听器
-          const messageListener = (message: any, msgSender: any) => {
-            if (message.type === 'SUBTITLE_DATA' && 
-                msgSender.tab?.id === tabId &&
-                message.data?.videoId === videoId) {
+
+    let subtitleData: SubtitleData | null = null;
+
+    if (reuseOriginalSubtitles && sourceLang && sourceLang !== 'auto') {
+      try {
+        const cachedEntries = await translationCacheManager.findByVideoAndSourceLang(videoId, sourceLang);
+        const reusableEntry = cachedEntries.find(entry => entry.originalSubtitles);
+
+        if (reusableEntry?.originalSubtitles) {
+          const parsed = parseVttString(reusableEntry.originalSubtitles, false);
+          if (parsed.length > 0) {
+            subtitleData = {
+              subtitles: parsed.map((entry, idx) => ({
+                text: entry.text,
+                start: entry.start,
+                end: entry.start + entry.duration,
+                index: idx
+              })),
+              sourceLang: sourceLang
+            };
+            console.debug('[debug][service-worker-v4] 重用缓存原始字幕，跳过抓取', {
+              cacheTargetLang: reusableEntry.targetLang,
+              subtitleCount: parsed.length
+            });
+          }
+        }
+      } catch (error) {
+        console.warn('[service-worker-v4] 查找缓存原始字幕失败，继续正常抓取:', error);
+      }
+    }
+
+    if (!subtitleData) {
+      await session.executeStage(
+        'trigger_load',
+        async (signal) => {
+          const triggerPayload = {
+            type: 'TRIGGER_SUBTITLE_LOAD',
+            sourceLang: sourceLang,
+            sourceKind: sourceKind,
+            originalSubtitleState: originalSubtitleState  // 传递原始状态
+          };
+          console.debug('[debug][service-worker-v4] → TRIGGER_SUBTITLE_LOAD 请求', {
+            tabId,
+            payload: triggerPayload
+          });
+          await chrome.tabs.sendMessage(tabId, triggerPayload);
+          console.debug('[debug][service-worker-v4] ← TRIGGER_SUBTITLE_LOAD 已发送');
+          return true;
+        },
+        { timeoutMs: 2000 }
+      );
+
+      console.log('[service-worker-v4] 等待字幕数据响应...');
+      subtitleData = await session.executeStage(
+        'subtitle_fetch',
+        async (signal) => {
+          return new Promise((resolve, reject) => {
+            let resolved = false;
+
+            const messageListener = (message: any, msgSender: any) => {
+              if (message.type === 'SUBTITLE_DATA' &&
+                  msgSender.tab?.id === tabId &&
+                  message.data?.videoId === videoId) {
+                if (!resolved) {
+                  resolved = true;
+                  chrome.runtime.onMessage.removeListener(messageListener);
+                  console.debug('[debug][service-worker-v4] ← SUBTITLE_DATA', {
+                    subtitleCount: message.data?.subtitles?.length,
+                    sourceLang: message.data?.sourceLang,
+                    hasTracks: Boolean(message.data?.tracks),
+                    keys: Object.keys(message.data || {})
+                  });
+                  resolve(message.data as SubtitleData);
+                }
+                return true;
+              }
+            };
+
+            chrome.runtime.onMessage.addListener(messageListener);
+
+            signal.addEventListener('abort', () => {
               if (!resolved) {
                 resolved = true;
                 chrome.runtime.onMessage.removeListener(messageListener);
-                console.debug('[debug][service-worker-v4] ← SUBTITLE_DATA', {
-                  subtitleCount: message.data?.subtitles?.length,
-                  sourceLang: message.data?.sourceLang,
-                  hasTracks: Boolean(message.data?.tracks),
-                  keys: Object.keys(message.data || {})
-                });
-                resolve(message.data);
+                reject(new StageTimeoutError('subtitle_fetch', 5000));
               }
-              return true;
-            }
-          };
-          
-          // 添加监听器
-          chrome.runtime.onMessage.addListener(messageListener);
-          
-          // 监听abort信号
-          signal.addEventListener('abort', () => {
-            if (!resolved) {
-              resolved = true;
-              chrome.runtime.onMessage.removeListener(messageListener);
-              reject(new StageTimeoutError('subtitle_fetch', 5000));
-            }
+            });
           });
-        });
-      },
-      { 
-        timeoutMs: 5000,
-        critical: true  // 字幕获取失败则终止
-      }
-    );
+        },
+        {
+          timeoutMs: 5000,
+          critical: true  // 字幕获取失败则终止
+        }
+      );
+    } else {
+      console.log('[service-worker-v4] 使用缓存字幕数据，跳过字幕抓取阶段');
+    }
     
     // 验证字幕数据
     if (!subtitleData?.subtitles || subtitleData.subtitles.length === 0) {
       throw new Error('当前视频无字幕');
     }
 
-    console.log(`[service-worker-v4] 获取到 ${subtitleData.subtitles.length} 条字幕`);
+    const effectiveSubtitleData = subtitleData as SubtitleData;
+
+    console.log(`[service-worker-v4] 获取到 ${effectiveSubtitleData.subtitles.length} 条字幕`);
     console.debug('[debug][service-worker-v4] Stage 4 字幕数据概要', {
-      subtitleCount: subtitleData.subtitles.length,
+      subtitleCount: effectiveSubtitleData.subtitles.length,
       sourceLang,
-      sample: subtitleData.subtitles.slice(0, 3).map((sub: any, idx: number) => ({
+      sample: effectiveSubtitleData.subtitles.slice(0, 3).map((sub: any, idx: number) => ({
         index: idx,
         start: sub.start,
         duration: sub.end ? sub.end - sub.start : sub.duration,
@@ -410,8 +453,8 @@ export async function handleToggleTranslateV4(
     });
 
     // 如果字幕数据中包含源语言信息，且当前是auto，更新源语言
-    if (subtitleData.sourceLang && sourceLang === 'auto') {
-      sourceLang = subtitleData.sourceLang;
+    if (effectiveSubtitleData.sourceLang && sourceLang === 'auto') {
+      sourceLang = effectiveSubtitleData.sourceLang;
       console.log(`[service-worker-v4] 使用字幕数据中的源语言: ${sourceLang}`);
     }
     
@@ -429,8 +472,8 @@ export async function handleToggleTranslateV4(
       'urgent_translate',
       async (signal) => {
         return await translator.translateUrgent(
-          subtitleData.subtitles,
-          subtitleData.currentTime || 0,
+          effectiveSubtitleData.subtitles,
+          effectiveSubtitleData.currentTime || 0,
           preferences,
           signal
         );
@@ -448,7 +491,7 @@ export async function handleToggleTranslateV4(
       console.log('[service-worker-v4] → 发送紧急翻译结果到前端显示');
 
       // 构建紧急翻译的字幕数据 - 统一为SubtitleEntry格式
-      const urgentSubtitles = subtitleData.subtitles.map((sub: any, idx: number) => {
+      const urgentSubtitles = effectiveSubtitleData.subtitles.map((sub: any, idx: number) => {
         const result = urgentResults.find(r => r.index === idx);
         if (result) {
           return {
@@ -500,13 +543,13 @@ export async function handleToggleTranslateV4(
       'batch_translate',
       async (signal) => {
         // 如果紧急翻译已覆盖全部，跳过
-        if (urgentResults.length >= subtitleData.subtitles.length) {
+        if (urgentResults.length >= effectiveSubtitleData.subtitles.length) {
           console.log('[service-worker-v4] 紧急翻译已覆盖全部，跳过批量');
           return [];
         }
 
         return await translator.translateBatch(
-          subtitleData.subtitles,
+          effectiveSubtitleData.subtitles,
           urgentResults,
           preferences,
           signal
@@ -522,7 +565,7 @@ export async function handleToggleTranslateV4(
 
     // ========== Stage 5: 构建和发送最终完整结果 ==========
     // 构建完整字幕数据（基于批量翻译结果）
-    const finalSubtitles = subtitleData.subtitles.map((sub: any, idx: number) => {
+    const finalSubtitles = effectiveSubtitleData.subtitles.map((sub: any, idx: number) => {
       const result = batchResults.find(r => r.index === idx);
       return {
         start: sub.start,
@@ -536,7 +579,7 @@ export async function handleToggleTranslateV4(
 
     // 为缓存准备VTT格式（原始字幕）
     const originalVtt = createVttString(
-      subtitleData.subtitles.map((sub: any) => ({
+      effectiveSubtitleData.subtitles.map((sub: any) => ({
         start: sub.start,
         duration: sub.end - sub.start,
         text: sub.text,

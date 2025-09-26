@@ -14,16 +14,16 @@
       "Read(/home/k/chrome-9.15/picture/**)",
       "WebSearch",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(curl:*)"
     ],
     "deny": []
   },
+  "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "context7",
     "browsermcp",
     "playwright",
-    "spec-workflow",
-    "chrome-devtools"
-  ],
-  "enableAllProjectMcpServers": true
+    "spec-workflow"
+  ]
 }

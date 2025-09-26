@@ -659,6 +659,8 @@ export interface ToggleTranslateRequest {
   currentTime?: number;
   originalSubtitleState?: boolean;
   sourceLang?: string;
+  targetLang?: string;
+  reuseOriginalSubtitles?: boolean;
 }
 
 /**
