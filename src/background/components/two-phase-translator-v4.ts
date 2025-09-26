@@ -12,6 +12,8 @@ import { OpenAITranslator } from './openai-translator';
 /**
  * 两阶段翻译器 - 支持AbortSignal版本
  */
+type GoogleEndpointId = 'single' | 't';
+
 export class TwoPhaseTranslatorV4 {
   private static readonly API_DELAY = 200;  // API调用间隔
   private static readonly URGENT_RESPONSE_TIME = 300;  // 紧急响应时间目标
@@ -23,6 +25,8 @@ export class TwoPhaseTranslatorV4 {
   private segmenter: IntelligentSegmenter;
   private isComplete: boolean = false;
   private currentExecutionId: number = 0;
+  private preferredGoogleEndpoint: GoogleEndpointId | null = null;
+  private failedGoogleEndpoints = new Set<GoogleEndpointId>();
   
   constructor() {
     this.segmenter = new IntelligentSegmenter();
@@ -118,7 +122,8 @@ export class TwoPhaseTranslatorV4 {
         preferences.translationService,
         'auto',  // 源语言
         preferences.targetLang,
-        signal
+        signal,
+        { stage: 'urgent' }
       );
       
       // 直接使用返回的翻译数组
@@ -190,6 +195,10 @@ export class TwoPhaseTranslatorV4 {
       // 延迟启动（避免与紧急翻译冲突）
       await this.delayWithSignal(TwoPhaseTranslatorV4.BATCH_START_DELAY, signal);
       
+      if ((preferences.translationService?.type === 'google' || preferences.translationService?.type === 'google-free') && !this.preferredGoogleEndpoint) {
+        throw new Error('紧急翻译未确定可用的Google端点，跳过批量翻译');
+      }
+
       console.log(`[TwoPhaseTranslatorV4] → 开始批量翻译 ${subtitles.length} 条字幕`);
 
       // 批量翻译应该翻译全部字幕（包括紧急翻译的部分）
@@ -262,7 +271,8 @@ export class TwoPhaseTranslatorV4 {
             preferences.translationService,
             'auto',
             preferences.targetLang,
-            batchSignal  // 使用带超时的批次信号
+            batchSignal,  // 使用带超时的批次信号
+            { stage: 'batch' }
           );
           
           // 直接使用返回的翻译数组
@@ -350,7 +360,8 @@ export class TwoPhaseTranslatorV4 {
     service: any,
     sourceLang: string,
     targetLang: string,
-    signal: AbortSignal
+    signal: AbortSignal,
+    options?: { stage: 'urgent' | 'batch' }
   ): Promise<string[]> {
     // 检查是否配置了翻译服务
     if (!service || !service.type) {
@@ -372,7 +383,7 @@ export class TwoPhaseTranslatorV4 {
       
       try {
         let translatedTexts: string[] = [];
-        
+
         // 根据翻译服务类型调用不同的API
         if (service.type === 'openai') {
           // 使用OpenAI翻译
@@ -402,80 +413,15 @@ export class TwoPhaseTranslatorV4 {
           translatedTexts = subtitles.map(sub => results[sub.id] || sub.text);
           
         } else if (service.type === 'google' || service.type === 'google-free') {
-          // Google翻译（免费版）
-          // console.log('[TwoPhaseTranslatorV4] 使用Google免费翻译');
-          // console.log('[TwoPhaseTranslatorV4] 输入texts数组长度:', texts.length);
-          
-          // Google免费翻译API
-          const translateUrl = 'https://translate.googleapis.com/translate_a/single';
-          // 使用换行符连接，让Google把多条字幕当作连续段落处理
-          // 单条字幕内的换行符已在前面被替换为空格
-          const combinedText = texts.join('\n');
-          // console.log('[TwoPhaseTranslatorV4] 合并后文本长度:', combinedText.length);
-          // console.log('[TwoPhaseTranslatorV4] 合并后文本前200字符:', combinedText.substring(0, 200));
-          
-          const params = new URLSearchParams({
-            client: 'gtx',
-            sl: sourceLang === 'auto' ? 'auto' : sourceLang,
-            tl: targetLang,
-            dt: 't',
-            q: combinedText
+          const stage = options?.stage ?? 'batch';
+          const order = this.getGoogleEndpointOrder(stage);
+          const allowFallback = stage !== 'batch';
+          const { translations } = await this.translateWithGoogleEndpoints(texts, sourceLang, targetLang, {
+            preferredOrder: order,
+            recordStatistics: stage === 'urgent',
+            allowFallback
           });
-          
-          try {
-            const response = await fetch(`${translateUrl}?${params}`, {
-              method: 'GET',
-              headers: {
-                'Content-Type': 'application/json',
-              }
-            });
-            
-            if (response.ok) {
-              const data = await response.json();
-              // console.log('[TwoPhaseTranslatorV4] Google API原始响应:', JSON.stringify(data).substring(0, 500));
-              
-              // Google API返回嵌套数组结构
-              const translations = data[0].map((item: any) => item[0]).join('');
-              // console.log('[TwoPhaseTranslatorV4] 合并的翻译结果长度:', translations.length);
-              // console.log('[TwoPhaseTranslatorV4] 合并的翻译结果前200字符:', translations.substring(0, 200));
-              
-              // 使用换行符分割（与合并时一致）
-              translatedTexts = translations.split('\n').map((t: string) => t.trim());
-              console.log('[TwoPhaseTranslatorV4] 分割后数组长度:', translatedTexts.length);
-              console.log('[TwoPhaseTranslatorV4] 分割后前3个:', translatedTexts.slice(0, 3));
-              
-              // 确保返回的翻译数量与原文数量一致
-              if (translatedTexts.length !== texts.length) {
-                console.warn(`[TwoPhaseTranslatorV4] 翻译结果数量不匹配！期待${texts.length}个，得到${translatedTexts.length}个`);
-                // 如果分割失败，尝试按原文数量平均分配
-                if (translatedTexts.length === 1 && texts.length > 1) {
-                  // 可能分隔符被翻译了，尝试其他分割方式
-                  console.log('[TwoPhaseTranslatorV4] 尝试按长度比例分割');
-                  const totalLength = texts.join('').length;
-                  let currentPos = 0;
-                  translatedTexts = texts.map((text, index) => {
-                    const ratio = text.length / totalLength;
-                    const translatedLength = Math.floor(translations.length * ratio);
-                    const result = translations.substring(currentPos, currentPos + translatedLength);
-                    currentPos += translatedLength;
-                    return result || text;
-                  });
-                } else {
-                  // 填充缺失的翻译
-                  while (translatedTexts.length < texts.length) {
-                    translatedTexts.push(texts[translatedTexts.length]);
-                  }
-                }
-              }
-            } else {
-              console.error('[TwoPhaseTranslatorV4] Google翻译API请求失败');
-              translatedTexts = texts;
-            }
-          } catch (error) {
-            console.error('[TwoPhaseTranslatorV4] Google翻译API调用出错:', error);
-            translatedTexts = texts;
-          }
-          
+          translatedTexts = translations;
         } else if (service.type === 'microsoft' || service.type === 'microsoft-free') {
           // Microsoft翻译（免费版）
           console.log('[TwoPhaseTranslatorV4] 使用Microsoft免费翻译');
@@ -490,18 +436,242 @@ export class TwoPhaseTranslatorV4 {
         
         signal.removeEventListener('abort', abortHandler);
         resolve(translatedTexts);
-        
+
       } catch (error) {
         signal.removeEventListener('abort', abortHandler);
-        if (!signal.aborted) {
-          console.error('[TwoPhaseTranslatorV4] 翻译API调用失败:', error);
-          // 失败时返回原文
-          resolve(texts);
-        }
+        reject(error);
       }
     });
   }
-  
+
+  /**
+   * 使用Google免费翻译，带端点自动切换
+   */
+  private async translateWithGoogleEndpoints(
+    texts: string[],
+    sourceLang: string,
+    targetLang: string,
+    options?: {
+      preferredOrder?: GoogleEndpointId[];
+      recordStatistics?: boolean;
+      allowFallback?: boolean;
+    }
+  ): Promise<{ translations: string[]; endpoint: GoogleEndpointId }> {
+    if (texts.length === 0) {
+      return { translations: [], endpoint: 'single' };
+    }
+
+    const combinedText = texts.join('\n');
+    const baseParams: Record<string, string> = {
+      client: 'gtx',
+      sl: sourceLang === 'auto' ? 'auto' : sourceLang,
+      tl: targetLang,
+      dt: 't',
+      q: combinedText
+    };
+
+    type Endpoint = {
+      id: GoogleEndpointId;
+      url: string;
+      parse: (data: any) => string;
+    };
+
+    const endpointMap: Record<GoogleEndpointId, Endpoint> = {
+      single: {
+        id: 'single',
+        url: 'https://translate.googleapis.com/translate_a/single',
+        parse: (data: any) => {
+          if (!Array.isArray(data) || !Array.isArray(data[0])) {
+            throw new Error('unexpected response structure from /translate_a/single');
+          }
+          return data[0]
+            .map((item: any) => (Array.isArray(item) && typeof item[0] === 'string' ? item[0] : ''))
+            .join('');
+        }
+      },
+      t: {
+        id: 't',
+        url: 'https://translate.googleapis.com/translate_a/t',
+        parse: (data: any) => {
+          if (!Array.isArray(data)) {
+            throw new Error('unexpected response structure from /translate_a/t');
+          }
+
+          if (typeof data[0] === 'string') {
+            return (data as string[]).join('');
+          }
+
+          if (Array.isArray(data[0])) {
+            return (data as any[])
+              .map((item) => (Array.isArray(item) && item.length > 0 ? String(item[0]) : ''))
+              .join('');
+          }
+
+          throw new Error('unsupported translate_a/t payload shape');
+        }
+      }
+    };
+
+    const defaultOrder: GoogleEndpointId[] = ['single', 't'];
+    const requestedOrder = options?.preferredOrder ?? defaultOrder;
+    const allowFallback = options?.allowFallback !== false;
+    const order = allowFallback
+      ? Array.from(new Set([...requestedOrder, ...defaultOrder]))
+      : requestedOrder;
+
+    const errors: string[] = [];
+
+    for (const id of order) {
+      const endpoint = endpointMap[id];
+      if (!endpoint) {
+        continue;
+      }
+
+      try {
+        const params = new URLSearchParams(baseParams);
+        const response = await fetch(`${endpoint.url}?${params.toString()}`, {
+          method: 'GET'
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const json = await response.json();
+        const combinedTranslation = endpoint.parse(json);
+        const normalized = this.normalizeGoogleTranslations(combinedTranslation, texts);
+
+        if (normalized.length !== texts.length) {
+          throw new Error(
+            `normalized translation count mismatch (${normalized.length} vs ${texts.length})`
+          );
+        }
+
+        console.log(
+          `[TwoPhaseTranslatorV4] Google endpoint=${endpoint.id} success (${normalized.length}条)`
+        );
+
+        if (options?.recordStatistics) {
+          this.preferredGoogleEndpoint = endpoint.id;
+          this.failedGoogleEndpoints.delete(endpoint.id);
+        }
+
+        return { translations: normalized, endpoint: endpoint.id };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(
+          `[TwoPhaseTranslatorV4] Google endpoint=${endpoint.id} failed，尝试切换`,
+          message
+        );
+        errors.push(`${endpoint.id}: ${message}`);
+
+        if (options?.recordStatistics) {
+          this.failedGoogleEndpoints.add(endpoint.id);
+        }
+      }
+    }
+
+    throw new Error(`所有Google免费翻译端点调用失败: ${errors.join(' | ')}`);
+  }
+
+  /**
+   * 规范化Google翻译结果，确保与原始文本数量匹配
+   */
+  private normalizeGoogleTranslations(combined: string, originalTexts: string[]): string[] {
+    let translatedTexts = combined.split('\n').map((segment) => segment.trim());
+
+    if (translatedTexts.length === originalTexts.length) {
+      return translatedTexts;
+    }
+
+    if (translatedTexts.length === 1 && originalTexts.length > 1) {
+      return this.splitByRatioForGoogle(combined, originalTexts);
+    }
+
+    if (translatedTexts.length > originalTexts.length && originalTexts.length > 0) {
+      while (translatedTexts.length > originalTexts.length) {
+        const extra = translatedTexts.pop();
+        if (extra === undefined) {
+          break;
+        }
+        const lastIndex = translatedTexts.length - 1;
+        if (lastIndex >= 0) {
+          translatedTexts[lastIndex] = `${translatedTexts[lastIndex]} ${extra}`.trim();
+        }
+      }
+      if (translatedTexts.length === originalTexts.length) {
+        return translatedTexts;
+      }
+    }
+
+    while (translatedTexts.length < originalTexts.length) {
+      const fallbackIndex = translatedTexts.length;
+      translatedTexts.push(originalTexts[fallbackIndex]);
+    }
+
+    return translatedTexts.slice(0, originalTexts.length);
+  }
+
+  private getGoogleEndpointOrder(stage: 'urgent' | 'batch'): GoogleEndpointId[] {
+    const defaultOrder: GoogleEndpointId[] = ['single', 't'];
+
+    if (stage === 'batch') {
+      if (!this.preferredGoogleEndpoint) {
+        throw new Error('紧急翻译未成功，跳过批量翻译');
+      }
+      return [this.preferredGoogleEndpoint];
+    }
+
+    if (this.preferredGoogleEndpoint) {
+      const remaining = defaultOrder.filter((id) => id !== this.preferredGoogleEndpoint);
+      return [this.preferredGoogleEndpoint, ...remaining];
+    }
+
+    return defaultOrder;
+  }
+
+  /**
+   * 当Google返回未按行拆分时，按原文比例切分
+   */
+  private splitByRatioForGoogle(combined: string, originalTexts: string[]): string[] {
+    if (originalTexts.length === 0) {
+      return [];
+    }
+
+    const processedOriginals = originalTexts.map((text) =>
+      text.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim()
+    );
+    const originalLengths = processedOriginals.map((text) => (text.length > 0 ? text.length : 1));
+    const totalOriginalLength = originalLengths.reduce((sum, len) => sum + len, 0);
+    const segments: string[] = [];
+    let currentPosition = 0;
+
+    for (let i = 0; i < originalLengths.length; i++) {
+      if (i === originalLengths.length - 1) {
+        segments.push(combined.substring(currentPosition).trim() || originalTexts[i]);
+        break;
+      }
+
+      const ratio = totalOriginalLength === 0 ? 1 / originalLengths.length : originalLengths[i] / totalOriginalLength;
+      const estimatedLength = Math.max(1, Math.round(combined.length * ratio));
+      let endPosition = currentPosition + estimatedLength;
+
+      const searchEnd = Math.min(endPosition + 20, combined.length);
+      for (let j = endPosition; j < searchEnd; j++) {
+        if ('。！？，；,.!?,;'.includes(combined[j])) {
+          endPosition = j + 1;
+          break;
+        }
+      }
+
+      const segment = combined.substring(currentPosition, Math.min(endPosition, combined.length)).trim();
+      segments.push(segment || originalTexts[i]);
+      currentPosition = Math.min(endPosition, combined.length);
+    }
+
+    return segments;
+  }
+
   /**
    * 带信号的延迟
    */
@@ -532,5 +702,7 @@ export class TwoPhaseTranslatorV4 {
   public reset(): void {
     this.isComplete = false;
     this.currentExecutionId++;
+    this.preferredGoogleEndpoint = null;
+    this.failedGoogleEndpoints.clear();
   }
 }

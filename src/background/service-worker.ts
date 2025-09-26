@@ -3244,28 +3244,23 @@ async function translateWithGoogle(
   
   if (texts.length === 0) return [];
   
-  
-  // 实现方案：使用换行符分隔保留字幕边界
-  
-  // 检查是否是已经用换行符合并的单个文本
-  let combinedText: string;
   let isPreMerged = false;
-  
+  let combinedText: string;
+  let processedTexts: string[] = [];
+  let originalLengths: number[] = [];
+
   if (texts.length === 1 && texts[0].includes('\n')) {
-    // 已经是用换行符合并的文本
     combinedText = texts[0];
     isPreMerged = true;
+    originalLengths = combinedText
+      .split('\n')
+      .map((line) => line.trim().length || 1);
   } else {
-    // 多个字幕文本，需要合并
-    // Step 1: 预处理 - 去掉字幕内部换行，变成完整句子
-    const processedTexts = texts.map((text) => {
-      return text.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
-    });
-    
-    // Step 2: 用换行符连接所有字幕
+    processedTexts = texts.map((text) => text.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim());
     combinedText = processedTexts.join('\n');
+    originalLengths = processedTexts.map((text) => (text.length > 0 ? text.length : 1));
   }
-  
+
   // 合并成一条日志显示原始字幕信息
   const lines = combinedText.split('\n');
   if (lines.length > 0) {
@@ -3277,78 +3272,129 @@ async function translateWithGoogle(
     console.log(`[DEBUG] ${translationType}原文 (${lines.length}条): ${logInfo}`);
   }
   
-  try {
-    // 使用Google Translate免费API
-    const apiUrl = 'https://translate.googleapis.com/translate_a/single';
-    
-    // Step 3: 调用Google翻译API
-    const params = new URLSearchParams({
-      client: 'gtx',
-      sl: sourceLang === 'auto' ? 'auto' : sourceLang,
-      tl: targetLang,
-      dt: 't',
-      q: combinedText
-    });
-    
-    const response = await fetch(`${apiUrl}?${params}`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      }
-    });
-    
-    if (!response.ok) {
-      throw new Error(`Google翻译API错误: ${response.status}`);
-    }
-    
-    const data = await response.json();
-    
-    // Step 4: 解析翻译结果
-    let translatedText = '';
-    if (data && data[0]) {
-      data[0].forEach((item: any) => {
-        if (item[0]) {
-          translatedText += item[0];
+  const baseParams = {
+    client: 'gtx',
+    sl: sourceLang === 'auto' ? 'auto' : sourceLang,
+    tl: targetLang,
+    dt: 't',
+    q: combinedText
+  };
+
+  type Endpoint = {
+    id: 'single' | 't';
+    url: string;
+    parse: (data: any) => string;
+  };
+
+  const endpoints: Endpoint[] = [
+    {
+      id: 'single',
+      url: 'https://translate.googleapis.com/translate_a/single',
+      parse: (data: any) => {
+        if (!Array.isArray(data) || !Array.isArray(data[0])) {
+          throw new Error('unexpected response from /translate_a/single');
         }
-      });
+        return data[0]
+          .map((item: any) => (Array.isArray(item) && typeof item[0] === 'string' ? item[0] : ''))
+          .join('');
+      }
+    },
+    {
+      id: 't',
+      url: 'https://translate.googleapis.com/translate_a/t',
+      parse: (data: any) => {
+        if (!Array.isArray(data)) {
+          throw new Error('unexpected response from /translate_a/t');
+        }
+
+        if (typeof data[0] === 'string') {
+          return (data as string[]).join('');
+        }
+
+        if (Array.isArray(data[0])) {
+          return (data as any[])
+            .map((item) => (Array.isArray(item) && item.length > 0 ? String(item[0]) : ''))
+            .join('');
+        }
+
+        throw new Error('unsupported translate_a/t payload shape');
+      }
     }
-    
-    // Step 5: 分割翻译结果
-    let translatedTexts: string[] = [];
-    
-    // 统一处理：按换行符分割翻译结果
-    translatedTexts = translatedText.split('\n').map(s => s.trim()).filter(s => s.length > 0);
-    
-    // 合并成一条日志显示翻译结果信息
-    if (translatedTexts.length > 0) {
-      const firstResult = translatedTexts[0].substring(0, 80);
-      const lastResult = translatedTexts.length > 1 ? translatedTexts[translatedTexts.length - 1].substring(0, 80) : '';
-      const resultInfo = translatedTexts.length > 1
-        ? `[第1条: "${firstResult}" ... 第${translatedTexts.length}条: "${lastResult}"]`
-        : `[单条: "${firstResult}"]`;
-      console.log(`[DEBUG] ${translationType}译文 (${translatedTexts.length}条): ${resultInfo}`);
+  ];
+
+  const normalizeTranslation = (combined: string): string[] => {
+    if (texts.length === 1) {
+      return [combined.trim() || texts[0]];
     }
-    
-    // 如果分割数量不匹配，使用比例分割法作为降级方案
+
+    let translatedTexts = combined.split('\n').map((segment) => segment.trim());
+
     if (!isPreMerged && translatedTexts.length !== texts.length) {
-      console.warn(`[service-worker] 分割数量不匹配（${translatedTexts.length} vs ${texts.length}），使用比例分割法`);
-      
-      // 获取原始文本长度用于比例分割
-      const processedTexts = texts.map((text) => {
-        return text.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
-      });
-      const originalLengths = processedTexts.map(t => t.length);
-      translatedTexts = splitByRatio(translatedText, originalLengths);
-      console.log(`[DEBUG] 按比例分割成 ${translatedTexts.length} 条`);
+      console.warn(
+        `[service-worker] 分割数量不匹配（${translatedTexts.length} vs ${texts.length}），使用比例分割法`
+      );
+      translatedTexts = splitByRatio(combined, originalLengths);
     }
-    
-    // 返回翻译结果
-    return translatedTexts;
-    
-  } catch (error) {
-    console.error('[service-worker] Google翻译失败:', error);
-    return texts; // 失败返回原文
+
+    if (translatedTexts.length > texts.length) {
+      while (translatedTexts.length > texts.length) {
+        const extra = translatedTexts.pop();
+        if (extra === undefined) {
+          break;
+        }
+        const lastIndex = translatedTexts.length - 1;
+        if (lastIndex >= 0) {
+          translatedTexts[lastIndex] = `${translatedTexts[lastIndex]} ${extra}`.trim();
+        }
+      }
+    }
+
+    while (translatedTexts.length < texts.length) {
+      const idx = translatedTexts.length;
+      translatedTexts.push(texts[idx]);
+    }
+
+    return translatedTexts.slice(0, texts.length);
+  };
+
+  for (const endpoint of endpoints) {
+    try {
+      const params = new URLSearchParams(baseParams);
+      const response = await fetch(`${endpoint.url}?${params.toString()}`, {
+        method: 'GET'
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const json = await response.json();
+      const combinedTranslation = endpoint.parse(json);
+      const translatedTexts = normalizeTranslation(combinedTranslation);
+
+      if (translatedTexts.length > 0) {
+        const firstResult = translatedTexts[0].substring(0, 80);
+        const lastResult = translatedTexts.length > 1
+          ? translatedTexts[translatedTexts.length - 1].substring(0, 80)
+          : '';
+        const resultInfo = translatedTexts.length > 1
+          ? `[第1条: "${firstResult}" ... 第${translatedTexts.length}条: "${lastResult}"]`
+          : `[单条: "${firstResult}"]`;
+        console.log(
+          `[DEBUG] ${translationType}译文 (${translatedTexts.length}条，endpoint=${endpoint.id}): ${resultInfo}`
+        );
+      }
+
+      console.log(`[service-worker] Google endpoint=${endpoint.id} success`);
+      return translatedTexts;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[service-worker] Google endpoint=${endpoint.id} failed，尝试切换`, message);
+    }
   }
+
+  console.error('[service-worker] Google翻译失败：所有端点不可用');
+  return texts; // 失败返回原文
 }
 
 /**
