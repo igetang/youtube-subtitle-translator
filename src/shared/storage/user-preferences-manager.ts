@@ -95,20 +95,27 @@ export class UserPreferencesManager {
   /**
    * 触发偏好设置变更事件
    */
-  private triggerPreferencesChangeEvent(newPrefs: UserPreferences, oldPrefs: UserPreferences): void {
-    if (!newPrefs || !oldPrefs) return;
+  private triggerPreferencesChangeEvent(newPrefs: UserPreferences, oldPrefs: UserPreferences | null): void {
+    if (!newPrefs) return;
+
+    // 当旧值缺失时，使用默认配置作为比较基准，保证首次写入也能触发事件
+    const previousPrefs = oldPrefs ?? DEFAULT_USER_PREFERENCES;
+
+    if (!oldPrefs) {
+      console.log('[user-preferences-manager] 未检测到旧的偏好设置，使用默认值作为比较基准');
+    }
 
     // 检查各个字段的变更
-    if (newPrefs.targetLang !== oldPrefs.targetLang) {
-      this.triggerChangeEvent(UserPreferenceChangeEvent.TARGET_LANG_CHANGED, newPrefs.targetLang, oldPrefs.targetLang);
+    if (newPrefs.targetLang !== previousPrefs.targetLang) {
+      this.triggerChangeEvent(UserPreferenceChangeEvent.TARGET_LANG_CHANGED, newPrefs.targetLang, previousPrefs.targetLang);
     }
 
-    if (newPrefs.subtitleMode !== oldPrefs.subtitleMode) {
-      this.triggerChangeEvent(UserPreferenceChangeEvent.SUBTITLE_MODE_CHANGED, newPrefs.subtitleMode, oldPrefs.subtitleMode);
+    if (newPrefs.subtitleMode !== previousPrefs.subtitleMode) {
+      this.triggerChangeEvent(UserPreferenceChangeEvent.SUBTITLE_MODE_CHANGED, newPrefs.subtitleMode, previousPrefs.subtitleMode);
     }
 
-    if (JSON.stringify(newPrefs.translationService) !== JSON.stringify(oldPrefs.translationService)) {
-      this.triggerChangeEvent(UserPreferenceChangeEvent.TRANSLATION_SERVICE_CHANGED, newPrefs.translationService, oldPrefs.translationService);
+    if (JSON.stringify(newPrefs.translationService) !== JSON.stringify(previousPrefs.translationService)) {
+      this.triggerChangeEvent(UserPreferenceChangeEvent.TRANSLATION_SERVICE_CHANGED, newPrefs.translationService, previousPrefs.translationService);
     }
   }
 
@@ -278,11 +285,11 @@ export class UserPreferencesManager {
       const storageKey = `${StorageKeys.USER_PREFERENCES_PREFIX}main`;
       console.log('[user-preferences-manager] 从Local Storage读取偏好设置, key:', storageKey);
       const data = await this.storageManager.get<UserPreferences | null>(storageKey, null);
-      
+
       if (data) {
         // 验证数据完整性
         const validation = this.validateUserPreferences(data);
-        
+
         if (validation.isValid) {
           console.log('[user-preferences-manager] ✓ 读取成功:', {
             targetLang: data.targetLang,

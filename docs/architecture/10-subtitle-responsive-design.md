@@ -1,6 +1,7 @@
 # YouTube字幕响应式设计分析
 
 ## 更新历史
+- 2025-09-26: 紧急字幕改为监听 `subtitleMode` 首次写入，popup 切换可立即刷新
 - 2025-09-25: 通过实际测试发现YouTube使用播放器宽度的2.5%作为字体大小
 - 2025-09-25: 实现了精确匹配YouTube原生字幕的响应式方案
 - 2025-09-25: 解决了字幕换行问题，移除了max-width限制
@@ -116,6 +117,16 @@ bottom: 180px;  // 全屏模式固定
 **问题**：
 - 不同屏幕尺寸下位置不合适
 - 没有考虑播放器控制栏高度变化
+
+### 2.4 字幕模式即时切换（2025-09-26）
+
+**问题**：紧急字幕渲染在 `TRANSLATION_UPDATE(urgent)` 阶段完成，若 popup 第一次切换字幕模式，`UserPreferencesManager` 未能广播 `SUBTITLE_MODE_CHANGED`，导致黄色紧急字幕继续沿用旧布局。
+
+**解决**：在 `user-preferences-manager` 中，当 Chrome storage 返回 `oldValue = null` 时使用默认偏好进行对比并仍然抛出事件；`SubtitleOverlay` 监听该事件后立即调用 `forceUpdateDisplay()`，实现紧急字幕与批量字幕一致的实时切换体验。
+
+**影响面**：
+- 紧急翻译结果在双语/仅译文之间切换无需等待批量翻译覆盖。
+- 批量翻译路径保持不变，继续通过完整覆盖刷新 UI。
 
 ## 3. 改进方案
 

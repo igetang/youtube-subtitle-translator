@@ -62,7 +62,7 @@ export async function handleToggleTranslateV4(
     notifyStateChange
   } = dependencies;
   
-  const { videoId, newState, originalSubtitleState } = data;
+  const { videoId, newState, originalSubtitleState, sourceLang: requestedSourceLang } = data;
   const tabId = sender.tab?.id;
   
   if (!tabId) {
@@ -126,20 +126,80 @@ export async function handleToggleTranslateV4(
     // ========== Stage 2: 获取源语言信息 ==========
     console.log('[service-worker-v4] → Stage 2: 获取源语言信息');
     const sourceData = await videoSourceLanguageCacheManager.get(videoId);
+    console.debug('[debug][service-worker-v4] Stage 2 源语言缓存查询结果', {
+      hasCache: Boolean(sourceData),
+      availableCount: sourceData?.availableSourceLanguages?.length || 0,
+      lastSelectedLanguage: sourceData?.lastSelectedLanguage,
+      selectedTrack: sourceData?.selectedSourceTrack ? {
+        languageCode: sourceData.selectedSourceTrack.languageCode,
+        kind: sourceData.selectedSourceTrack.kind ?? null
+      } : null
+    });
     let sourceLang = 'auto';
     let sourceKind: string | undefined;
 
     // 如果有缓存的轨道信息，先尝试使用缓存选择源语言
     if (sourceData?.availableSourceLanguages?.length > 0) {
-      const sourceTrack = selectBestSourceLanguage(
-        sourceData.availableSourceLanguages,
-        preferences.targetLang,
-        sourceData.lastSelectedLanguage
-      );
+      const preferredLang = requestedSourceLang ?? sourceData.lastSelectedLanguage;
+      let sourceTrack = preferredLang
+        ? sourceData.availableSourceLanguages.find((track: any) => track.languageCode === preferredLang)
+        : undefined;
+
+      if (!sourceTrack) {
+        if (preferredLang) {
+          console.debug('[debug][service-worker-v4] 缓存中未找到指定源语言，回退智能选择', {
+            requestedSourceLang: preferredLang,
+            available: sourceData.availableSourceLanguages.map((track: any) => track.languageCode)
+          });
+        }
+        sourceTrack = selectBestSourceLanguage(
+          sourceData.availableSourceLanguages,
+          preferences.targetLang,
+          sourceData.lastSelectedLanguage
+        );
+      }
+
       sourceLang = sourceTrack.languageCode;
       sourceKind = sourceTrack.kind;
-      console.log(`[service-worker-v4] 使用缓存的轨道信息选择源语言: ${sourceLang}${sourceKind === 'asr' ? ' (ASR)' : ''}`);
+      console.debug('[debug][service-worker-v4] 使用缓存的轨道信息选择源语言', {
+        sourceLang,
+        sourceKind,
+        requestedSourceLang,
+        cachedSelected: sourceData.selectedSourceTrack,
+        cachedLastSelectedLanguage: sourceData.lastSelectedLanguage
+      });
     }
+
+    const sendSetSubtitleTrack = async (langCode?: string, kind?: string) => {
+      if (!langCode || langCode === 'auto') {
+        console.debug('[debug][service-worker-v4] 跳过 setSubtitleTrackAPI（源语言为空或auto）', {
+          langCode,
+          kind
+        });
+        return;
+      }
+
+      const setSubtitlePayload = {
+        type: 'setSubtitleTrackAPI',
+        langCode
+      };
+
+      try {
+        console.debug('[debug][service-worker-v4] → setSubtitleTrackAPI 请求', {
+          tabId,
+          payload: setSubtitlePayload,
+          kind
+        });
+        const setResult = await chrome.tabs.sendMessage(tabId, setSubtitlePayload);
+        if (setResult?.success) {
+          console.debug('[debug][service-worker-v4] ← setSubtitleTrackAPI 成功响应', setResult);
+        } else {
+          console.warn('[service-worker-v4] setSubtitleTrackAPI 返回失败，将依赖字幕按钮触发', setResult);
+        }
+      } catch (apiError) {
+        console.warn('[service-worker-v4] setSubtitleTrackAPI 调用异常，将依赖字幕按钮触发', apiError);
+      }
+    };
 
     // 检查完整缓存（使用初步选择的源语言）
     const cachedResult = await translationCacheManager.get(
@@ -178,12 +238,20 @@ export async function handleToggleTranslateV4(
         const trackResponse = await session.executeStage(
           'get_tracks',
           async (signal) => {
-            console.log('[service-worker-v4] 调用 getVideoTrackData API');
-            const response = await chrome.tabs.sendMessage(tabId, {
+            const requestPayload = {
               type: 'getVideoTrackData',
               videoId: videoId
+            };
+            console.debug('[debug][service-worker-v4] → getVideoTrackData 请求', {
+              tabId,
+              payload: requestPayload
             });
-            console.log('[service-worker-v4] 轨道API响应:', response);
+            const response = await chrome.tabs.sendMessage(tabId, requestPayload);
+            console.debug('[debug][service-worker-v4] ← getVideoTrackData 响应', {
+              success: response?.success,
+              trackCount: response?.tracks?.length,
+              keys: response ? Object.keys(response) : []
+            });
             return response;
           },
           { timeoutMs: 5000 }  // 增加超时时间到5秒
@@ -191,6 +259,18 @@ export async function handleToggleTranslateV4(
 
         if (trackResponse?.success && trackResponse.tracks?.length > 0) {
           console.log(`[service-worker-v4] 获取到 ${trackResponse.tracks.length} 条轨道信息`);
+          try {
+            const trackSnapshot = trackResponse.tracks.slice(0, 6).map((track: any) => ({
+              languageCode: track.languageCode,
+              name: track.name,
+              vssId: track.vssId ?? track.vss_id ?? null,
+              kind: track.kind ?? null,
+              hasBaseUrl: Boolean(track.baseUrl)
+            }));
+            console.debug('[debug][service-worker-v4] 轨道快照(前6条)', trackSnapshot);
+          } catch (snapshotError) {
+            console.warn('[service-worker-v4] 轨道快照记录失败:', snapshotError);
+          }
 
           // 使用智能选择算法选择最佳源语言
           const sourceTrack = selectBestSourceLanguage(
@@ -200,26 +280,13 @@ export async function handleToggleTranslateV4(
           );
           sourceLang = sourceTrack.languageCode;
           sourceKind = sourceTrack.kind;
-          console.log(`[service-worker-v4] 智能选择源语言: ${sourceLang}${sourceKind === 'asr' ? ' (ASR)' : ''}`);
+          console.debug('[debug][service-worker-v4] 智能选择源语言', {
+            sourceLang,
+            sourceKind,
+            lastSelectedLanguage: sourceData?.lastSelectedLanguage
+          });
 
-          // 通过Player API设置字幕语言
-          if (sourceLang && sourceLang !== 'auto') {
-            try {
-              console.log(`[service-worker-v4] 设置字幕轨道为: ${sourceLang}`);
-              const setResult = await chrome.tabs.sendMessage(tabId, {
-                type: 'setSubtitleTrackAPI',
-                langCode: sourceLang
-              });
-
-              if (setResult?.success) {
-                console.log(`[service-worker-v4] ✓ 成功切换到字幕轨道: ${sourceLang}`);
-              } else {
-                console.warn('[service-worker-v4] API设置字幕语言失败，将依赖拦截器');
-              }
-            } catch (apiError) {
-              console.warn('[service-worker-v4] API调用失败，回退到拦截器方案:', apiError);
-            }
-          }
+          await sendSetSubtitleTrack(sourceLang, sourceKind);
 
           // 异步缓存轨道信息（不阻塞主流程）
           Promise.resolve().then(async () => {
@@ -251,6 +318,7 @@ export async function handleToggleTranslateV4(
       }
     } else {
       console.log(`[service-worker-v4] 已有缓存轨道信息，源语言: ${sourceLang}`);
+      await sendSetSubtitleTrack(sourceLang, sourceKind);
     }
 
     // ========== Stage 4: 获取字幕（5秒超时）==========
@@ -260,13 +328,18 @@ export async function handleToggleTranslateV4(
     await session.executeStage(
       'trigger_load',
       async (signal) => {
-        console.log('[service-worker-v4] 触发字幕加载');
-        await chrome.tabs.sendMessage(tabId, {
+        const triggerPayload = {
           type: 'TRIGGER_SUBTITLE_LOAD',
           sourceLang: sourceLang,
           sourceKind: sourceKind,
           originalSubtitleState: originalSubtitleState  // 传递原始状态
+        };
+        console.debug('[debug][service-worker-v4] → TRIGGER_SUBTITLE_LOAD 请求', {
+          tabId,
+          payload: triggerPayload
         });
+        await chrome.tabs.sendMessage(tabId, triggerPayload);
+        console.debug('[debug][service-worker-v4] ← TRIGGER_SUBTITLE_LOAD 已发送');
         return true;
       },
       { timeoutMs: 2000 }
@@ -285,11 +358,15 @@ export async function handleToggleTranslateV4(
             if (message.type === 'SUBTITLE_DATA' && 
                 msgSender.tab?.id === tabId &&
                 message.data?.videoId === videoId) {
-              
               if (!resolved) {
                 resolved = true;
                 chrome.runtime.onMessage.removeListener(messageListener);
-                console.log('[service-worker-v4] ✓ 收到字幕数据');
+                console.debug('[debug][service-worker-v4] ← SUBTITLE_DATA', {
+                  subtitleCount: message.data?.subtitles?.length,
+                  sourceLang: message.data?.sourceLang,
+                  hasTracks: Boolean(message.data?.tracks),
+                  keys: Object.keys(message.data || {})
+                });
                 resolve(message.data);
               }
               return true;
@@ -321,6 +398,16 @@ export async function handleToggleTranslateV4(
     }
 
     console.log(`[service-worker-v4] 获取到 ${subtitleData.subtitles.length} 条字幕`);
+    console.debug('[debug][service-worker-v4] Stage 4 字幕数据概要', {
+      subtitleCount: subtitleData.subtitles.length,
+      sourceLang,
+      sample: subtitleData.subtitles.slice(0, 3).map((sub: any, idx: number) => ({
+        index: idx,
+        start: sub.start,
+        duration: sub.end ? sub.end - sub.start : sub.duration,
+        textPreview: (sub.text || '').slice(0, 60)
+      }))
+    });
 
     // 如果字幕数据中包含源语言信息，且当前是auto，更新源语言
     if (subtitleData.sourceLang && sourceLang === 'auto') {

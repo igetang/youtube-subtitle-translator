@@ -100,12 +100,16 @@ class MainWorldMessenger {
    * 处理字幕捕获请求
    */
   private handleSubtitleCapture(data: any): void {
-    console.log('[Main World] 收到字幕捕获请求');
+    console.debug('[debug][MainWorld] 收到字幕捕获请求', data);
 
     const { sourceLang, sourceKind, originalSubtitleState } = data;
-    console.log(`[Main World] 接收到源语言: ${sourceLang}, 字幕类型: ${sourceKind}`);
+    console.debug('[debug][MainWorld] 目标字幕参数', {
+      sourceLang,
+      sourceKind,
+      originalSubtitleState
+    });
     if (originalSubtitleState !== undefined) {
-      console.log(`[Main World] 字幕按钮原始状态: ${originalSubtitleState ? '开启' : '关闭'}`);
+      console.debug('[debug][MainWorld] 字幕按钮原始状态', originalSubtitleState);
     }
 
     // 并发控制：防止重复初始化
@@ -119,7 +123,7 @@ class MainWorldMessenger {
       isInitializing = false;
 
       if (success) {
-        console.log('[Main World] 初始化成功，触发字幕按钮');
+        console.debug('[debug][MainWorld] 拦截器初始化成功，准备触发字幕按钮');
         interceptor.triggerSubtitleButton();
       } else {
         console.error('[Main World] 初始化失败');
@@ -127,7 +131,7 @@ class MainWorldMessenger {
         this.sendResponse('INTERCEPTOR_INIT_FAILED', { error: '初始化失败' });
       }
     } else {
-      console.log('[Main World] 拦截器已激活或正在初始化，跳过');
+      console.debug('[debug][MainWorld] 拦截器已激活或正在初始化，跳过');
     }
   }
 
@@ -211,7 +215,10 @@ class MainWorldMessenger {
    */
   private async handleSetSubtitleTrackAPI(data: any): Promise<void> {
     const { langCode, _requestId: requestId } = data;
-    console.log(`[Main World] 收到设置字幕语言API请求: ${langCode}`);
+    console.debug('[debug][MainWorld] 收到设置字幕语言API请求', {
+      langCode,
+      requestId
+    });
 
     if (!subtitleAPIController) {
       subtitleAPIController = new SubtitleAPIController();
@@ -369,22 +376,59 @@ class SubtitleAPIController {
       console.error('[SubtitleAPIController] 播放器或模块未就绪');
       return false;
     }
-    
+
     try {
-      console.log(`[SubtitleAPIController] 尝试切换到语言: ${langCode}`);
-      
+      console.debug('[debug][SubtitleAPIController] 尝试切换字幕语言', {
+        langCode,
+        module: this.captionsModule
+      });
+
+      const trackList = this.player.getOption(this.captionsModule, 'tracklist') || [];
+      try {
+        const snapshot = trackList.slice(0, 6).map((track: any) => ({
+          languageCode: track.languageCode ?? track.language_code ?? null,
+          vssId: track.vssId ?? track.vss_id ?? null,
+          kind: track.kind ?? null,
+          hasBaseUrl: Boolean(track.baseUrl)
+        }));
+        console.debug('[debug][SubtitleAPIController] tracklist 快照(前6条)', snapshot);
+      } catch (snapshotError) {
+        console.warn('[SubtitleAPIController] tracklist 快照记录失败:', snapshotError);
+      }
+
+      const candidateTrack = trackList.find((track: any) => {
+        const trackLang = track.languageCode ?? track.language_code;
+        return trackLang === langCode;
+      });
+      console.debug('[debug][SubtitleAPIController] tracklist 匹配结果', candidateTrack ? {
+        languageCode: candidateTrack.languageCode ?? candidateTrack.language_code,
+        vssId: candidateTrack.vssId ?? candidateTrack.vss_id ?? null,
+        kind: candidateTrack.kind ?? null
+      } : '未找到');
+
+      if (!candidateTrack) {
+        console.warn('[SubtitleAPIController] tracklist 未找到匹配轨道，准备从playerResponse补足');
+      }
+
       // 设置字幕轨道（使用ISO 639-1标准）
       this.player.setOption(this.captionsModule, 'track', {
         "languageCode": langCode
       });
-      
+
       // 如果使用的是旧模块，也尝试设置
       if (this.captionsModule === 'captions') {
         this.player.setOption('cc', 'track', {"languageCode": langCode});
       } else {
         this.player.setOption('captions', 'track', {"languageCode": langCode});
       }
-      
+
+      try {
+        const currentTrack = this.player.getOption(this.captionsModule, 'track');
+        console.debug('[debug][SubtitleAPIController] setOption之后当前轨道', currentTrack);
+      } catch (inspectError) {
+        console.warn('[SubtitleAPIController] 获取当前轨道失败:', inspectError);
+      }
+
       // 确保字幕按钮开启
       const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLButtonElement;
       if (subtitleBtn && subtitleBtn.getAttribute('aria-pressed') !== 'true') {
@@ -457,9 +501,43 @@ class SubtitleInterceptor {
     this.targetSourceLang = sourceLang || null;
     this.targetSourceKind = sourceKind || null;
     this.originalSubtitleState = originalSubtitleState ?? null;
-    console.log(`[SubtitleInterceptor] 目标字幕: lang=${this.targetSourceLang}, kind=${this.targetSourceKind}`);
+    console.debug('[debug][SubtitleInterceptor] 目标字幕', {
+      targetSourceLang: this.targetSourceLang,
+      targetSourceKind: this.targetSourceKind
+    });
     if (this.originalSubtitleState !== null) {
-      console.log(`[SubtitleInterceptor] 保存原始字幕状态: ${this.originalSubtitleState ? '开启' : '关闭'}`);
+      console.debug('[debug][SubtitleInterceptor] 原始字幕按钮状态', this.originalSubtitleState);
+    }
+
+    if (!subtitleAPIController) {
+      try {
+        subtitleAPIController = new SubtitleAPIController();
+        console.debug('[debug][SubtitleInterceptor] 初始化 SubtitleAPIController 实例');
+      } catch (controllerError) {
+        console.warn('[SubtitleInterceptor] SubtitleAPIController 初始化失败:', controllerError);
+      }
+    }
+
+    try {
+      const currentTrack = subtitleAPIController?.getCurrentTrack?.();
+      console.debug('[debug][SubtitleInterceptor] 初始化前播放器当前轨道', currentTrack);
+    } catch (trackError) {
+      console.warn('[SubtitleInterceptor] 获取当前轨道失败:', trackError);
+    }
+
+    if (subtitleAPIController && subtitleAPIController.getAvailableTracks) {
+      subtitleAPIController.getAvailableTracks().then((tracks: any[]) => {
+        if (tracks) {
+          const snapshot = tracks.slice(0, 6).map(track => ({
+            languageCode: track.languageCode,
+            vssId: track.vssId ?? track.vss_id ?? null,
+            kind: track.kind ?? null
+          }));
+          console.debug('[debug][SubtitleInterceptor] 初始化时可用轨道快照', snapshot);
+        }
+      }).catch(err => {
+        console.warn('[SubtitleInterceptor] 获取可用轨道失败:', err);
+      });
     }
 
     try {
@@ -704,25 +782,44 @@ class SubtitleInterceptor {
   }
 
   triggerSubtitleButton(): void {
-    console.log('[SubtitleInterceptor] 尝试自动触发字幕按钮...');
-    
+    console.debug('[debug][SubtitleInterceptor] 尝试自动触发字幕按钮', {
+      targetSourceLang: this.targetSourceLang,
+      targetSourceKind: this.targetSourceKind
+    });
+
+    const logCurrentTrack = (stage: string) => {
+      try {
+        if (subtitleAPIController) {
+          const current = subtitleAPIController.getCurrentTrack();
+          console.debug('[debug][SubtitleInterceptor] 播放器轨道状态', { stage, current });
+        }
+      } catch (error) {
+        console.warn('[SubtitleInterceptor] 获取播放器轨道失败', { stage, error });
+      }
+    };
+
+    logCurrentTrack('before-toggle');
+
     setTimeout(() => {
       const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
       if (subtitleBtn) {
         const isPressed = subtitleBtn.getAttribute('aria-pressed') === 'true';
-        console.log('[SubtitleInterceptor] 字幕按钮当前状态:', isPressed ? '开启' : '关闭');
-        
-        if (!isPressed) {
-          // 如果字幕关闭，先打开
+        console.debug('[debug][SubtitleInterceptor] 字幕按钮当前状态', {
+          isPressed,
+          targetSourceLang: this.targetSourceLang
+        });
+
+        const clickOnce = (stage: string) => {
           subtitleBtn.click();
-          console.log('[SubtitleInterceptor] 已打开字幕');
+          console.debug('[debug][SubtitleInterceptor] 已点击字幕按钮', { stage });
+          setTimeout(() => logCurrentTrack(stage), 150);
+        };
+
+        if (!isPressed) {
+          clickOnce('enable');
         } else {
-          // 如果字幕已开启，先关闭再打开以触发请求
-          subtitleBtn.click(); // 关闭
-          setTimeout(() => {
-            subtitleBtn.click(); // 打开
-            console.log('[SubtitleInterceptor] 已切换字幕以触发请求');
-          }, 500);
+          clickOnce('toggle-off');
+          setTimeout(() => clickOnce('toggle-on'), 500);
         }
       } else {
         console.warn('[SubtitleInterceptor] 未找到字幕按钮');
@@ -730,6 +827,7 @@ class SubtitleInterceptor {
     }, 1000);
   }
 }
+
 
 // 创建并初始化MainWorldMessenger实例
 const messengerInstance = MainWorldMessenger.getInstance();

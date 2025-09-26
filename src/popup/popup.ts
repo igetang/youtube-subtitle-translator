@@ -1945,10 +1945,10 @@ async function handleSubtitleModeChange(switchElement: HTMLInputElement): Promis
   try {
     const subtitleMode = switchElement.checked ? SubtitleMode.BILINGUAL : SubtitleMode.TARGET_ONLY;
     console.log('[popup] 统一监听器 - 字幕模式变更:', subtitleMode);
-    
+
     // 使用步骤1实现的UserPreferencesManager
     await userPreferencesManager.updateUserPreferences({ subtitleMode });
-    
+
   } catch (error) {
     console.error('[popup] 统一监听器 - 字幕模式变更失败:', error);
   }

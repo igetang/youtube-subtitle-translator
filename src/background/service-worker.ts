@@ -2097,6 +2097,7 @@ interface ToggleTranslateRequest {
   currentTime?: number;
   tabId?: number;
   originalSubtitleState?: boolean;
+  sourceLang?: string;
 }
 
 /**

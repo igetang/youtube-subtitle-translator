@@ -851,17 +851,17 @@ function handleSubtitleCaptured(payload: any): void {
     type: 'DESTROY_SUBTITLE_INTERCEPTOR'
   }, '*');
 
-  // 恢复原始字幕按钮状态（如果需要）
-  if (payload.needsRestore && payload.originalSubtitleState === false) {
-    console.log('[content-script] 检测到需要恢复字幕按钮状态为关闭');
-    setTimeout(() => {
-      const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
-      if (subtitleBtn && subtitleBtn.getAttribute('aria-pressed') === 'true') {
-        console.log('[content-script] 恢复字幕按钮为关闭状态');
-        subtitleBtn.click();
-      }
-    }, 1000); // 延迟1秒确保拦截完全结束
-  }
+  // TODO: 暂停恢复字幕按钮状态，便于观察轨道切换流程
+  // if (payload.needsRestore && payload.originalSubtitleState === false) {
+  //   console.log('[content-script] 检测到需要恢复字幕按钮状态为关闭');
+  //   setTimeout(() => {
+  //     const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
+  //     if (subtitleBtn && subtitleBtn.getAttribute('aria-pressed') === 'true') {
+  //       console.log('[content-script] 恢复字幕按钮为关闭状态');
+  //       subtitleBtn.click();
+  //     }
+  //   }, 1000); // 延迟1秒确保拦截完全结束
+  // }
 
   const videoId = getVideoId();
   if (!videoId) {

@@ -123,7 +123,7 @@ const translatedArray = translatedText.split('\n').map(t => t.trim());
 flowchart LR
   A[translate_a/single] -->|成功| R[返回翻译结果]
   A -->|HTTP/解析失败| B[translate_a/t]
-  B -->|成功| R
+ B -->|成功| R
   B -->|失败| F[Fallback 原文 + 报错]
 ```
 
@@ -131,8 +131,11 @@ flowchart LR
 2. **解析差异**：
    - `single` 返回多层数组，继续沿用既有解析逻辑（含条数校验与比例降级）。
    - `t` 返回简单数组（`["译文"]` 或 `[["译文片段"]]`），使用专用解析函数拼装成与批量流程兼容的结果。
-3. **透明切换**：整个流程对上层调用者透明；若两条路径都失败，统一抛出翻译错误，让业务回退为原文显示。
-4. **日志**：成功路径记为 `Google endpoint=single|t success`；单条失败时输出 `single failed -> fallback to t` 便于排查。
+3. **紧急→批量联动**：
+   - 紧急翻译阶段按顺序尝试端点，**一旦某个端点成功**，批量翻译阶段直接沿用该端点，不再尝试刚刚失败的端点。
+   - 若紧急翻译两个端点都失败，则直接返回失败，**跳过批量翻译**，避免重复触发无效请求。
+4. **透明切换**：整个流程对上层调用者透明；若最终仍失败，统一抛出翻译错误，让业务回退为原文显示。
+5. **日志**：成功路径记为 `Google endpoint=single|t success`；紧急阶段失败时输出 `single failed -> fallback to t`，批量阶段沿用成功端点时记录 `reuse endpoint=t for batch` 便于排查。
 
 #### 2.3.4 方案优势
 
