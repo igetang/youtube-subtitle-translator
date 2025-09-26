@@ -148,7 +148,10 @@ URL: https://api.cognitive.microsofttranslator.com/translate
     {"translations": [{"text": "翻译结果1", "to": "zh-Hans"}]},
     {"translations": [{"text": "翻译结果2", "to": "zh-Hans"}]}
   ]
-批量限制: 建议每批最多10条
+批量限制:
+- 单个请求体数组最多包含 10 项 `{"Text": "..."}`
+- 每项文本建议 ≤ 5000 个字符，单次请求总字符数 ≤ 50000
+- 批量流程将按“5000 字符窗口 + 智能断句”拆分字幕，超过限制会自动分批重试
 ```
 
 ##### 3. 路径B - 备用翻译接口（故障转移）
@@ -185,8 +188,8 @@ Headers和请求体: 同路径A
 
 ##### 5. 错误处理策略
 - 路径A失败→自动切换路径B
-- 认证失败→重新获取令牌
-- 批量过大→拆分成更小批次
+- 认证失败→重新获取令牌，并在新 token 下重试
+- 批量过大→滑动 5000 字符窗口并在窗口内智能断句拆分；单条字幕超限将被单独处理
 - 建议批次间延迟500ms避免限流
 
 ##### 6. 测试验证（2025-09-26）
@@ -194,6 +197,130 @@ Headers和请求体: 同路径A
 ✅ 路径A翻译：正常工作，响应快速
 ✅ 路径B翻译：正常工作，包含句子长度信息
 ✅ 双向翻译：中英互译均正常
+
+#### DeepSeek AI翻译API
+
+##### 1. 基础信息
+```
+基础URL: https://api.deepseek.com
+API版本: v1
+认证方式: Bearer Token (API Key)
+协议: REST API (OpenAI兼容格式)
+官方文档: https://api-docs.deepseek.com/
+```
+
+##### 2. API端点
+```
+POST https://api.deepseek.com/v1/chat/completions
+```
+
+##### 3. 请求格式
+```http
+Headers:
+  Authorization: Bearer YOUR_DEEPSEEK_API_KEY
+  Content-Type: application/json
+
+Body:
+{
+  "model": "deepseek-chat",        // 推荐模型
+  "messages": [
+    {
+      "role": "system",
+      "content": "翻译任务描述"
+    },
+    {
+      "role": "user",
+      "content": "待翻译文本"
+    }
+  ],
+  "temperature": 0.3,              // 翻译建议低温度
+  "max_tokens": 2000,              // 最大输出tokens
+  "stream": false                  // 批量翻译建议关闭流式
+}
+```
+
+##### 4. 响应格式
+```json
+{
+  "id": "chatcmpl-xxx",
+  "model": "deepseek-chat",
+  "choices": [{
+    "message": {
+      "role": "assistant",
+      "content": "翻译结果"
+    },
+    "finish_reason": "stop"
+  }],
+  "usage": {
+    "prompt_tokens": 100,
+    "completion_tokens": 50,
+    "total_tokens": 150
+  }
+}
+```
+
+##### 5. 调用示例
+```javascript
+// 翻译请求示例
+async function translateWithDeepSeek(text, sourceLang, targetLang) {
+  const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'deepseek-chat',
+      messages: [
+        {
+          role: 'system',
+          content: `Translate from ${sourceLang} to ${targetLang}. Return only translation.`
+        },
+        {
+          role: 'user',
+          content: text
+        }
+      ],
+      temperature: 0.3
+    })
+  });
+
+  const data = await response.json();
+  return data.choices[0].message.content;
+}
+```
+
+##### 6. 批量翻译优化
+```javascript
+// 批量处理建议
+- 每批5-10条字幕
+- 使用明确的分隔符（如：\n---\n）
+- 控制总tokens在4000以内
+- Temperature设置0.3保证一致性
+```
+
+##### 7. 定价信息（2025-09）
+- **deepseek-chat模型**：
+  - 输入：$0.27/百万tokens
+  - 输出：$1.10/百万tokens
+  - 缓存输入：$0.07/百万tokens
+- **成本参考**：翻译100条字幕约$0.001（不到1分钱）
+- **Token计算**：
+  - 英文：1 word ≈ 1.3 tokens
+  - 中文：1 字符 ≈ 0.6 tokens
+
+##### 8. 特点优势
+✅ 极低成本（比OpenAI便宜95%）
+✅ 中文翻译质量优秀
+✅ OpenAI SDK完全兼容
+✅ 支持64K上下文
+✅ 官方API稳定可靠
+
+##### 9. 注意事项
+- 需要在 platform.deepseek.com 注册获取API Key
+- 新用户有免费额度
+- 建议缓存翻译结果减少重复调用
+- 适合长文本批量翻译场景
 
 ### 2.2 Chrome扩展API
 
