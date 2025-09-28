@@ -381,17 +381,223 @@ class TranslationCache {
 }
 ```
 
-### 3. 批处理优化
-```typescript
-// 智能批处理，根据文本长度动态调整批量大小
-function calculateBatchSize(texts: string[]): number {
-  const avgLength = texts.reduce((sum, t) => sum + t.length, 0) / texts.length;
+### 3. 批处理优化 - 5000字符滑动窗口方案
 
-  if (avgLength < 50) return 10;   // 短文本，10条一批
-  if (avgLength < 200) return 5;   // 中等文本，5条一批
-  return 3;                         // 长文本，3条一批
+#### 3.1 核心思想
+与谷歌翻译类似，使用换行符连接多条字幕，最大化利用每个`{"Text": "..."}`的5000字符容量，大幅减少API请求次数。
+
+#### 3.2 优化前后对比
+
+| 方案 | 100条字幕（平均50字符/条） | 请求数 | 优化率 |
+|-----|---------------------------|--------|--------|
+| **优化前** | 每条字幕一个Text对象 | 10个请求 | - |
+| **优化后** | 多条字幕合并到一个Text | 1-2个请求 | 80-90% |
+
+#### 3.3 实现算法
+
+```typescript
+/**
+ * 5000字符滑动窗口 + 智能断句算法
+ * 将字幕数组重组为优化的批次格式
+ */
+class MicrosoftTextOptimizer {
+  private static readonly MAX_CHARS_PER_TEXT = 5000;   // 单个Text最大字符数
+  private static readonly MAX_TEXTS_PER_REQUEST = 10;  // 每请求最大Text数
+  private static readonly SEPARATOR = '\n';            // 字幕间分隔符
+
+  /**
+   * 第一步：创建5000字符窗口
+   * 从当前位置向后查找，直到接近5000字符限制
+   */
+  private createCharWindow(
+    subtitles: string[],
+    startIdx: number
+  ): {
+    combinedText: string;
+    endIdx: number;
+  } {
+    let currentLength = 0;
+    let texts: string[] = [];
+    let endIdx = startIdx;
+
+    while (endIdx < subtitles.length) {
+      const subtitle = subtitles[endIdx];
+      // 预处理：清理内部换行符
+      const cleanText = subtitle.replace(/\n/g, ' ').trim();
+
+      // 计算加入后的长度（包括分隔符）
+      const newLength = currentLength +
+        (texts.length > 0 ? this.SEPARATOR.length : 0) +
+        cleanText.length;
+
+      // 如果超过限制，在此断开
+      if (newLength > this.MAX_CHARS_PER_TEXT) {
+        // 特殊情况：单条字幕就超限
+        if (texts.length === 0) {
+          console.warn(`字幕${endIdx}超长，截断处理`);
+          texts.push(cleanText.substring(0, 4900) + '...');
+          endIdx++;
+        }
+        break;
+      }
+
+      texts.push(cleanText);
+      currentLength = newLength;
+      endIdx++;
+    }
+
+    return {
+      combinedText: texts.join(this.SEPARATOR),
+      endIdx: endIdx
+    };
+  }
+
+  /**
+   * 第二步：批量组装
+   * 将多个窗口组装成请求批次
+   */
+  public optimizeBatches(subtitles: string[]): Array<{
+    texts: string[];          // 每个元素是合并后的字幕文本
+    indexMapping: number[][]  // 记录每个text包含的原始字幕索引
+  }> {
+    const windows: Array<{text: string; indices: number[]}> = [];
+    let currentIdx = 0;
+
+    // 创建所有窗口
+    while (currentIdx < subtitles.length) {
+      const startIdx = currentIdx;
+      const window = this.createCharWindow(subtitles, currentIdx);
+
+      windows.push({
+        text: window.combinedText,
+        indices: Array.from(
+          {length: window.endIdx - startIdx},
+          (_, i) => startIdx + i
+        )
+      });
+
+      currentIdx = window.endIdx;
+    }
+
+    // 按10个Text一批组装请求
+    const batches: Array<{texts: string[]; indexMapping: number[][]}> = [];
+
+    for (let i = 0; i < windows.length; i += this.MAX_TEXTS_PER_REQUEST) {
+      const batchWindows = windows.slice(i, i + this.MAX_TEXTS_PER_REQUEST);
+
+      batches.push({
+        texts: batchWindows.map(w => w.text),
+        indexMapping: batchWindows.map(w => w.indices)
+      });
+    }
+
+    return batches;
+  }
+
+  /**
+   * 第三步：结果映射
+   * 将翻译结果映射回原始字幕索引
+   */
+  public mapResults(
+    translatedTexts: string[],
+    indexMapping: number[][],
+    totalCount: number
+  ): string[] {
+    const results = new Array(totalCount).fill('');
+
+    for (let i = 0; i < translatedTexts.length; i++) {
+      const translatedText = translatedTexts[i];
+      const indices = indexMapping[i];
+
+      // 按分隔符分割
+      const parts = translatedText.split(this.SEPARATOR);
+
+      // 映射回原始索引
+      for (let j = 0; j < indices.length; j++) {
+        if (j < parts.length) {
+          results[indices[j]] = parts[j].trim();
+        } else {
+          // 分割数量不匹配时的降级策略
+          results[indices[j]] = translatedText;
+        }
+      }
+    }
+
+    return results;
+  }
 }
 ```
+
+#### 3.4 使用示例
+
+```typescript
+// 在 TwoPhaseTranslatorV4 中集成
+async translateWithMicrosoft(subtitles: SubtitleEntry[]) {
+  const optimizer = new MicrosoftTextOptimizer();
+  const texts = subtitles.map(s => s.text);
+
+  // 优化批次
+  const batches = optimizer.optimizeBatches(texts);
+
+  console.log(`[Microsoft] ${subtitles.length}条字幕优化为${batches.length}个请求`);
+
+  const allResults: string[] = [];
+
+  // 并发发送所有批次
+  const promises = batches.map(async (batch, idx) => {
+    // 错开200ms避免瞬间压力
+    await new Promise(r => setTimeout(r, idx * 200));
+
+    // 构建请求体
+    const requestBody = batch.texts.map(text => ({ Text: text }));
+
+    // 调用API
+    const response = await this.callMicrosoftAPI(requestBody);
+
+    // 提取翻译结果
+    return response.map(item => item.translations[0].text);
+  });
+
+  // 等待所有批次完成
+  const batchResults = await Promise.all(promises);
+
+  // 映射回原始索引
+  for (let i = 0; i < batches.length; i++) {
+    const mapped = optimizer.mapResults(
+      batchResults[i],
+      batches[i].indexMapping,
+      subtitles.length
+    );
+
+    // 合并结果
+    mapped.forEach((text, idx) => {
+      if (text) allResults[idx] = text;
+    });
+  }
+
+  return allResults;
+}
+```
+
+#### 3.5 优化效果分析
+
+**场景1：普通YouTube视频（500条字幕）**
+- 优化前：50个请求（每请求10条）
+- 优化后：5-6个请求（每Text约80-100条）
+- **性能提升：88%**
+
+**场景2：长视频（2000条字幕）**
+- 优化前：200个请求
+- 优化后：20-25个请求
+- **性能提升：87.5%**
+
+#### 3.6 注意事项
+
+1. **字符计算**：需准确计算包括分隔符在内的总字符数
+2. **边界处理**：确保不在字幕中间截断
+3. **结果映射**：翻译结果必须正确映射回原始索引
+4. **错误处理**：分割数量不匹配时的降级策略
+5. **并发控制**：错开请求时间，避免触发限流
 
 ## 🧪 测试验证
 
@@ -431,6 +637,7 @@ curl -X POST 'https://api.cognitive.microsofttranslator.com/translate?api-versio
 
 ## 📅 更新历史
 
+- **2025-09-28**：添加5000字符滑动窗口批处理优化方案
 - **2025-09-26**：完成API测试验证，确认可用性
 - **2025-05-28**：初始双路径架构设计
 - **2025-05-15**：添加微软翻译服务支持

@@ -8,21 +8,41 @@
 
 import { IntelligentSegmenter } from './intelligent-segmenter';
 import { OpenAITranslator } from './openai-translator';
+import { MicrosoftTranslator } from './microsoft-translator';
 
 /**
  * 两阶段翻译器 - 支持AbortSignal版本
  */
 type GoogleEndpointId = 'single' | 't';
 
+interface MicrosoftSubtitleEntry {
+  id?: string;
+  start: number;
+  end?: number;
+  duration?: number;
+  rawText: string;
+  text: string;
+  __msIndex: number;
+}
+
+interface MicrosoftAggregate {
+  text: string;
+  indices: number[];
+}
+
 export class TwoPhaseTranslatorV4 {
   private static readonly API_DELAY = 200;  // API调用间隔
   private static readonly URGENT_RESPONSE_TIME = 300;  // 紧急响应时间目标
   private static readonly BATCH_START_DELAY = 200;  // 批量翻译启动延迟（200ms）
   private static readonly TIMEOUT_MS = 5000;  // 统一超时时间
+  private static readonly MS_MAX_ITEMS = 10;  // 微软每次请求最大字幕条数
+  private static readonly MS_MAX_CHARS = 5000;  // 微软单个文本最大字符数
+  private static readonly MS_MAX_TOTAL_CHARS = 50000;  // 微软单次请求字符总量限制
   
   private translationService: any = null;  // 翻译服务配置
   
   private segmenter: IntelligentSegmenter;
+  private microsoftTranslator: MicrosoftTranslator;
   private isComplete: boolean = false;
   private currentExecutionId: number = 0;
   private preferredGoogleEndpoint: GoogleEndpointId | null = null;
@@ -30,6 +50,7 @@ export class TwoPhaseTranslatorV4 {
   
   constructor() {
     this.segmenter = new IntelligentSegmenter();
+    this.microsoftTranslator = new MicrosoftTranslator();
   }
   
   /**
@@ -71,6 +92,8 @@ export class TwoPhaseTranslatorV4 {
     }
     
     const results: any[] = [];
+    const serviceType = preferences.translationService?.type;
+    const isMicrosoftService = serviceType === 'microsoft' || serviceType === 'microsoft-free';
     
     try {
       // 找到当前播放位置的索引
@@ -116,17 +139,26 @@ export class TwoPhaseTranslatorV4 {
         throw new DOMException('紧急翻译准备时被取消', 'AbortError');
       }
       
-      // 调用翻译API - 传递文本数组而不是合并的文本
-      const translatedTexts = await this.callTranslationAPI(
-        texts,  // 直接传递文本数组，让callTranslationAPI内部处理合并
-        preferences.translationService,
-        'auto',  // 源语言
-        preferences.targetLang,
-        signal,
-        { stage: 'urgent' }
-      );
-      
-      // 直接使用返回的翻译数组
+      let translatedTexts: string[];
+      if (isMicrosoftService) {
+        translatedTexts = await this.translateWithMicrosoftSubtitles(
+          urgentBatch,
+          'auto',
+          preferences.targetLang,
+          'urgent',
+          signal
+        );
+      } else {
+        translatedTexts = await this.callTranslationAPI(
+          texts,
+          preferences.translationService,
+          'auto',
+          preferences.targetLang,
+          signal,
+          { stage: 'urgent' }
+        );
+      }
+
       const translatedLines = translatedTexts || [];
       
       // 构建结果
@@ -190,7 +222,9 @@ export class TwoPhaseTranslatorV4 {
     }
     
     const results: any[] = [];
-    
+    const serviceType = preferences.translationService?.type;
+    const isMicrosoftService = serviceType === 'microsoft' || serviceType === 'microsoft-free';
+
     try {
       // 延迟启动（避免与紧急翻译冲突）
       await this.delayWithSignal(TwoPhaseTranslatorV4.BATCH_START_DELAY, signal);
@@ -265,17 +299,26 @@ export class TwoPhaseTranslatorV4 {
 
           console.log(`[TwoPhaseTranslatorV4] 翻译批次 ${i + 1}/${batches.length}（${texts.length}条）`);
 
-          // 调用翻译API - 使用批次独立的信号
-          const translatedTexts = await this.callTranslationAPI(
-            texts,
-            preferences.translationService,
-            'auto',
-            preferences.targetLang,
-            batchSignal,  // 使用带超时的批次信号
-            { stage: 'batch' }
-          );
-          
-          // 直接使用返回的翻译数组
+          let translatedTexts: string[];
+          if (isMicrosoftService) {
+            translatedTexts = await this.translateWithMicrosoftSubtitles(
+              batch,
+              'auto',
+              preferences.targetLang,
+              'batch',
+              batchSignal
+            );
+          } else {
+            translatedTexts = await this.callTranslationAPI(
+              texts,
+              preferences.translationService,
+              'auto',
+              preferences.targetLang,
+              batchSignal,
+              { stage: 'batch' }
+            );
+          }
+
           const translatedLines = translatedTexts || [];
           
           // 构建结果
@@ -352,6 +395,294 @@ export class TwoPhaseTranslatorV4 {
     return results;
   }
   
+  private async translateWithMicrosoftSubtitles(
+    subtitles: Array<{
+      id?: string;
+      start: number;
+      end?: number;
+      duration?: number;
+      text: string;
+    }>,
+    sourceLang: string,
+    targetLang: string,
+    stage: 'urgent' | 'batch',
+    signal: AbortSignal
+  ): Promise<string[]> {
+    const entries: MicrosoftSubtitleEntry[] = subtitles.map((sub, idx) => ({
+      ...sub,
+      rawText: sub.text ?? '',
+      text: (sub.text ?? '').replace(/\n/g, ' ').trim(),
+      __msIndex: idx
+    }));
+
+    if (entries.length === 0) {
+      return [];
+    }
+
+    const aggregates = this.buildMicrosoftAggregates(entries);
+    const requests = this.buildMicrosoftRequests(aggregates);
+    const bucket = new Map<number, string[]>();
+
+    for (let i = 0; i < requests.length; i++) {
+      if (signal.aborted) {
+        throw new DOMException('微软翻译已取消', 'AbortError');
+      }
+
+      const requestItems = requests[i];
+      const textsForRequest = requestItems.map(item => item.text);
+      const translations = await this.microsoftTranslator.translateTexts(
+        textsForRequest,
+        sourceLang,
+        targetLang,
+        stage
+      );
+
+      requestItems.forEach((item, idx) => {
+        this.assignMicrosoftTranslation(item, translations[idx] ?? item.text, bucket);
+      });
+
+      if (stage === 'batch' && i < requests.length - 1) {
+        await this.delayWithSignal(TwoPhaseTranslatorV4.API_DELAY, signal);
+      }
+    }
+
+    return entries.map((entry, idx) => {
+      const segments = bucket.get(idx);
+      if (segments && segments.length > 0) {
+        return segments.join('');
+      }
+      return entry.rawText || entry.text;
+    });
+  }
+
+  private buildMicrosoftAggregates(subtitles: MicrosoftSubtitleEntry[]): MicrosoftAggregate[] {
+    const aggregates: MicrosoftAggregate[] = [];
+    let cursor = 0;
+
+    while (cursor < subtitles.length) {
+      const windowEnd = this.findMicrosoftWindowEnd(subtitles, cursor);
+      const windowSubs = subtitles.slice(cursor, windowEnd);
+      const smartBatches = this.segmenter.createSmartBatches(windowSubs);
+
+      for (const batchMeta of smartBatches) {
+        const group = batchMeta.subtitles as MicrosoftSubtitleEntry[];
+        if (!group || group.length === 0) {
+          continue;
+        }
+
+        const groupAggregates = this.aggregateMicrosoftGroup(group);
+        aggregates.push(...groupAggregates);
+      }
+
+      cursor = windowEnd;
+    }
+
+    return aggregates;
+  }
+
+  private findMicrosoftWindowEnd(subtitles: MicrosoftSubtitleEntry[], start: number): number {
+    let end = start;
+    let length = 0;
+
+    while (end < subtitles.length) {
+      const normalized = subtitles[end].text;
+      const candidateLength = normalized.length;
+
+      if (candidateLength > TwoPhaseTranslatorV4.MS_MAX_CHARS) {
+        return end + 1;
+      }
+
+      const nextLength = length === 0 ? candidateLength : length + 1 + candidateLength;
+      if (nextLength > TwoPhaseTranslatorV4.MS_MAX_CHARS) {
+        break;
+      }
+
+      length = nextLength;
+      end++;
+    }
+
+    if (end === start) {
+      return start + 1;
+    }
+
+    return end;
+  }
+
+  private aggregateMicrosoftGroup(group: MicrosoftSubtitleEntry[]): MicrosoftAggregate[] {
+    const aggregates: MicrosoftAggregate[] = [];
+    let currentText = '';
+    let currentIndices: number[] = [];
+
+    const flush = () => {
+      if (currentIndices.length === 0) {
+        return;
+      }
+      aggregates.push({
+        text: currentText,
+        indices: [...currentIndices]
+      });
+      currentText = '';
+      currentIndices = [];
+    };
+
+    for (const subtitle of group) {
+      const normalized = subtitle.text;
+      const index = subtitle.__msIndex;
+
+      if (normalized.length > TwoPhaseTranslatorV4.MS_MAX_CHARS) {
+        flush();
+        const chunks = this.chunkMicrosoftText(normalized, TwoPhaseTranslatorV4.MS_MAX_CHARS);
+        chunks.forEach(chunk => {
+          aggregates.push({
+            text: chunk,
+            indices: [index]
+          });
+        });
+        continue;
+      }
+
+      const nextLength = currentText.length === 0
+        ? normalized.length
+        : currentText.length + 1 + normalized.length;
+
+      if (nextLength > TwoPhaseTranslatorV4.MS_MAX_CHARS) {
+        flush();
+      }
+
+      if (currentText.length === 0) {
+        currentText = normalized;
+      } else {
+        currentText += '\n' + normalized;
+      }
+      currentIndices.push(index);
+    }
+
+    flush();
+    return aggregates;
+  }
+
+  private chunkMicrosoftText(text: string, limit: number): string[] {
+    if (text.length <= limit) {
+      return [text];
+    }
+
+    const chunks: string[] = [];
+    let startPtr = 0;
+
+    while (startPtr < text.length) {
+      let endPtr = Math.min(startPtr + limit, text.length);
+      if (endPtr < text.length) {
+        let adjusted = -1;
+        for (let look = endPtr - 1; look >= startPtr; look--) {
+          const ch = text[look];
+          if ('\n。.!?！？；;,， '.includes(ch)) {
+            if (look > startPtr) {
+              adjusted = look + 1;
+              break;
+            }
+          }
+        }
+        if (adjusted > startPtr) {
+          endPtr = adjusted;
+        }
+      }
+
+      if (endPtr <= startPtr) {
+        endPtr = Math.min(startPtr + limit, text.length);
+      }
+
+      chunks.push(text.slice(startPtr, endPtr));
+      startPtr = endPtr;
+    }
+
+    return chunks;
+  }
+
+  private buildMicrosoftRequests(aggregates: MicrosoftAggregate[]): MicrosoftAggregate[][] {
+    const requests: MicrosoftAggregate[][] = [];
+    let current: MicrosoftAggregate[] = [];
+    let charCount = 0;
+
+    for (const item of aggregates) {
+      const length = item.text.length;
+
+      if (
+        current.length > 0 &&
+        (current.length >= TwoPhaseTranslatorV4.MS_MAX_ITEMS || charCount + length > TwoPhaseTranslatorV4.MS_MAX_TOTAL_CHARS)
+      ) {
+        requests.push(current);
+        current = [];
+        charCount = 0;
+      }
+
+      current.push(item);
+      charCount += length;
+    }
+
+    if (current.length > 0) {
+      requests.push(current);
+    }
+
+    return requests;
+  }
+
+  private assignMicrosoftTranslation(
+    aggregate: MicrosoftAggregate,
+    translation: string,
+    bucket: Map<number, string[]>
+  ): void {
+    if (aggregate.indices.length === 1) {
+      this.appendMicrosoftPiece(aggregate.indices[0], translation, bucket);
+      return;
+    }
+
+    const parts = translation.split(/\r?\n/);
+    if (parts.length === aggregate.indices.length) {
+      aggregate.indices.forEach((index, idx) => {
+        this.appendMicrosoftPiece(index, parts[idx], bucket);
+      });
+      return;
+    }
+
+    const distributed = this.distributeMicrosoftFallback(translation, aggregate.indices.length);
+    aggregate.indices.forEach((index, idx) => {
+      this.appendMicrosoftPiece(index, distributed[idx], bucket);
+    });
+  }
+
+  private appendMicrosoftPiece(index: number, piece: string, bucket: Map<number, string[]>): void {
+    const list = bucket.get(index) || [];
+    list.push(piece);
+    bucket.set(index, list);
+  }
+
+  private distributeMicrosoftFallback(text: string, count: number): string[] {
+    if (count <= 1) {
+      return [text];
+    }
+
+    const avgLength = Math.ceil(text.length / count);
+    const result: string[] = [];
+    let offset = 0;
+
+    for (let i = 0; i < count; i++) {
+      if (offset >= text.length) {
+        result.push('');
+        continue;
+      }
+
+      if (i === count - 1) {
+        result.push(text.slice(offset));
+      } else {
+        result.push(text.slice(offset, offset + avgLength));
+      }
+
+      offset += avgLength;
+    }
+
+    return result;
+  }
+
   /**
    * 调用翻译API
    */
@@ -416,17 +747,15 @@ export class TwoPhaseTranslatorV4 {
           const stage = options?.stage ?? 'batch';
           const order = this.getGoogleEndpointOrder(stage);
           const allowFallback = stage !== 'batch';
-          const { translations } = await this.translateWithGoogleEndpoints(texts, sourceLang, targetLang, {
-            preferredOrder: order,
-            recordStatistics: stage === 'urgent',
-            allowFallback
-          });
-          translatedTexts = translations;
-        } else if (service.type === 'microsoft' || service.type === 'microsoft-free') {
-          // Microsoft翻译（免费版）
-          console.log('[TwoPhaseTranslatorV4] 使用Microsoft免费翻译');
-          // TODO: 实现Microsoft翻译API调用
-          translatedTexts = texts.map(text => `[MS译] ${text}`);
+        const { translations } = await this.translateWithGoogleEndpoints(texts, sourceLang, targetLang, {
+          preferredOrder: order,
+          recordStatistics: stage === 'urgent',
+          allowFallback
+        });
+        translatedTexts = translations;
+      } else if (service.type === 'microsoft' || service.type === 'microsoft-free') {
+        console.warn('[TwoPhaseTranslatorV4] Microsoft翻译需要字幕上下文，返回原文');
+        translatedTexts = texts;
           
         } else {
           // 未知服务类型，返回原文

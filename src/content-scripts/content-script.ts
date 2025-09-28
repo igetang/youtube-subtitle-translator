@@ -938,6 +938,7 @@ async function initialize(): Promise<void> {
     // 设置源语言、目标语言变更监听器
     setupSourceLanguageChangeListener();
     setupTargetLanguageChangeListener();
+    setupTranslationServiceChangeListener();
 
     isInitialized = true;
     // 保留最终初始化完成日志
@@ -1223,6 +1224,94 @@ function setupTargetLanguageChangeListener(): void {
   );
 }
 
+function setupTranslationServiceChangeListener(): void {
+  console.log('[content-script] 设置翻译服务变更监听器');
+
+  const prefsManager = UserPreferencesManager.getInstance();
+  prefsManager.addChangeListener(
+    UserPreferenceChangeEvent.TRANSLATION_SERVICE_CHANGED,
+    async (newService: any, oldService: any) => {
+      try {
+        if (!newService) {
+          return;
+        }
+        if (oldService && JSON.stringify(newService) === JSON.stringify(oldService)) {
+          return;
+        }
+
+        const translateState = stateManager?.getState('translateActive');
+        const isActive = translateState === TranslateActiveState.ACTIVE || translateState === 'active';
+        if (!isActive) {
+          console.log('[content-script] 翻译服务变更但翻译未激活，忽略实时更新');
+          return;
+        }
+
+        subtitleOverlay.hide();
+        stateManager?.updateState('translateActive', 'pending');
+        subtitleOverlay.showPendingMessage('翻译服务切换，重新翻译中...');
+
+        const videoId = getVideoId();
+        if (!videoId) {
+          console.warn('[content-script] 无法获取视频ID，终止翻译服务变更处理');
+          return;
+        }
+
+        const sourceLang = await getCurrentSourceLanguageForRealtime(videoId);
+        capturedSourceLang = sourceLang;
+
+        const userPrefs = await prefsManager.getUserPreferences();
+        const cacheResponse = await chrome.runtime.sendMessage({
+          type: 'checkTranslationCache',
+          data: {
+            videoId,
+            sourceLang,
+            targetLang: userPrefs.targetLang,
+            service: newService
+          }
+        });
+
+        if (cacheResponse?.success && cacheResponse.data) {
+          console.log('[content-script] 使用翻译服务缓存的翻译结果');
+          await subtitleOverlay.show(cacheResponse.data);
+          stateManager?.updateState('translateActive', 'active');
+          return;
+        }
+
+        const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
+        const originalSubtitleState = subtitleBtn?.getAttribute('aria-pressed') === 'true';
+
+        const videoElement = document.querySelector('video');
+        const currentTime = videoElement ? videoElement.currentTime : 0;
+
+        const response = await chrome.runtime.sendMessage({
+          type: 'TOGGLE_TRANSLATE',
+          data: {
+            videoId,
+            newState: true,
+            currentTime,
+            originalSubtitleState,
+            sourceLang,
+            targetLang: userPrefs.targetLang,
+            reuseOriginalSubtitles: true,
+            isRestart: true
+          }
+        });
+
+        if (response?.action === 'translated' || response?.action === 'cached') {
+          displayTranslatedSubtitles(response.data);
+        }
+      } catch (error) {
+        console.error('[content-script] 处理翻译服务变更监听失败:', error);
+        stateManager?.updateState('translateActive', 'inactive');
+        subtitleOverlay.hide();
+      }
+    }
+  );
+}
+
+/**
+ * 处理源语言缓存变化
+ */
 /**
  * 处理源语言缓存变化
  */
