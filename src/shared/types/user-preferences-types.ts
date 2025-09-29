@@ -222,28 +222,24 @@ export type TranslationServiceForCacheKey = Pick<TranslationServiceComplete,
 export type TranslationService = TranslationServiceComplete;
 
 /**
- * 视频源语言完整数据 - 架构设计标准版
+ * 视频源语言完整数据
  * 存储每个视频的完整源语言信息，包括可用列表和用户选择
- * 基于architecture.md 7.1.4设计规范
- * 
- * 注意：不存储baseUrl，避免过期问题
+ *
+ * 注意：源语言代码从 selectedSourceTrack?.languageCode 获取
  */
 export interface VideoSourceLanguageData {
   /** 视频ID */
   videoId: string;
-  
+
   /** 可用的源语言列表（仅元数据，不含URL） */
   availableSourceLanguages: TrackMetadata[];
-  
-  /** 用户上次选择的源语言代码 */
-  lastSelectedLanguage?: string;
-  
-  /** 用户选中的具体源语言轨道（仅元数据） */
+
+  /** 当前选中的源语言轨道（包含完整信息：languageCode, name, kind） */
   selectedSourceTrack?: TrackMetadata;
-  
+
   /** 数据获取时间戳 */
   fetchedAt: number;
-  
+
   /** 最后访问时间戳 */
   lastAccessed: number;
 }

@@ -783,8 +783,8 @@ let sidePanelInitialized = false;
 let isYouTubePage = false;
 let currentTargetLang = 'en';
 let currentSourceLang = 'auto';
-let currentSourceTrackKind = 'standard';
-let uiTrackData: { languageCode: string, languageName: string, kind: string }[] = [];
+let currentSourceTrackKind: 'asr' | 'forced' | undefined = undefined;
+let uiTrackData: Array<{ languageCode: string; languageName: string; kind?: 'asr' | 'forced'; isAutoOption?: boolean }> = [];
 let uiLangCode: string | null = null;
 
 // === Port连接管理 ===
@@ -1476,14 +1476,18 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
         {
           languageCode: 'auto',
           languageName: '可选语言',
-          kind: 'auto'
+          isAutoOption: true
         },
         // 然后添加实际的轨道数据
-        ...availableLanguages.map((track: any) => ({
-          languageCode: track.languageCode,
-          languageName: track.name,
-          kind: track.kind || 'standard'
-        }))
+        ...availableLanguages.map((track: any) => {
+          const rawKind = track.kind;
+          const normalizedKind: 'asr' | 'forced' | undefined = rawKind === 'asr' || rawKind === 'forced' ? rawKind : undefined;
+          return {
+            languageCode: track.languageCode,
+            languageName: track.name,
+            kind: normalizedKind
+          };
+        })
       ];
       console.log('[popup] 源语言列表已获取（包含可选语言）:', uiTrackData);
     }
@@ -1495,7 +1499,9 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
 
     if (selectedTrack) {
       currentSourceLang = selectedTrack.languageCode;
-      currentSourceTrackKind = selectedTrack.kind || 'standard';
+      currentSourceTrackKind = selectedTrack.kind === 'asr' || selectedTrack.kind === 'forced'
+        ? selectedTrack.kind
+        : undefined;
       console.log('[popup] 已恢复用户选择的源语言:', selectedTrack);
       console.log('[popup] 当前全局变量 - currentSourceLang:', currentSourceLang, 'currentSourceTrackKind:', currentSourceTrackKind);
     } else {
@@ -1509,7 +1515,10 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
     
     // 最后更新显示
     if (selectedTrack) {
-      updateSourceLanguageDisplay(selectedTrack.languageCode, selectedTrack.kind || 'standard');
+      updateSourceLanguageDisplay(
+        selectedTrack.languageCode,
+        selectedTrack.kind === 'asr' || selectedTrack.kind === 'forced' ? selectedTrack.kind : undefined
+      );
     }
     
     // 处理自动检测的源语言（仅在用户未手动选择时）
@@ -1542,8 +1551,11 @@ async function handleDetectedSourceLanguage(detectedLang: string): Promise<void>
       
       if (detectedTrack) {
         console.log('[popup] 自动设置智能选择的源语言:', detectedLang);
-        const trackKind = detectedTrack.kind || 'standard';
-        
+        const trackKind: 'asr' | 'forced' | undefined =
+          detectedTrack.kind === 'asr' || detectedTrack.kind === 'forced'
+            ? detectedTrack.kind
+            : undefined;
+
         await saveSourceLanguage(detectedLang, trackKind);
         // 更新全局变量
         currentSourceLang = detectedLang;
@@ -1568,10 +1580,10 @@ async function handleDetectedSourceLanguage(detectedLang: string): Promise<void>
 /**
  * 生成语言显示名称
  */
-function generateLanguageDisplayName(trackInfo: { 
-  languageCode: string, 
-  languageName: string, 
-  kind: string 
+function generateLanguageDisplayName(trackInfo: {
+  languageCode: string,
+  languageName: string,
+  kind?: 'asr' | 'forced'
 }): string {
   // 尝试获取本地化语言名称
   const i18nKey = 'lang_' + trackInfo.languageCode.replace(/-/g, '_');
@@ -1630,8 +1642,10 @@ function populateSourceLanguages(searchTerm: string = ''): void {
       const option = document.createElement('div');
       option.className = 'custom-select-option';
       option.setAttribute('data-value', trackInfo.languageCode);
-      option.setAttribute('data-kind', trackInfo.kind || 'standard');
-      
+      if (trackInfo.kind) {
+        option.setAttribute('data-kind', trackInfo.kind);
+      }
+
       // 生成显示文本
       const displayName = generateLanguageDisplayName(trackInfo);
       option.textContent = displayName;
@@ -1652,10 +1666,10 @@ function populateSourceLanguages(searchTerm: string = ''): void {
           option.style.fontWeight = 'bold';
         }
       }
-      
+
       // 标记当前选中的源语言
       if (currentSourceLang === trackInfo.languageCode &&
-          currentSourceTrackKind === (trackInfo.kind || 'standard')) {
+          currentSourceTrackKind === trackInfo.kind) {
         option.classList.add('selected');
       }
 
@@ -1664,7 +1678,7 @@ function populateSourceLanguages(searchTerm: string = ''): void {
         console.log('[popup][source] 用户点击源语言选项', {
           videoId: currentVideoId,
           languageCode: trackInfo.languageCode,
-          trackKind: trackInfo.kind || 'standard',
+          trackKind: trackInfo.kind,
           uiTrackCount: uiTrackData.length
         });
 
@@ -1676,10 +1690,12 @@ function populateSourceLanguages(searchTerm: string = ''): void {
 
         // 更新当前选中的源语言
         currentSourceLang = trackInfo.languageCode;
-        currentSourceTrackKind = trackInfo.kind || 'standard';
+        currentSourceTrackKind = trackInfo.kind === 'asr' || trackInfo.kind === 'forced'
+          ? trackInfo.kind
+          : undefined;
 
         // 更新UI显示
-        updateSourceLanguageDisplay(trackInfo.languageCode, trackInfo.kind || 'standard');
+        updateSourceLanguageDisplay(trackInfo.languageCode, currentSourceTrackKind);
 
         // 关闭下拉菜单
         if (sourceLangPanel) {
@@ -1689,15 +1705,15 @@ function populateSourceLanguages(searchTerm: string = ''): void {
         // 保存到存储
         console.log('[popup][source] 用户选择源语言，准备保存', {
           languageCode: trackInfo.languageCode,
-          trackKind: trackInfo.kind || 'standard',
+          trackKind: trackInfo.kind,
           videoId: currentVideoId
         });
-        await saveSourceLanguage(trackInfo.languageCode, trackInfo.kind || 'standard');
+        await saveSourceLanguage(trackInfo.languageCode, currentSourceTrackKind);
 
         // 重新填充目标语言列表以应用语言族互斥逻辑
         populateTargetLanguages();
 
-        console.log(`[popup] 源语言已选择: ${trackInfo.languageCode} (${trackInfo.kind || 'standard'})，目标语言列表已更新`);
+        console.log(`[popup] 源语言已选择: ${trackInfo.languageCode} (${trackInfo.kind ?? 'manual'})，目标语言列表已更新`);
       });
 
       sourceLangOptions!.appendChild(option);
@@ -1727,9 +1743,13 @@ function handleSourceLanguageOptionClick(event: Event): void {
   console.log('[DEBUG] 找到选项元素:', optionElement);
 
   const languageCode = optionElement.getAttribute('data-value');
-  const trackKind = optionElement.getAttribute('data-kind');
+  const trackKindAttr = optionElement.getAttribute('data-kind');
+  const trackKind: 'asr' | 'forced' | undefined =
+    trackKindAttr === 'asr' || trackKindAttr === 'forced'
+      ? trackKindAttr
+      : undefined;
 
-  if (!languageCode || !trackKind) {
+  if (!languageCode) {
     console.error('[popup] 无效的语言选项数据');
     return;
   }
@@ -1759,14 +1779,14 @@ function handleSourceLanguageOptionClick(event: Event): void {
   // 重新填充目标语言列表以应用语言族互斥逻辑
   populateTargetLanguages();
 
-  console.log(`[popup] 源语言已选择: ${languageCode} (${trackKind})，目标语言列表已更新`);
+  console.log(`[popup] 源语言已选择: ${languageCode} (${trackKind ?? 'manual'})，目标语言列表已更新`);
   console.log(`[popup] 语言族互斥检测已应用，当前源语言: ${languageCode}`);
 }
 
 /**
  * 更新源语言显示
  */
-function updateSourceLanguageDisplay(languageCode: string, trackKind: string): void {
+function updateSourceLanguageDisplay(languageCode: string, trackKind: 'asr' | 'forced' | undefined): void {
   console.log('[popup] updateSourceLanguageDisplay 被调用:', { languageCode, trackKind });
   
   if (!sourceLangSelectedValue) {
@@ -1782,7 +1802,7 @@ function updateSourceLanguageDisplay(languageCode: string, trackKind: string): v
     // 查找对应的轨道信息
     const trackInfo = uiTrackData.find(track => 
       track.languageCode === languageCode && 
-      (track.kind || 'standard') === trackKind
+      track.kind === trackKind
     );
     
     if (trackInfo) {
@@ -1792,36 +1812,58 @@ function updateSourceLanguageDisplay(languageCode: string, trackKind: string): v
       console.warn('[popup] 未找到匹配的轨道信息:', { languageCode, trackKind, uiTrackData });
     }
   }
-  
+
   console.log('[popup] 设置源语言显示文本:', displayText);
   sourceLangSelectedValue.textContent = displayText;
   sourceLangSelectedValue.setAttribute('data-value', languageCode);
-  sourceLangSelectedValue.setAttribute('data-kind', trackKind);
+  if (trackKind) {
+    sourceLangSelectedValue.setAttribute('data-kind', trackKind);
+  } else {
+    sourceLangSelectedValue.removeAttribute('data-kind');
+  }
 }
 
 /**
  * 保存源语言设置（新架构）
  */
-async function saveSourceLanguage(languageCode: string, trackKind: string): Promise<void> {
-  console.log('[popup][source] saveSourceLanguage 调用', { languageCode, trackKind, videoId: currentVideoId });
+async function saveSourceLanguage(languageCode: string, trackKind: 'asr' | 'forced' | undefined): Promise<void> {
+  console.log('[popup][source] saveSourceLanguage 调用', {
+    languageCode,
+    trackKind: trackKind ?? 'manual',
+    videoId: currentVideoId
+  });
   try {
     if (!currentVideoId) {
       console.error('[popup] currentVideoId为空，无法保存源语言');
       return;
     }
-    
+
+    if (languageCode === 'auto') {
+      const allTracks: TrackMetadata[] = uiTrackData
+        .filter(track => track.languageCode !== 'auto')
+        .map(track => ({
+          languageCode: track.languageCode,
+          name: track.languageName,
+          kind: track.kind === 'asr' || track.kind === 'forced' ? track.kind : undefined
+        }));
+
+      await saveVideoSourceLanguageCache(currentVideoId, allTracks, null);
+      console.log('[popup] 保存自动侦测设置，已清除选中源语言');
+      return;
+    }
+
     // 在uiTrackData中查找匹配的轨道（现在包含"自动检测"选项）
     const selectedTrack = uiTrackData.find(track => 
       track.languageCode === languageCode && 
-      (track.kind || 'standard') === trackKind
+      (track.kind === trackKind)
     );
-    
+
     if (selectedTrack) {
       // 将uiTrackData格式转换为TrackMetadata格式（不含baseUrl）
       const trackMetadata: TrackMetadata = {
         languageCode: selectedTrack.languageCode,
         name: selectedTrack.languageName,
-        kind: selectedTrack.kind as 'asr' | 'forced' | undefined
+        kind: selectedTrack.kind === 'asr' || selectedTrack.kind === 'forced' ? selectedTrack.kind : undefined
         // 注意：不包含 baseUrl
       };
       
@@ -1892,13 +1934,18 @@ async function handleSourceLanguageChange(selectElement: HTMLSelectElement): Pro
     if (!selectedOption) return;
     
     const languageCode = selectedOption.value;
-    const trackKind = selectedOption.dataset.kind || 'standard';
-    
-    console.log('[popup] 统一监听器 - 源语言变更:', { languageCode, trackKind });
-    
+    const trackKindAttr = selectedOption.dataset.kind;
+    const trackKind: 'asr' | 'forced' | undefined =
+      trackKindAttr === 'asr' || trackKindAttr === 'forced' ? trackKindAttr : undefined;
+
+    console.log('[popup] 统一监听器 - 源语言变更:', {
+      languageCode,
+      trackKind: trackKind ?? 'manual'
+    });
+
     // 使用步骤2实现的新缓存机制
     await saveSourceLanguage(languageCode, trackKind);
-    
+
     // 更新UI显示
     updateSourceLanguageDisplay(languageCode, trackKind);
     
@@ -2133,7 +2180,7 @@ async function saveSelectedSourceTrack(videoId: string, selectedTrack: TrackMeta
         .map(track => ({
           languageCode: track.languageCode,
           name: track.languageName,
-          kind: track.kind === 'standard' ? undefined : track.kind as 'asr' | 'forced' | undefined
+          kind: track.kind === 'asr' || track.kind === 'forced' ? track.kind : undefined
         }));
       console.log('[popup] saveSelectedSourceTrack: 使用UI数据回填源语言列表');
     }
@@ -2146,7 +2193,12 @@ async function saveSelectedSourceTrack(videoId: string, selectedTrack: TrackMeta
     });
 
     // 更新选中的轨道
-    await saveVideoSourceLanguageCache(videoId, availableLanguages, selectedTrack);
+    const sanitizedSelected: TrackMetadata = {
+      ...selectedTrack,
+      kind: selectedTrack.kind === 'asr' || selectedTrack.kind === 'forced' ? selectedTrack.kind : undefined
+    };
+
+    await saveVideoSourceLanguageCache(videoId, availableLanguages, sanitizedSelected);
     
     console.log('[popup] 用户选择的源语言已保存:', selectedTrack);
   } catch (error) {

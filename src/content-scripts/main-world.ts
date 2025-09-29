@@ -214,9 +214,10 @@ class MainWorldMessenger {
    * 处理设置字幕语言
    */
   private async handleSetSubtitleTrackAPI(data: any): Promise<void> {
-    const { langCode, _requestId: requestId } = data;
+    const { langCode, kind, _requestId: requestId } = data;
     console.debug('[debug][MainWorld] 收到设置字幕语言API请求', {
       langCode,
+      kind,
       requestId
     });
 
@@ -225,10 +226,11 @@ class MainWorldMessenger {
     }
 
     try {
-      const success = await subtitleAPIController.setSubtitleTrack(langCode);
+      const success = await subtitleAPIController.setSubtitleTrack(langCode, kind);
       this.sendResponse('SET_SUBTITLE_TRACK_API_RESPONSE', {
         success: success,
-        langCode: langCode
+        langCode: langCode,
+        kind: kind
       }, requestId);
     } catch (error: any) {
       this.sendResponse('SET_SUBTITLE_TRACK_API_RESPONSE', {
@@ -350,14 +352,18 @@ class SubtitleAPIController {
       if (tracks && Array.isArray(tracks)) {
         console.log(`[SubtitleAPIController] 获取到 ${tracks.length} 个字幕轨道`);
         // 返回包含ISO 639-1语言代码的轨道信息
-        return tracks.map(track => ({
-          languageCode: track.languageCode,      // ISO 639-1代码 (如: en, fr, de, zh)
-          languageName: track.languageName || track.displayName || '',
-          kind: track.kind || '',
-          isDefault: track.is_default || false,
-          isTranslatable: track.is_translateable || track.is_translatable || false,
-          vssId: track.vss_id || track.vssId || ''
-        }));
+        return tracks.map(track => {
+          const rawKind = track.kind;
+          const normalizedKind = rawKind === 'asr' || rawKind === 'forced' ? rawKind : undefined;
+          return {
+            languageCode: track.languageCode,      // ISO 639-1代码 (如: en, fr, de, zh)
+            languageName: track.languageName || track.displayName || '',
+            kind: normalizedKind,
+            isDefault: track.is_default || false,
+            isTranslatable: track.is_translateable || track.is_translatable || false,
+            vssId: track.vss_id || track.vssId || ''
+          };
+        });
       }
       
       return [];
@@ -370,16 +376,24 @@ class SubtitleAPIController {
   /**
    * 设置字幕语言（使用ISO 639-1语言代码）
    * @param langCode ISO 639-1语言代码，如: en, fr, de, zh, ja, ko等
+   * @param kind 字幕类型，如: asr (自动生成), 无值表示人工字幕
    */
-  async setSubtitleTrack(langCode: string): Promise<boolean> {
+  async setSubtitleTrack(langCode: string, kind?: string): Promise<boolean> {
     if (!this.player || !this.captionsModule) {
       console.error('[SubtitleAPIController] 播放器或模块未就绪');
       return false;
     }
 
+    // 检测ASR轨道，使用UI方法
+    if (kind === 'asr') {
+      console.log('[SubtitleAPIController] 检测到ASR轨道，使用UI方法');
+      return await this.selectASRViaUI(langCode);
+    }
+
     try {
       console.debug('[debug][SubtitleAPIController] 尝试切换字幕语言', {
         langCode,
+        kind,
         module: this.captionsModule
       });
 
@@ -396,10 +410,25 @@ class SubtitleAPIController {
         console.warn('[SubtitleAPIController] tracklist 快照记录失败:', snapshotError);
       }
 
-      const candidateTrack = trackList.find((track: any) => {
+      // 优先精确匹配 langCode + kind，如果找不到再尝试只匹配 langCode
+      let candidateTrack = trackList.find((track: any) => {
         const trackLang = track.languageCode ?? track.language_code;
-        return trackLang === langCode;
+        // 如果指定了 kind，必须同时匹配
+        if (kind !== undefined) {
+          return trackLang === langCode && track.kind === kind;
+        }
+        // 如果没有指定 kind，优先选择非 asr 的轨道
+        return trackLang === langCode && track.kind !== 'asr';
       });
+
+      // 如果没找到非 asr 轨道，退而求其次选择任何匹配的轨道
+      if (!candidateTrack && kind === undefined) {
+        candidateTrack = trackList.find((track: any) => {
+          const trackLang = track.languageCode ?? track.language_code;
+          return trackLang === langCode;
+        });
+      }
+
       console.debug('[debug][SubtitleAPIController] tracklist 匹配结果', candidateTrack ? {
         languageCode: candidateTrack.languageCode ?? candidateTrack.language_code,
         vssId: candidateTrack.vssId ?? candidateTrack.vss_id ?? null,
@@ -411,15 +440,17 @@ class SubtitleAPIController {
       }
 
       // 设置字幕轨道（使用ISO 639-1标准）
-      this.player.setOption(this.captionsModule, 'track', {
-        "languageCode": langCode
-      });
+      const trackConfig: any = { "languageCode": langCode };
+      if (kind !== undefined) {
+        trackConfig.kind = kind;
+      }
+      this.player.setOption(this.captionsModule, 'track', trackConfig);
 
       // 如果使用的是旧模块，也尝试设置
       if (this.captionsModule === 'captions') {
-        this.player.setOption('cc', 'track', {"languageCode": langCode});
+        this.player.setOption('cc', 'track', trackConfig);
       } else {
-        this.player.setOption('captions', 'track', {"languageCode": langCode});
+        this.player.setOption('captions', 'track', trackConfig);
       }
 
       try {
@@ -452,7 +483,7 @@ class SubtitleAPIController {
     if (!this.player || !this.captionsModule) {
       return null;
     }
-    
+
     try {
       const currentTrack = this.player.getOption(this.captionsModule, 'track');
       return currentTrack?.languageCode || null;
@@ -460,6 +491,164 @@ class SubtitleAPIController {
       console.error('[SubtitleAPIController] 获取当前字幕失败:', error);
       return null;
     }
+  }
+
+  /**
+   * 通过UI菜单选择ASR轨道
+   * @param langCode 语言代码（如: en）
+   */
+  private async selectASRViaUI(langCode: string): Promise<boolean> {
+    try {
+      // Step 1: 打开设置菜单
+      const settingsBtn = document.querySelector('.ytp-settings-button') as HTMLElement;
+      if (!settingsBtn) {
+        console.error('[SubtitleAPIController] 未找到设置按钮');
+        return false;
+      }
+
+      settingsBtn.click();
+      await this.sleep(300);
+
+      // Step 2: 进入字幕菜单
+      const menuItems = document.querySelectorAll('.ytp-settings-menu .ytp-menuitem');
+      let subtitleMenuItem: HTMLElement | null = null;
+
+      menuItems.forEach(item => {
+        const label = item.querySelector('.ytp-menuitem-label');
+        if (label && this.isSubtitleMenuItem(label.textContent || '')) {
+          subtitleMenuItem = item as HTMLElement;
+        }
+      });
+
+      if (!subtitleMenuItem) {
+        console.error('[SubtitleAPIController] 未找到字幕菜单项');
+        settingsBtn.click(); // 关闭菜单
+        return false;
+      }
+
+      subtitleMenuItem.click();
+      await this.sleep(300);
+
+      // Step 3: 选择ASR选项
+      const subtitleOptions = document.querySelectorAll('.ytp-panel-menu .ytp-menuitem');
+      let asrOption: HTMLElement | null = null;
+
+      subtitleOptions.forEach(option => {
+        const label = option.querySelector('.ytp-menuitem-label');
+        if (label) {
+          const text = label.textContent?.trim() || '';
+          // 匹配自动生成的选项
+          if (this.matchesLanguage(text, langCode) && this.isAutoGenerated(text)) {
+            asrOption = option as HTMLElement;
+            console.log('[SubtitleAPIController] 找到ASR选项:', text);
+          }
+        }
+      });
+
+      if (asrOption) {
+        asrOption.click();
+        await this.sleep(300);
+
+        // Step 4: 关闭菜单
+        const backBtn = document.querySelector('.ytp-panel-back-button') as HTMLElement;
+        if (backBtn) {
+          backBtn.click();
+          await this.sleep(100);
+        }
+        settingsBtn.click();
+
+        console.log('[SubtitleAPIController] ✓ 成功通过UI选择ASR轨道:', langCode);
+        return true;
+      }
+
+      // 关闭菜单
+      const backBtn = document.querySelector('.ytp-panel-back-button') as HTMLElement;
+      if (backBtn) {
+        backBtn.click();
+        await this.sleep(100);
+      }
+      settingsBtn.click();
+
+      console.warn('[SubtitleAPIController] 未找到ASR轨道，尝试API回退');
+      // 如果UI方法失败，回退到API方法尝试普通轨道
+      return await this.fallbackToNormalTrack(langCode);
+
+    } catch (error) {
+      console.error('[SubtitleAPIController] UI选择ASR失败:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 回退到普通轨道（非ASR）
+   */
+  private async fallbackToNormalTrack(langCode: string): Promise<boolean> {
+    try {
+      const trackConfig = { languageCode: langCode };
+      this.player.setOption(this.captionsModule, 'track', trackConfig);
+
+      // 确保字幕按钮开启
+      const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLButtonElement;
+      if (subtitleBtn && subtitleBtn.getAttribute('aria-pressed') !== 'true') {
+        subtitleBtn.click();
+        await this.sleep(100);
+      }
+
+      console.log('[SubtitleAPIController] 已回退到普通轨道:', langCode);
+      return true;
+    } catch (error) {
+      console.error('[SubtitleAPIController] 回退失败:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 辅助函数：延时
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * 辅助函数：判断是否为字幕菜单项
+   */
+  private isSubtitleMenuItem(text: string): boolean {
+    return text.includes('字幕') ||
+           text.includes('Subtitle') ||
+           text.includes('Caption') ||
+           text.includes('CC');
+  }
+
+  /**
+   * 辅助函数：匹配语言
+   */
+  private matchesLanguage(text: string, langCode: string): boolean {
+    const languageNames: { [key: string]: string[] } = {
+      'en': ['英语', '英文', 'English'],
+      'zh': ['中文', '中国', 'Chinese'],
+      'ja': ['日语', '日文', 'Japanese'],
+      'ko': ['韩语', '韩文', 'Korean'],
+      'es': ['西班牙语', 'Spanish'],
+      'fr': ['法语', 'French'],
+      'de': ['德语', 'German'],
+      'ru': ['俄语', 'Russian']
+    };
+
+    const names = languageNames[langCode];
+    if (!names) return false;
+
+    return names.some(name => text.includes(name));
+  }
+
+  /**
+   * 辅助函数：判断是否为自动生成
+   */
+  private isAutoGenerated(text: string): boolean {
+    return text.includes('自动生成') ||
+           text.includes('auto-generated') ||
+           text.includes('automatic') ||
+           text.includes('自动') ||
+           text.includes('auto');
   }
 }
 

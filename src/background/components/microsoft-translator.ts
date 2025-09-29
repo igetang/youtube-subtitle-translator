@@ -25,6 +25,9 @@ class MicrosoftRequestError extends Error {
 export class MicrosoftTranslator {
   private readonly authManager = MicrosoftAuthManager.getInstance();
 
+  // 功能开关：启用5000字符窗口优化
+  private static readonly USE_OPTIMIZER = true;  // 可以通过这个开关快速切换新旧逻辑
+
   public async translateTexts(
     texts: string[],
     sourceLang: string,
@@ -190,5 +193,109 @@ export class MicrosoftTranslator {
       default:
         return lang;
     }
+  }
+
+  /**
+   * 优化版翻译方法 - 支持5000字符窗口优化
+   * 处理已经合并的文本（多条字幕用换行符连接）
+   */
+  public async translateOptimized(
+    optimizedTexts: string[],
+    sourceLang: string,
+    targetLang: string,
+    stage: Stage
+  ): Promise<string[]> {
+    if (optimizedTexts.length === 0) {
+      return [];
+    }
+
+    console.log(
+      `[MicrosoftTranslator] translateOptimized: ` +
+      `处理 ${optimizedTexts.length} 个优化文本组 (${stage}阶段)`
+    );
+
+    let token = await this.authManager.getToken();
+    let lastError: unknown = null;
+
+    const queryPrimary = this.buildUrl(PRIMARY_ENDPOINT, sourceLang, targetLang);
+    const querySecondary = this.buildUrl(SECONDARY_ENDPOINT, sourceLang, targetLang, true);
+
+    // 尝试两个端点
+    for (const endpoint of [queryPrimary, querySecondary]) {
+      let retry = false;
+      do {
+        try {
+          const pathLabel = endpoint === queryPrimary ? 'A' : 'B';
+          console.log(
+            `[MicrosoftTranslator] 调用优化路径${pathLabel}，` +
+            `${optimizedTexts.length} 个文本组`
+          );
+
+          // 构建请求体 - 每个优化文本都是一个Text对象
+          const requestBody = optimizedTexts.map(text => ({ Text: text }));
+
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+              Accept: 'application/json',
+              Origin: 'https://www.bing.com',
+              Referer: 'https://www.bing.com/translator',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
+            },
+            body: JSON.stringify(requestBody)
+          });
+
+          if (!response.ok) {
+            throw new MicrosoftRequestError(
+              `Microsoft translate failed: HTTP ${response.status}`,
+              response.status
+            );
+          }
+
+          const data = await response.json();
+
+          if (!Array.isArray(data)) {
+            throw new Error('Unexpected Microsoft API response format');
+          }
+
+          // 提取翻译结果
+          const translations = data.map((item: any, idx: number) => {
+            const translation = item?.translations?.[0]?.text;
+            if (typeof translation === 'string') {
+              return translation;
+            }
+            console.warn(
+              `[MicrosoftTranslator] 缺少翻译文本，使用原文`,
+              optimizedTexts[idx]?.substring(0, 100)
+            );
+            return optimizedTexts[idx];
+          });
+
+          console.log(
+            `[MicrosoftTranslator] 优化翻译成功，返回 ${translations.length} 个翻译结果`
+          );
+
+          return translations;
+
+        } catch (error) {
+          lastError = error;
+
+          if (error instanceof MicrosoftRequestError && error.status === 401) {
+            // 认证失败，刷新token并重试
+            this.authManager.invalidateToken();
+            token = await this.authManager.getToken(true);
+            retry = !retry;
+            continue;
+          }
+
+          retry = false;
+        }
+      } while (retry);
+    }
+
+    console.warn('[MicrosoftTranslator] 优化翻译所有路径均失败，回退原文', lastError);
+    return optimizedTexts;
   }
 }

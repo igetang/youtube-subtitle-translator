@@ -9,6 +9,7 @@
 import { IntelligentSegmenter } from './intelligent-segmenter';
 import { OpenAITranslator } from './openai-translator';
 import { MicrosoftTranslator } from './microsoft-translator';
+import { MicrosoftTextOptimizer } from './microsoft-text-optimizer';
 
 /**
  * 两阶段翻译器 - 支持AbortSignal版本
@@ -38,19 +39,24 @@ export class TwoPhaseTranslatorV4 {
   private static readonly MS_MAX_ITEMS = 10;  // 微软每次请求最大字幕条数
   private static readonly MS_MAX_CHARS = 5000;  // 微软单个文本最大字符数
   private static readonly MS_MAX_TOTAL_CHARS = 50000;  // 微软单次请求字符总量限制
+
+  // 🚀 调试开关：启用微软5000字符窗口优化
+  private static readonly USE_MICROSOFT_OPTIMIZER = true;  // 设为true启用新优化器
   
   private translationService: any = null;  // 翻译服务配置
   
   private segmenter: IntelligentSegmenter;
   private microsoftTranslator: MicrosoftTranslator;
+  private microsoftOptimizer: MicrosoftTextOptimizer;  // 新增：5000字符优化器
   private isComplete: boolean = false;
   private currentExecutionId: number = 0;
   private preferredGoogleEndpoint: GoogleEndpointId | null = null;
   private failedGoogleEndpoints = new Set<GoogleEndpointId>();
-  
+
   constructor() {
     this.segmenter = new IntelligentSegmenter();
     this.microsoftTranslator = new MicrosoftTranslator();
+    this.microsoftOptimizer = new MicrosoftTextOptimizer();  // 新增：初始化优化器
   }
   
   /**
@@ -245,13 +251,20 @@ export class TwoPhaseTranslatorV4 {
         return urgentResults;
       }
       
-      // 使用智能分段（createSmartBatches内部会自动分析时间间隔）
-      const batchesWithMeta = this.segmenter.createSmartBatches(batchSubtitles);
+      // 根据翻译服务类型选择分批策略
+      let batches: Array<typeof batchSubtitles>;
 
-      // 从批次元数据中提取字幕数组
-      const batches = batchesWithMeta.map(batch => batch.subtitles);
-      
-      console.log(`[TwoPhaseTranslatorV4] → 分成 ${batches.length} 个批次`);
+      if (isMicrosoftService) {
+        // 微软翻译：不使用智能分段，直接传递所有字幕，让内部5000字符优化器处理
+        console.log(`[TwoPhaseTranslatorV4] → 微软翻译：使用5000字符优化，不预先分批`);
+        batches = [batchSubtitles];  // 所有字幕作为一个批次
+      } else {
+        // 谷歌翻译等：使用智能分段（基于时间间隔，120条限制）
+        const batchesWithMeta = this.segmenter.createSmartBatches(batchSubtitles);
+        // 从批次元数据中提取字幕数组
+        batches = batchesWithMeta.map(batch => batch.subtitles);
+        console.log(`[TwoPhaseTranslatorV4] → 谷歌翻译：分成 ${batches.length} 个批次`);
+      }
       
       // 批次失败计数
       let failedBatches = 0;
@@ -297,7 +310,11 @@ export class TwoPhaseTranslatorV4 {
             batchSignal = batchController.signal;
           }
 
-          console.log(`[TwoPhaseTranslatorV4] 翻译批次 ${i + 1}/${batches.length}（${texts.length}条）`);
+          if (isMicrosoftService) {
+            console.log(`[TwoPhaseTranslatorV4] 调用微软翻译处理 ${batch.length} 条字幕（内部将使用5000字符优化）`);
+          } else {
+            console.log(`[TwoPhaseTranslatorV4] 翻译批次 ${i + 1}/${batches.length}（${texts.length}条）`);
+          }
 
           let translatedTexts: string[];
           if (isMicrosoftService) {
@@ -396,6 +413,101 @@ export class TwoPhaseTranslatorV4 {
   }
   
   private async translateWithMicrosoftSubtitles(
+    subtitles: Array<{
+      id?: string;
+      start: number;
+      end?: number;
+      duration?: number;
+      text: string;
+    }>,
+    sourceLang: string,
+    targetLang: string,
+    stage: 'urgent' | 'batch',
+    signal: AbortSignal
+  ): Promise<string[]> {
+    if (subtitles.length === 0) {
+      return [];
+    }
+
+    // 🚀 使用新的5000字符窗口优化器
+    if (TwoPhaseTranslatorV4.USE_MICROSOFT_OPTIMIZER) {
+      console.log(`[TwoPhaseTranslatorV4] 🚀 使用5000字符窗口优化器 (${stage}阶段，${subtitles.length}条字幕)`);
+
+      try {
+        // 步骤1：优化批次
+        const optimizedBatches = this.microsoftOptimizer.optimizeBatches(subtitles);
+
+        // 记录优化效果
+        const originalRequests = Math.ceil(subtitles.length / 10);
+        const optimizedRequests = optimizedBatches.length;
+        const reduction = Math.round(((originalRequests - optimizedRequests) / originalRequests) * 100);
+        console.log(
+          `[TwoPhaseTranslatorV4] 优化效果: ${originalRequests}个请求 → ${optimizedRequests}个请求 (减少${reduction}%)`
+        );
+
+        // 收集所有翻译结果
+        const allTranslatedTexts: string[] = [];
+        const allIndexMappings: number[][] = [];
+
+        // 步骤2：处理所有批次
+        for (let batchIndex = 0; batchIndex < optimizedBatches.length; batchIndex++) {
+          const batch = optimizedBatches[batchIndex];
+
+          // 检查中断信号
+          if (signal.aborted) {
+            throw new DOMException('微软翻译已取消', 'AbortError');
+          }
+
+          console.log(
+            `[TwoPhaseTranslatorV4] 处理批次 ${batchIndex + 1}/${optimizedBatches.length}: ` +
+            `${batch.texts.length}个Text对象`
+          );
+
+          // 调用优化版翻译方法
+          const translatedTexts = await this.microsoftTranslator.translateOptimized(
+            batch.texts,
+            sourceLang,
+            targetLang,
+            stage
+          );
+
+          // 收集结果
+          allTranslatedTexts.push(...translatedTexts);
+          allIndexMappings.push(...batch.indexMapping);
+
+          // 批次间延迟（批量阶段）
+          if (stage === 'batch' && batchIndex < optimizedBatches.length - 1) {
+            await this.delayWithSignal(TwoPhaseTranslatorV4.API_DELAY, signal);
+          }
+        }
+
+        // 步骤3：映射回原始字幕
+        const mappedResults = this.microsoftOptimizer.mapResults(
+          allTranslatedTexts,
+          allIndexMappings,
+          subtitles.length
+        );
+
+        console.log(
+          `[TwoPhaseTranslatorV4] ✅ 优化翻译完成: ${mappedResults.filter(r => r !== '').length}/${subtitles.length}条成功`
+        );
+
+        return mappedResults;
+
+      } catch (error) {
+        console.error('[TwoPhaseTranslatorV4] ❌ 优化翻译失败，回退到旧逻辑:', error);
+        // 如果优化版失败，回退到旧逻辑
+        return this.translateWithMicrosoftSubtitlesLegacy(subtitles, sourceLang, targetLang, stage, signal);
+      }
+    }
+
+    // 使用旧逻辑
+    console.log(`[TwoPhaseTranslatorV4] 使用传统微软翻译逻辑`);
+    return this.translateWithMicrosoftSubtitlesLegacy(subtitles, sourceLang, targetLang, stage, signal);
+  }
+
+  // 保留旧的实现作为后备
+  private async translateWithMicrosoftSubtitlesLegacy(
     subtitles: Array<{
       id?: string;
       start: number;

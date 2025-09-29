@@ -954,15 +954,17 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
     // 5. 两层缓存获取字幕轨道数据
     let availableSourceLanguages = [];
     let detectedSourceLang = 'auto';
-    let lastSelectedLanguage = null;
+    let lastSelectedTrack: { languageCode: string; kind?: string } | null = null;  // 从 selectedSourceTrack 获取
     
     // 层级1: Local Storage缓存
     try {
       const localCache = await videoSourceLanguageCacheManager.get(videoId);
       if (localCache && localCache.availableSourceLanguages) {
         availableSourceLanguages = localCache.availableSourceLanguages;
-        lastSelectedLanguage = localCache.lastSelectedLanguage || null;
-        console.log(`[service-worker] ✓ 缓存命中[Local Storage]: ${availableSourceLanguages.length}个轨道`);
+        lastSelectedTrack = localCache.selectedSourceTrack ? { ...localCache.selectedSourceTrack } : null;
+        console.log(`[service-worker] ✓ 缓存命中[Local Storage]: ${availableSourceLanguages.length}个轨道`, {
+          selectedTrack: lastSelectedTrack
+        });
       }
     } catch (error) {
       console.warn(`[service-worker] Local Storage读取失败:`, error);
@@ -981,12 +983,18 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
           availableSourceLanguages = trackResponse.tracks;
           console.log(`[service-worker] ✓ 获取成功[Content Script API]: ${availableSourceLanguages.length}个轨道`);
           
-          // 保存到Local Storage（注意：这里不设置lastSelectedLanguage，保持为null）
+          // 保存到Local Storage
           if (availableSourceLanguages.length > 0) {
+            const matchedTrack = lastSelectedTrack
+              ? availableSourceLanguages.find(t =>
+                  t.languageCode === lastSelectedTrack!.languageCode &&
+                  (lastSelectedTrack!.kind ? t.kind === lastSelectedTrack!.kind : !t.kind))
+              : undefined;
+
             await videoSourceLanguageCacheManager.set({
               videoId,
               availableSourceLanguages,
-              lastSelectedLanguage: lastSelectedLanguage || undefined
+              selectedSourceTrack: matchedTrack ?? undefined
             });
             
             console.log(`[service-worker] ✓ 已保存到缓存[Local Storage]`);
@@ -1001,16 +1009,16 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
     
     // 6. 智能选择源语言
     // 如果用户有历史选择，使用它；否则智能选择
-    if (lastSelectedLanguage) {
-      detectedSourceLang = lastSelectedLanguage;
-      console.log(`[service-worker] 使用用户历史选择的源语言: ${detectedSourceLang}`);
+    if (lastSelectedTrack) {
+      detectedSourceLang = lastSelectedTrack.languageCode;
+      console.log(`[service-worker] 使用用户历史选择的源语言: ${detectedSourceLang}` +
+        (lastSelectedTrack.kind ? ` (${lastSelectedTrack.kind})` : ''));
     } else if (availableSourceLanguages.length > 0) {
       // 没有用户选择，进行智能选择
       const targetLang = userPreferences.targetLang || 'zh-CN';
       const sourceTrack = selectBestSourceLanguage(
         availableSourceLanguages,
-        targetLang,
-        undefined  // 没有历史选择
+        targetLang
       );
       detectedSourceLang = sourceTrack.languageCode;
       console.log(`[service-worker] 智能选择源语言: ${detectedSourceLang}${sourceTrack.kind === 'asr' ? ' (ASR)' : ''} (目标语言: ${targetLang})`);
@@ -2137,18 +2145,24 @@ interface SubtitleData {
 function selectBestSourceLanguage(
   tracks: Array<{ languageCode: string; name: string; kind?: string }>,
   targetLang: string,
-  lastSelectedLanguage?: string
+  lastSelectedTrack?: { languageCode: string; kind?: string }
 ): { languageCode: string; kind?: string } {
   if (!tracks || tracks.length === 0) {
     return { languageCode: 'en' }; // 默认返回英语
   }
 
   // 规则1: 用户历史选择优先
-  if (lastSelectedLanguage) {
-    const userTrack = tracks.find(t => t.languageCode === lastSelectedLanguage);
-    if (userTrack) {
-      console.log(`[service-worker] 使用用户历史选择: ${lastSelectedLanguage}${userTrack.kind === 'asr' ? ' (ASR)' : ''}`);
-      return { languageCode: userTrack.languageCode, kind: userTrack.kind };
+  if (lastSelectedTrack?.languageCode) {
+    const candidates = tracks.filter(t => t.languageCode === lastSelectedTrack.languageCode);
+    if (candidates.length > 0) {
+      const exactKind = lastSelectedTrack.kind ?
+        candidates.find(t => t.kind === lastSelectedTrack.kind) :
+        candidates.find(t => !t.kind);
+
+      const matchedTrack = exactKind || candidates[0];
+      console.log(`[service-worker] 使用用户历史选择: ${matchedTrack.languageCode}` +
+        (matchedTrack.kind ? ` (${matchedTrack.kind})` : ''));
+      return { languageCode: matchedTrack.languageCode, kind: matchedTrack.kind };
     }
   }
 
@@ -2292,24 +2306,24 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     let sourceKind: string | undefined;
 
     if (sourceData && sourceData.availableSourceLanguages && sourceData.availableSourceLanguages.length > 0) {
-      // 调试：检查lastSelectedLanguage的类型
-      console.log('[service-worker] Step 2 调试 - sourceData.lastSelectedLanguage:', {
-        value: sourceData.lastSelectedLanguage,
-        type: typeof sourceData.lastSelectedLanguage,
-        isObject: sourceData.lastSelectedLanguage && typeof sourceData.lastSelectedLanguage === 'object'
+      // 调试：检查selectedSourceTrack的类型
+      console.log('[service-worker] Step 2 调试 - sourceData.selectedSourceTrack:', {
+        value: sourceData.selectedSourceTrack,
+        type: typeof sourceData.selectedSourceTrack,
+        languageCode: sourceData.selectedSourceTrack?.languageCode
       });
 
       // 使用智能选择函数
       const sourceTrack = selectBestSourceLanguage(
         sourceData.availableSourceLanguages,
         preferences.targetLang,
-        sourceData.lastSelectedLanguage
+        sourceData.selectedSourceTrack
       );
       sourceLang = sourceTrack.languageCode;
       sourceKind = sourceTrack.kind;
       console.log('[service-worker] 智能选择源语言:', sourceLang, sourceTrack.kind === 'asr' ? '(ASR)' : '', {
         targetLang: preferences.targetLang,
-        lastSelected: sourceData.lastSelectedLanguage,
+        lastSelected: sourceData.selectedSourceTrack?.languageCode,
         availableCount: sourceData.availableSourceLanguages.length
       });
     } else {
@@ -2439,32 +2453,37 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
         console.log('[service-worker] Step 5.1: 获取轨道信息');
         
         try {
-          // 优先尝试使用Player API获取轨道（更可靠，返回ISO 639-1标准代码）
+          // 优先使用playerResponse.captionTracks，与Popup保持一致
           let trackResponse = null;
-          
-          // 先尝试Player API方式
           try {
-            const apiResponse = await chrome.tabs.sendMessage(tabId, {
-              type: 'getSubtitleTracksAPI'
-            });
-            
-            if (apiResponse && apiResponse.success && apiResponse.tracks) {
-              console.log(`[service-worker] ✓ 通过Player API获取到${apiResponse.tracks.length}条轨道`);
-              trackResponse = {
-                success: true,
-                tracks: apiResponse.tracks
-              };
-            }
-          } catch (apiErr) {
-            console.log('[service-worker] Player API不可用，尝试原方式');
-          }
-          
-          // 如果API方式失败，回退到原方式
-          if (!trackResponse) {
             trackResponse = await chrome.tabs.sendMessage(tabId, {
               type: 'getVideoTrackData',
               videoId: videoId
             });
+            if (trackResponse?.success) {
+              console.log(`[service-worker] ✓ 通过playerResponse获取到${trackResponse.tracks?.length || 0}条轨道`);
+            } else {
+              console.log('[service-worker] ✗ playerResponse 获取轨道失败');
+            }
+          } catch (responseError) {
+            console.warn('[service-worker] playerResponse 获取轨道异常', responseError);
+          }
+
+          // 如果playerResponse失败或结果为空，兜底使用Player API tracklist
+          if (!trackResponse?.success || !trackResponse.tracks?.length) {
+            try {
+              const apiResponse = await chrome.tabs.sendMessage(tabId, {
+                type: 'getSubtitleTracksAPI'
+              });
+              if (apiResponse && apiResponse.success && apiResponse.tracks) {
+                console.log(`[service-worker] ✓ 通过Player API获取到${apiResponse.tracks.length}条轨道`);
+                trackResponse = apiResponse;
+              } else {
+                console.log('[service-worker] ✗ Player API 获取轨道失败');
+              }
+            } catch (apiErr) {
+              console.log('[service-worker] Player API获取轨道异常', apiErr);
+            }
           }
           
           if (trackResponse && trackResponse.success && trackResponse.tracks) {
@@ -2472,17 +2491,16 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
             
             // Step 5.2: 选择最佳源语言
             if (sourceLang === 'auto') {
-              // 调试：检查lastSelectedLanguage的类型
-              console.log('[service-worker] Step 5.2 调试 - sourceData?.lastSelectedLanguage:', {
-                value: sourceData?.lastSelectedLanguage,
-                type: typeof sourceData?.lastSelectedLanguage,
-                isObject: sourceData?.lastSelectedLanguage && typeof sourceData?.lastSelectedLanguage === 'object'
+              // 调试：检查selectedSourceTrack的类型
+              console.log('[service-worker] Step 5.2 调试 - sourceData?.selectedSourceTrack:', {
+                languageCode: sourceData?.selectedSourceTrack?.languageCode,
+                kind: sourceData?.selectedSourceTrack?.kind
               });
 
               const sourceTrack = selectBestSourceLanguage(
                 trackResponse.tracks,
                 preferences.targetLang,
-                sourceData?.lastSelectedLanguage
+                sourceData?.selectedSourceTrack
               );
               sourceLang = sourceTrack.languageCode;
               sourceKind = sourceTrack.kind;
@@ -2492,10 +2510,11 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
             // Step 5.3: 通过Player API设置字幕语言（使用ISO 639-1标准）
             if (sourceLang && sourceLang !== 'auto') {
               try {
-                console.log(`[service-worker] Step 5.3: 通过API设置字幕语言: ${sourceLang}`);
+                console.log(`[service-worker] Step 5.3: 通过API设置字幕语言: ${sourceLang}` + (sourceKind ? ` (${sourceKind})` : ''));
                 const setResult = await chrome.tabs.sendMessage(tabId, {
                   type: 'setSubtitleTrackAPI',
-                  langCode: sourceLang  // 使用ISO 639-1语言代码
+                  langCode: sourceLang,  // 使用ISO 639-1语言代码
+                  kind: sourceKind
                 });
                 
                 if (setResult && setResult.success) {
@@ -2519,10 +2538,15 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
                     // 不保存 baseUrl（6小时过期）
                   }));
                   
+                  const selectedTrackForCache = trackMetadata.find(track =>
+                    track.languageCode === sourceLang &&
+                    (sourceKind ? track.kind === sourceKind : !track.kind)
+                  );
+
                   await videoSourceLanguageCacheManager.set({
                     videoId: videoId,
                     availableSourceLanguages: trackMetadata,
-                    lastSelectedLanguage: sourceLang
+                    selectedSourceTrack: selectedTrackForCache
                   });
                   
                   console.log('[service-worker] ✓ 轨道元数据已异步缓存');
@@ -2696,14 +2720,15 @@ async function continueTranslationWithSubtitles(data: any): Promise<any> {
     const sourceData = await videoSourceManager.get(videoId);
     
     // 优先使用传递的源语言，其次缓存，最后默认值
-    let sourceLang = passedSourceLang || sourceData?.lastSelectedLanguage || 'auto';
+    let sourceLang = passedSourceLang || sourceData?.selectedSourceTrack?.languageCode || 'auto';
     let sourceKind: string | undefined;
 
     // 记录源语言的来源
     if (passedSourceLang) {
       console.log(`[service-worker] 使用传递的源语言: ${passedSourceLang}`);
-    } else if (sourceData?.lastSelectedLanguage) {
-      console.log(`[service-worker] 使用缓存的源语言: ${sourceData.lastSelectedLanguage}`);
+    } else if (sourceData?.selectedSourceTrack?.languageCode) {
+      console.log(`[service-worker] 使用缓存的源语言: ${sourceData.selectedSourceTrack.languageCode}` +
+        (sourceData.selectedSourceTrack.kind ? ` (${sourceData.selectedSourceTrack.kind})` : ''));
     }
     
     // 如果源语言还是auto，尝试从可用语言列表中选择
@@ -2711,7 +2736,7 @@ async function continueTranslationWithSubtitles(data: any): Promise<any> {
       const sourceTrack = selectBestSourceLanguage(
         sourceData.availableSourceLanguages,
         preferences.targetLang,
-        sourceData.lastSelectedLanguage || undefined
+        sourceData.selectedSourceTrack
       );
       sourceLang = sourceTrack.languageCode;
       sourceKind = sourceTrack.kind;

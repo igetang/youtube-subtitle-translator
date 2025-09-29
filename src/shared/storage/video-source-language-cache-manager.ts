@@ -96,6 +96,24 @@ export class VideoSourceLanguageCacheManager {
       return null;
     }
 
+    const sanitizeKind = (kind?: string): 'asr' | 'forced' | undefined => {
+      return kind === 'asr' || kind === 'forced' ? kind : undefined;
+    };
+
+    if (Array.isArray(item.availableSourceLanguages) && item.availableSourceLanguages.length > 0) {
+      item.availableSourceLanguages = item.availableSourceLanguages.map(track => ({
+        ...track,
+        kind: sanitizeKind(track.kind)
+      }));
+    }
+
+    if (item.selectedSourceTrack) {
+      item.selectedSourceTrack = {
+        ...item.selectedSourceTrack,
+        kind: sanitizeKind(item.selectedSourceTrack.kind)
+      };
+    }
+
     // 更新最后访问时间
     item.lastAccessed = Date.now();
     await this.saveCache();
@@ -114,8 +132,23 @@ export class VideoSourceLanguageCacheManager {
       await this.initialize();
     }
 
+    const sanitizeKind = (kind?: string): 'asr' | 'forced' | undefined => {
+      return kind === 'asr' || kind === 'forced' ? kind : undefined;
+    };
+
+    const sanitizedAvailable = (data.availableSourceLanguages || []).map(track => ({
+      ...track,
+      kind: sanitizeKind(track.kind)
+    }));
+
+    const sanitizedSelected = data.selectedSourceTrack
+      ? { ...data.selectedSourceTrack, kind: sanitizeKind(data.selectedSourceTrack.kind) }
+      : undefined;
+
     const completeData: VideoSourceLanguageData = {
       ...data,
+      availableSourceLanguages: sanitizedAvailable,
+      selectedSourceTrack: sanitizedSelected,
       fetchedAt: Date.now(),
       lastAccessed: Date.now()
     };
@@ -137,7 +170,7 @@ export class VideoSourceLanguageCacheManager {
         console.log(`[video-source-cache] FIFO移除: ${removed?.videoId}`);
       }
 
-      console.log(`[video-source-cache] 添加缓存: ${data.videoId}, 源语言: ${data.lastSelectedLanguage}`);
+      console.log(`[video-source-cache] 添加缓存: ${data.videoId}, 源语言: ${completeData.selectedSourceTrack?.languageCode || 'auto'}`);
     }
 
     await this.saveCache();
@@ -162,9 +195,37 @@ export class VideoSourceLanguageCacheManager {
     const item = this.cache.items.find(i => i.videoId === videoId);
     
     if (item) {
-      item.lastSelectedLanguage = sourceLang;
+      const sanitizeKind = (kind?: string): 'asr' | 'forced' | undefined => {
+        return kind === 'asr' || kind === 'forced' ? kind : undefined;
+      };
+
+      item.availableSourceLanguages = item.availableSourceLanguages?.map(track => ({
+        ...track,
+        kind: sanitizeKind(track.kind)
+      })) || [];
+
+      if (item.selectedSourceTrack) {
+        item.selectedSourceTrack = {
+          ...item.selectedSourceTrack,
+          kind: sanitizeKind(item.selectedSourceTrack.kind)
+        };
+      }
+
+      // 更新选中的轨道
       if (sourceTrack) {
-        item.selectedSourceTrack = sourceTrack;
+        item.selectedSourceTrack = {
+          ...sourceTrack,
+          kind: sanitizeKind(sourceTrack.kind)
+        };
+      } else if (sourceLang) {
+        // 如果没有提供完整轨道，尝试从可用列表中查找
+        const track = item.availableSourceLanguages?.find(t => t.languageCode === sourceLang);
+        if (track) {
+          item.selectedSourceTrack = {
+            ...track,
+            kind: sanitizeKind(track.kind)
+          };
+        }
       }
       item.lastAccessed = Date.now();
       
@@ -181,7 +242,7 @@ export class VideoSourceLanguageCacheManager {
    */
   public async getVideoSourceLanguage(videoId: string): Promise<string | null> {
     const data = await this.get(videoId);
-    return data?.lastSelectedLanguage || null;
+    return data?.selectedSourceTrack?.languageCode || null;
   }
 
   /**
@@ -234,7 +295,6 @@ export class VideoSourceLanguageCacheManager {
           ? availableSourceLanguages
           : existing.availableSourceLanguages,
         selectedSourceTrack: normalizeTrack(selectedSourceTrack) || existing.selectedSourceTrack,
-        lastSelectedLanguage: selectedSourceTrack?.languageCode || existing.lastSelectedLanguage,
         fetchedAt: existing.fetchedAt,
         lastAccessed: now
       };
@@ -243,7 +303,7 @@ export class VideoSourceLanguageCacheManager {
       console.log('[video-source-cache] upsertFromPopup 更新缓存项', {
         videoId,
         availableCount: updated.availableSourceLanguages.length,
-        lastSelectedLanguage: updated.lastSelectedLanguage
+        selectedLanguage: updated.selectedSourceTrack?.languageCode
       });
     } else {
       const normalizedTrack = normalizeTrack(selectedSourceTrack);
@@ -251,7 +311,6 @@ export class VideoSourceLanguageCacheManager {
         videoId,
         availableSourceLanguages: availableSourceLanguages || [],
         selectedSourceTrack: normalizedTrack,
-        lastSelectedLanguage: normalizedTrack?.languageCode,
         fetchedAt: now,
         lastAccessed: now
       };
@@ -264,7 +323,7 @@ export class VideoSourceLanguageCacheManager {
       console.log('[video-source-cache] upsertFromPopup 新增缓存项', {
         videoId,
         availableCount: newItem.availableSourceLanguages.length,
-        lastSelectedLanguage: newItem.lastSelectedLanguage
+        selectedLanguage: newItem.selectedSourceTrack?.languageCode
       });
     }
 

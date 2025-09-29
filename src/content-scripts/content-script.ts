@@ -620,8 +620,9 @@ function setupMessageHandlers(): void {
     
     // 处理通过Player API设置字幕语言（ISO 639-1）
     if (messageType === 'setSubtitleTrackAPI') {
-      console.log(`[content-script] 收到Chrome消息: ${messageType}, langCode: ${message.langCode}`);
-      handleSetSubtitleTrackAPI(message.langCode, sendResponse);
+      console.log(`[content-script] 收到Chrome消息: ${messageType}, langCode: ${message.langCode}` +
+                  (message.kind ? `, kind: ${message.kind}` : ''));
+      handleSetSubtitleTrackAPI(message.langCode, message.kind, sendResponse);
       return true; // 异步响应
     }
     
@@ -737,11 +738,11 @@ function handleGetSubtitleTracksAPI(sendResponse: (response: any) => void): void
 /**
  * 处理通过Player API设置字幕语言（使用ISO 639-1标准）
  */
-function handleSetSubtitleTrackAPI(langCode: string, sendResponse: (response: any) => void): void {
-  console.log(`[content-script] 通过API设置字幕语言: ${langCode}`);
-  
+function handleSetSubtitleTrackAPI(langCode: string, kind: string | undefined, sendResponse: (response: any) => void): void {
+  console.log(`[content-script] 通过API设置字幕语言: ${langCode}` + (kind ? ` (${kind})` : ''));
+
   const requestId = `api_set_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  
+
   const timeout = setTimeout(() => {
     apiResponseHandlers.delete(requestId);
     sendResponse({
@@ -749,18 +750,19 @@ function handleSetSubtitleTrackAPI(langCode: string, sendResponse: (response: an
       error: 'API设置字幕语言超时'
     });
   }, 5000);
-  
+
   // 设置响应处理器
   apiResponseHandlers.set(requestId, (response) => {
     clearTimeout(timeout);
     sendResponse(response);
   });
-  
+
   // 发送消息到main-world
   window.postMessage({
     source: 'content-script',
     type: 'SET_SUBTITLE_TRACK_API',
     langCode: langCode,  // ISO 639-1语言代码
+    kind: kind,           // 字幕类型（如 asr）
     _requestId: requestId
   }, '*');
 }
@@ -799,13 +801,17 @@ function handleGetVideoTrackData(videoId: string, sendResponse: (response: any) 
         console.log(`[content-script] 收到轨道数据，共 ${payload.captionTracks.length} 条`);
         
         // 转换YouTube原始格式为简化格式
-        const simplifiedTracks = payload.captionTracks.map((track: any) => ({
-          languageCode: track.languageCode,
-          name: track.name?.simpleText || track.name?.runs?.[0]?.text || track.languageCode,
-          vssId: track.vssId,
-          kind: track.kind,
-          isTranslatable: track.isTranslatable !== false
-        }));
+        const simplifiedTracks = payload.captionTracks.map((track: any) => {
+          const rawKind = track.kind;
+          const normalizedKind = rawKind === 'asr' || rawKind === 'forced' ? rawKind : undefined;
+          return {
+            languageCode: track.languageCode,
+            name: track.name?.simpleText || track.name?.runs?.[0]?.text || track.languageCode,
+            vssId: track.vssId,
+            kind: normalizedKind,
+            isTranslatable: track.isTranslatable !== false
+          };
+        });
         
         sendResponse({
           success: true,
@@ -1337,8 +1343,8 @@ async function handleSourceLanguageCacheChange(
   const oldVideoData = oldCache?.items?.find((item: any) => item.videoId === currentVideoId);
 
   // 检查源语言是否变化
-  if (newVideoData?.lastSelectedLanguage &&
-      newVideoData.lastSelectedLanguage !== oldVideoData?.lastSelectedLanguage) {
+  if (newVideoData?.selectedSourceTrack?.languageCode &&
+      newVideoData.selectedSourceTrack.languageCode !== oldVideoData?.selectedSourceTrack?.languageCode) {
 
     // 复用stateManager获取当前翻译状态
     const translateState = stateManager?.getState('translateActive');
@@ -1346,12 +1352,12 @@ async function handleSourceLanguageCacheChange(
 
     if (isActive) {
       console.log('[content-script] 检测到源语言变更:', {
-        old: oldVideoData?.lastSelectedLanguage,
-        new: newVideoData.lastSelectedLanguage
+        old: oldVideoData?.selectedSourceTrack?.languageCode,
+        new: newVideoData.selectedSourceTrack.languageCode
       });
 
       // 处理源语言变更
-      await handleSourceLanguageChange(newVideoData.lastSelectedLanguage);
+      await handleSourceLanguageChange(newVideoData.selectedSourceTrack.languageCode);
     }
   }
 }
@@ -1499,8 +1505,8 @@ async function getCurrentSourceLanguageForRealtime(videoId: string): Promise<str
     const result = await chrome.storage.local.get(StorageKeys.VIDEO_SOURCE_LANGUAGE_CACHE);
     const cache = result[StorageKeys.VIDEO_SOURCE_LANGUAGE_CACHE];
     const cachedItem = cache?.items?.find((item: any) => item.videoId === videoId);
-    if (cachedItem?.lastSelectedLanguage) {
-      return cachedItem.lastSelectedLanguage;
+    if (cachedItem?.selectedSourceTrack?.languageCode) {
+      return cachedItem.selectedSourceTrack.languageCode;
     }
   } catch (error) {
     console.warn('[content-script] 获取源语言缓存失败:', error);

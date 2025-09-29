@@ -101,7 +101,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 │   ├── 06-simplified-popup-architecture.md   # 简化的Popup架构设计
 │   ├── 07-batch-translation-architecture.md  # 批量翻译架构（时间间隔断句）
 │   ├── 08-abort-timeout-architecture.md      # AbortController超时架构v4.0
-│   └── 09-subtitle-data-format-architecture.md # 字幕数据格式架构
+│   ├── 09-subtitle-data-format-architecture.md # 字幕数据格式架构
+│   └── 10-asr-subtitle-selection-solution.md # ASR字幕轨道选择解决方案 ⭐
 └── troubleshooting.md      # 问题排查
 
 /legacy/                    # 【旧架构代码】已废弃，仅供参考
@@ -200,6 +201,7 @@ npm run dev:content   # 监听content script变化
 7. **07-batch-translation-architecture.md** - 批量翻译架构（⭐当前生产方案）
 8. **08-abort-timeout-architecture.md** - AbortController超时架构（🚧开发中）
 9. **09-subtitle-data-format-architecture.md** - 字幕数据格式架构（⭐核心规范）
+10. **10-asr-subtitle-selection-solution.md** - ASR字幕轨道选择解决方案（⭐重要发现）
 
 ## 🎯 代码规范
 
