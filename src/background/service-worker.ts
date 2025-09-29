@@ -2206,11 +2206,13 @@ function selectBestSourceLanguage(
 function generateTranslationCacheKey(
   videoId: string,
   sourceLang: string,
+  sourceKind: 'asr' | 'forced' | undefined,
   targetLang: string,
   service: TranslationServiceComplete
 ): string {
   // 基础部分
-  let key = `translation_${videoId}_${sourceLang}_${targetLang}_${service.type}`;
+  const kindPart = sourceKind || 'manual';
+  let key = `translation_${videoId}_${sourceLang}_${kindPart}_${targetLang}_${service.type}`;
   
   // 根据服务类型添加特定参数
   switch (service.type) {
@@ -2341,6 +2343,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     const cacheKey = generateTranslationCacheKey(
       videoId,
       sourceLang,
+      sourceKind,
       preferences.targetLang,
       preferences.translationService
     );
@@ -2351,6 +2354,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     const cachedResult = await cacheManager.get(
       videoId,
       sourceLang,
+      sourceKind,
       preferences.targetLang,
       preferences.translationService
     );
@@ -2408,6 +2412,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
           await cacheManager.set({
             videoId,
             sourceLang,
+            sourceKind,
             targetLang: preferences.targetLang,
             translationService: preferences.translationService,
             availableSourceLanguages: partialCaches[0].availableSourceLanguages || [],

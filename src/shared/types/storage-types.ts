@@ -155,6 +155,8 @@ export interface TranslationCacheData {
   videoId: string;
   /** 源语言（用于匹配） */
   sourceLang: string;
+  /** 源语言字幕类型（手动/自动生成/强制） */
+  sourceKind?: 'asr' | 'forced';
   /** 目标语言（用于匹配） */
   targetLang: string;
   

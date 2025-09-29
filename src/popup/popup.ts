@@ -40,7 +40,6 @@ function getBaseLangCode(langCode: string): string {
  * 数字越小优先级越高
  */
 const COMMON_LANGUAGES_PRIORITY: Record<string, number> = {
-  'auto': 0,   // 可选语言 - 最高优先级
   'zh-CN': 1,  // 中文简体
   'zh-TW': 2,  // 中文繁体
   'en': 3,     // 英语
@@ -662,11 +661,7 @@ function sortTrackData(trackData: any[], searchTerm: string = ''): any[] {
     .filter(track => matchTrackData(track, searchTerm).match) // 匹配→显示，不匹配→隐藏
     .sort((a, b) => {
       if (!searchTerm.trim()) {
-        // "可选语言"排在第一位，其他保持API原始顺序
-        if (a.languageCode === 'auto') return -1;
-        if (b.languageCode === 'auto') return 1;
-        
-        // 其他语言保持原始顺序（不排序）
+        // 没有搜索词时，保持API返回的原始顺序
         return 0;
       }
       
@@ -782,9 +777,9 @@ let currentVideoId: string | null = null;
 let sidePanelInitialized = false;
 let isYouTubePage = false;
 let currentTargetLang = 'en';
-let currentSourceLang = 'auto';
+let currentSourceLang = '';
 let currentSourceTrackKind: 'asr' | 'forced' | undefined = undefined;
-let uiTrackData: Array<{ languageCode: string; languageName: string; kind?: 'asr' | 'forced'; isAutoOption?: boolean }> = [];
+let uiTrackData: Array<{ languageCode: string; languageName: string; kind?: 'asr' | 'forced' }> = [];
 let uiLangCode: string | null = null;
 
 // === Port连接管理 ===
@@ -1146,20 +1141,35 @@ function populateTargetLanguages(searchTerm: string = ''): void {
     const option = document.createElement('div');
     option.className = 'custom-select-option';
     const displayName = generateTargetLanguageDisplayName(lang);
-    option.textContent = displayName;
-    option.dataset.value = lang.code;
-    
-    // 高亮当前选中的目标语言
-    if (currentTargetLang && lang.code === currentTargetLang) {
-      option.classList.add('selected');
-    }
-    
+
     // 应用语言族互斥逻辑：如果与源语言属于同一语言族，设为禁用状态
     if (currentSourceLang && currentSourceLang !== 'auto' && isSameLanguageFamily(currentSourceLang, lang.code)) {
       option.classList.add('disabled');
       option.setAttribute('data-disabled-reason', 'same-language-family');
       option.title = `无法选择同语言族的语言：${lang.name} 与源语言冲突`;
+
+      // 创建语言名称元素
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = displayName;
+
+      // 创建提示文字元素
+      const hintSpan = document.createElement('span');
+      hintSpan.className = 'disabled-hint';
+      hintSpan.textContent = '（与源语言相同）';
+
+      option.appendChild(nameSpan);
+      option.appendChild(hintSpan);
+
       console.log(`[popup] populateTargetLanguages: 目标语言 ${lang.code} 因与源语言 ${currentSourceLang} 冲突而被禁用`);
+    } else {
+      option.textContent = displayName;
+    }
+
+    option.dataset.value = lang.code;
+
+    // 高亮当前选中的目标语言
+    if (currentTargetLang && lang.code === currentTargetLang) {
+      option.classList.add('selected');
     }
     
     option.addEventListener('click', () => {
@@ -1470,26 +1480,17 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
     }
     
     if (availableLanguages.length > 0) {
-      // 转换为UI格式，并添加"自动检测"选项
-      uiTrackData = [
-        // 首先添加"自动检测"选项
-        {
-          languageCode: 'auto',
-          languageName: '可选语言',
-          isAutoOption: true
-        },
-        // 然后添加实际的轨道数据
-        ...availableLanguages.map((track: any) => {
-          const rawKind = track.kind;
-          const normalizedKind: 'asr' | 'forced' | undefined = rawKind === 'asr' || rawKind === 'forced' ? rawKind : undefined;
-          return {
-            languageCode: track.languageCode,
-            languageName: track.name,
-            kind: normalizedKind
-          };
-        })
-      ];
-      console.log('[popup] 源语言列表已获取（包含可选语言）:', uiTrackData);
+      // 转换为UI格式
+      uiTrackData = availableLanguages.map((track: any) => {
+        const rawKind = track.kind;
+        const normalizedKind: 'asr' | 'forced' | undefined = rawKind === 'asr' || rawKind === 'forced' ? rawKind : undefined;
+        return {
+          languageCode: track.languageCode,
+          languageName: track.name,
+          kind: normalizedKind
+        };
+      });
+      console.log('[popup] 源语言列表已获取:', uiTrackData);
     }
     
     // 先加载用户之前选择的源语言，设置全局变量
@@ -1627,7 +1628,7 @@ function populateSourceLanguages(searchTerm: string = ''): void {
     console.log('[DEBUG] 排序后的 sortedTracks:', sortedTracks.map(t => `${t.languageCode}(${t.languageName})`));
     
     // 如果有搜索词但没有匹配结果，显示提示
-    if (sortedTracks.length === 0 && searchTerm.trim() && !('可选语言'.includes(searchTerm.trim()) || 'auto'.toLowerCase().includes(searchTerm.toLowerCase()))) {
+    if (sortedTracks.length === 0 && searchTerm.trim()) {
       const noResultOption = document.createElement('div');
       noResultOption.className = 'custom-select-option disabled';
       noResultOption.textContent = `未找到匹配 "${searchTerm}" 的语言`;
@@ -1708,7 +1709,7 @@ function populateSourceLanguages(searchTerm: string = ''): void {
           trackKind: trackInfo.kind,
           videoId: currentVideoId
         });
-        await saveSourceLanguage(trackInfo.languageCode, currentSourceTrackKind);
+        await saveSourceLanguage(trackInfo.languageCode, trackInfo.kind);
 
         // 重新填充目标语言列表以应用语言族互斥逻辑
         populateTargetLanguages();
@@ -1795,22 +1796,18 @@ function updateSourceLanguageDisplay(languageCode: string, trackKind: 'asr' | 'f
   }
   
   let displayText: string;
-  
-  if (languageCode === 'auto') {
-    displayText = '可选语言';
+
+  // 查找对应的轨道信息
+  const trackInfo = uiTrackData.find(track =>
+    track.languageCode === languageCode &&
+    track.kind === trackKind
+  );
+
+  if (trackInfo) {
+    displayText = generateLanguageDisplayName(trackInfo);
   } else {
-    // 查找对应的轨道信息
-    const trackInfo = uiTrackData.find(track => 
-      track.languageCode === languageCode && 
-      track.kind === trackKind
-    );
-    
-    if (trackInfo) {
-      displayText = generateLanguageDisplayName(trackInfo);
-    } else {
-      displayText = languageCode;
-      console.warn('[popup] 未找到匹配的轨道信息:', { languageCode, trackKind, uiTrackData });
-    }
+    displayText = languageCode;
+    console.warn('[popup] 未找到匹配的轨道信息:', { languageCode, trackKind, uiTrackData });
   }
 
   console.log('[popup] 设置源语言显示文本:', displayText);

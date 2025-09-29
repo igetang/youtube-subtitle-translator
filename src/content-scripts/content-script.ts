@@ -1342,18 +1342,27 @@ async function handleSourceLanguageCacheChange(
   const newVideoData = newCache?.items?.find((item: any) => item.videoId === currentVideoId);
   const oldVideoData = oldCache?.items?.find((item: any) => item.videoId === currentVideoId);
 
-  // 检查源语言是否变化
-  if (newVideoData?.selectedSourceTrack?.languageCode &&
-      newVideoData.selectedSourceTrack.languageCode !== oldVideoData?.selectedSourceTrack?.languageCode) {
+  // 检查源语言或类型是否变化（同时比较languageCode和kind）
+  const sourceChanged =
+    newVideoData?.selectedSourceTrack?.languageCode !== oldVideoData?.selectedSourceTrack?.languageCode ||
+    newVideoData?.selectedSourceTrack?.kind !== oldVideoData?.selectedSourceTrack?.kind;
+
+  if (newVideoData?.selectedSourceTrack?.languageCode && sourceChanged) {
 
     // 复用stateManager获取当前翻译状态
     const translateState = stateManager?.getState('translateActive');
     const isActive = translateState === TranslateActiveState.ACTIVE || translateState === 'active';
 
     if (isActive) {
-      console.log('[content-script] 检测到源语言变更:', {
-        old: oldVideoData?.selectedSourceTrack?.languageCode,
-        new: newVideoData.selectedSourceTrack.languageCode
+      console.log('[content-script] 检测到源语言或类型变更:', {
+        old: {
+          languageCode: oldVideoData?.selectedSourceTrack?.languageCode,
+          kind: oldVideoData?.selectedSourceTrack?.kind
+        },
+        new: {
+          languageCode: newVideoData.selectedSourceTrack.languageCode,
+          kind: newVideoData.selectedSourceTrack.kind
+        }
       });
 
       // 处理源语言变更

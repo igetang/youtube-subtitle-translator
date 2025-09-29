@@ -44,6 +44,7 @@ export class TranslationCacheManager {
     const hashData = {
       videoId: data.videoId,
       sourceLang: data.sourceLang,
+      sourceKind: data.sourceKind || 'manual',
       targetLang: data.targetLang,
       translationService: {
         type: data.translationService.type,
@@ -105,11 +106,13 @@ export class TranslationCacheManager {
   private _getCacheKey(
     videoId: string,
     sourceLang: string,
+    sourceKind: 'asr' | 'forced' | undefined,
     targetLang: string,
     service: TranslationServiceForCacheKey,
   ): string {
+    const kindPart = sourceKind || 'manual';
     const servicePart = `${service.type}_${service.model || 'default'}_${service.temperature || 'default'}`;
-    return `${CACHE_KEY_PREFIX}${videoId}_${sourceLang}_${targetLang}_${servicePart}`;
+    return `${CACHE_KEY_PREFIX}${videoId}_${sourceLang}_${kindPart}_${targetLang}_${servicePart}`;
   }
 
   /**
@@ -124,10 +127,11 @@ export class TranslationCacheManager {
   public async get(
     videoId: string,
     sourceLang: string,
+    sourceKind: 'asr' | 'forced' | undefined,
     targetLang: string,
     service: TranslationServiceForCacheKey,
   ): Promise<TranslationCacheData | null> {
-    const key = this._getCacheKey(videoId, sourceLang, targetLang, service);
+    const key = this._getCacheKey(videoId, sourceLang, sourceKind, targetLang, service);
     try {
       const result = await chrome.storage.local.get(key);
       if (result[key]) {
@@ -234,7 +238,7 @@ export class TranslationCacheManager {
       model: data.translationService.model,
       temperature: data.translationService.temperature,
     };
-    const key = this._getCacheKey(data.videoId, data.sourceLang, data.targetLang, serviceKeyParams);
+    const key = this._getCacheKey(data.videoId, data.sourceLang, data.sourceKind, data.targetLang, serviceKeyParams);
     
     // Ensure lastUsed is set, and calculate hash before storing
     const dataToStore: TranslationCacheData = {

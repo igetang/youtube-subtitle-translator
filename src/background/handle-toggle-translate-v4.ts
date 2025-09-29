@@ -233,12 +233,17 @@ export async function handleToggleTranslateV4(
     const cachedResult = await translationCacheManager.get(
       videoId,
       sourceLang,
+      sourceKind,
       preferences.targetLang,
       preferences.translationService
     );
 
     if (cachedResult) {
       console.log('[service-worker-v4] ✓ 命中完整缓存');
+
+      // 即使缓存命中也要切换字幕轨道
+      await sendSetSubtitleTrack(sourceLang, sourceKind);
+
       console.log('[service-worker-v4] → 设置状态为 ACTIVE（缓存命中）');
       await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
       session.complete();
@@ -642,6 +647,7 @@ export async function handleToggleTranslateV4(
     saveTranslationCacheAsync(
       videoId,
       sourceLang,
+      sourceKind,       // 传递sourceKind
       preferences,
       originalVtt,      // VTT格式
       translatedVtt,    // VTT格式
@@ -723,6 +729,7 @@ export async function handleToggleTranslateV4(
 function saveTranslationCacheAsync(
   videoId: string,
   sourceLang: string,
+  sourceKind: 'asr' | 'forced' | undefined,
   preferences: any,
   originalVtt: string,      // 改为VTT字符串
   translatedVtt: string,    // 改为VTT字符串
@@ -733,6 +740,7 @@ function saveTranslationCacheAsync(
       await cacheManager.set({
         videoId,
         sourceLang,
+        sourceKind,  // 添加sourceKind字段
         targetLang: preferences.targetLang,
         translationService: preferences.translationService,
         originalSubtitles: originalVtt,      // VTT格式
