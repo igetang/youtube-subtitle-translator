@@ -68,7 +68,8 @@ export async function handleToggleTranslateV4(
     originalSubtitleState,
     sourceLang: requestedSourceLang,
     targetLang: requestedTargetLang,
-    reuseOriginalSubtitles
+    reuseOriginalSubtitles,
+    currentTime
   } = data;
   const tabId = sender.tab?.id;
   
@@ -395,7 +396,8 @@ export async function handleToggleTranslateV4(
                 end: entry.start + entry.duration,
                 index: idx
               })),
-              sourceLang: sourceLang
+              sourceLang: sourceLang,
+              currentTime: typeof currentTime === 'number' ? currentTime : 0
             };
             console.log('[service-worker-v4] ✓ 复用缓存字幕: ' + parsed.length + ' 条');
           }
@@ -682,7 +684,9 @@ export async function handleToggleTranslateV4(
       errorLevel = getErrorLevel(error);
       console.log('[service-worker-v4] 超时错误:', error.stage);
     } else if (isAbortError(error)) {
-      // 用户取消，静默处理
+      // 用户取消会话，提示用户并记录信息
+      userMessage = '翻译已取消';
+      errorLevel = ErrorLevel.INFO;
       console.log('[service-worker-v4] 用户取消翻译');
     } else {
       userMessage = error.message || '翻译失败';
@@ -707,7 +711,7 @@ export async function handleToggleTranslateV4(
           data: {
             message: userMessage,
             level: errorLevel.toString(),
-            duration: 3000
+            duration: 5000
           }
         });
       } catch (err) {

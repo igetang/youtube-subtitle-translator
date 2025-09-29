@@ -236,16 +236,18 @@ function handleStateChange(data: any): void {
   
   // 处理批量更新（来自updateStates）
   if (updates) {
-    // 注释掉中间层日志，状态变化已由StateManager记录
-    // console.log(`[content-script] 批量状态变化:`, Object.keys(updates).join(', '));
+    if (updates.translateActive === 'inactive') {
+      subtitleOverlay.hide();
+    }
     if (uiRenderer) {
       uiRenderer.update(updates);
     }
   } 
   // 处理单个更新（来自updateState）
   else if (key && value !== undefined) {
-    // 注释掉中间层日志，状态变化已由StateManager记录
-    // console.log(`[content-script] 状态变化: ${key} = ${value}`);
+    if (key === 'translateActive' && value === 'inactive') {
+      subtitleOverlay.hide();
+    }
     if (uiRenderer) {
       uiRenderer.update({ [key]: value });
     }
@@ -991,6 +993,8 @@ async function refreshStates(): Promise<void> {
  */
 function showErrorMessage(data: { message: string; duration?: number; level?: string }): void {
   try {
+    // Clear any pending subtitle overlay message before showing the error
+    subtitleOverlay.hide();
     const { message, duration = 5000, level = 'warning' } = data;
     
     // 查找视频容器
@@ -1303,8 +1307,27 @@ function setupTranslationServiceChangeListener(): void {
           }
         });
 
-        if (response?.action === 'translated' || response?.action === 'cached') {
+        // 完善的response处理
+        if (!response) {
+          console.error('[content-script] 无响应');
+          subtitleOverlay.hide();
+          showErrorMessage({ message: '翻译服务无响应，请重试', duration: 5000 });
+        } else if (!response.success) {
+          console.error('[content-script] 翻译失败:', response.error);
+          subtitleOverlay.hide();
+          showErrorMessage({
+            message: response.error || '翻译失败，请重试',
+            duration: 5000
+          });
+        } else if (response.action === 'translated' || response.action === 'cached') {
           displayTranslatedSubtitles(response.data);
+        } else if (response.action === 'streamed') {
+          // V4架构成功 - 数据已通过TRANSLATION_UPDATE推送
+          console.log('[content-script] V4架构翻译成功，数据已流式推送');
+        } else {
+          console.warn('[content-script] 未知响应格式:', response);
+          subtitleOverlay.hide();
+          showErrorMessage({ message: '翻译响应格式异常', duration: 5000 });
         }
       } catch (error) {
         console.error('[content-script] 处理翻译服务变更监听失败:', error);
@@ -1423,9 +1446,27 @@ async function handleSourceLanguageChange(newSourceLang: string): Promise<void> 
         }
       });
 
-      // 复用现有的响应处理
-      if (response.action === 'translated' || response.action === 'cached') {
+      // 完善的response处理
+      if (!response) {
+        console.error('[content-script] 无响应');
+        subtitleOverlay.hide();
+        showErrorMessage({ message: '翻译服务无响应，请重试', duration: 5000 });
+      } else if (!response.success) {
+        console.error('[content-script] 翻译失败:', response.error);
+        subtitleOverlay.hide();
+        showErrorMessage({
+          message: response.error || '翻译失败，请重试',
+          duration: 5000
+        });
+      } else if (response.action === 'translated' || response.action === 'cached') {
         displayTranslatedSubtitles(response.data);
+      } else if (response.action === 'streamed') {
+        // V4架构成功 - 数据已通过TRANSLATION_UPDATE推送
+        console.log('[content-script] V4架构翻译成功，数据已流式推送');
+      } else {
+        console.warn('[content-script] 未知响应格式:', response);
+        subtitleOverlay.hide();
+        showErrorMessage({ message: '翻译响应格式异常', duration: 5000 });
       }
     }
   } catch (error) {
@@ -1495,13 +1536,41 @@ async function handleTargetLanguageChangeRealtime(newTargetLang: string, oldTarg
       }
     });
 
-    if (response?.action === 'translated' || response?.action === 'cached') {
+    // 完善的response处理
+    if (!response) {
+      // 无响应
+      console.error('[content-script] 无响应');
+      subtitleOverlay.hide();
+      showErrorMessage({ message: '翻译服务无响应，请重试', duration: 5000 });
+      stateManager?.updateState('translateActive', 'inactive');
+    } else if (!response.success) {
+      // 失败响应
+      console.error('[content-script] 翻译失败:', response.error);
+      subtitleOverlay.hide();
+      showErrorMessage({
+        message: response.error || '翻译失败，请重试',
+        duration: 5000
+      });
+      stateManager?.updateState('translateActive', 'inactive');
+    } else if (response.action === 'translated' || response.action === 'cached') {
+      // 旧架构成功
       displayTranslatedSubtitles(response.data);
+    } else if (response.action === 'streamed') {
+      // V4架构成功 - 数据已通过TRANSLATION_UPDATE推送
+      console.log('[content-script] V4架构翻译成功，数据已流式推送');
+      // 状态会通过其他消息更新，这里不需要额外处理
+    } else {
+      // 未知响应
+      console.warn('[content-script] 未知响应格式:', response);
+      subtitleOverlay.hide();
+      showErrorMessage({ message: '翻译响应格式异常', duration: 5000 });
+      stateManager?.updateState('translateActive', 'inactive');
     }
   } catch (error) {
     console.error('[content-script] 处理目标语言变更失败:', error);
     stateManager?.updateState('translateActive', 'inactive');
     subtitleOverlay.hide();
+    showErrorMessage({ message: '处理目标语言变更失败', duration: 5000 });
   }
 }
 

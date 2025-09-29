@@ -29,6 +29,7 @@ export class SubtitleOverlay {
   private currentLanguageMode: 'bilingual' | 'targetOnly' = 'bilingual';
   private userPreferencesManager: UserPreferencesManager;
   private isUrgentTranslation: boolean = false;
+  private pendingMessageTimer: number | null = null;  // 用于清除pending消息的定时器
 
   // 响应式字幕相关属性
   private playerObserver: ResizeObserver | null = null;
@@ -212,6 +213,13 @@ export class SubtitleOverlay {
    */
   public hide(): void {
     console.log('[SubtitleOverlay] 隐藏字幕');
+
+    // 清除pending消息定时器
+    if (this.pendingMessageTimer) {
+      clearTimeout(this.pendingMessageTimer);
+      this.pendingMessageTimer = null;
+    }
+
     this.isActive = false;
     if (this.subtitleContainer) {
       this.subtitleContainer.style.display = 'none';
@@ -474,8 +482,16 @@ export class SubtitleOverlay {
   /**
    * 显示PENDING状态消息
    * 用于源语言切换等需要重新加载的场景
+   * @param message 要显示的消息
+   * @param timeout 超时时间（毫秒），默认5秒
    */
-  public showPendingMessage(message: string): void {
+  public showPendingMessage(message: string, timeout: number = 5000): void {
+    // 清除之前的定时器
+    if (this.pendingMessageTimer) {
+      clearTimeout(this.pendingMessageTimer);
+      this.pendingMessageTimer = null;
+    }
+
     if (!this.subtitleContainer) {
       // 如果容器不存在，先初始化
       this.initialize();
@@ -514,6 +530,13 @@ export class SubtitleOverlay {
       }
 
       console.log('[SubtitleOverlay] 显示PENDING消息:', message);
+
+      // 设置自动隐藏定时器
+      this.pendingMessageTimer = window.setTimeout(() => {
+        console.log('[SubtitleOverlay] Pending消息超时，自动隐藏');
+        this.hide();
+        this.pendingMessageTimer = null;
+      }, timeout);
     }
   }
 
@@ -613,6 +636,12 @@ export class SubtitleOverlay {
    */
   public destroy(): void {
     console.log('[SubtitleOverlay] 销毁字幕层');
+
+    // 清除pending消息定时器
+    if (this.pendingMessageTimer) {
+      clearTimeout(this.pendingMessageTimer);
+      this.pendingMessageTimer = null;
+    }
 
     // 断开ResizeObserver
     if (this.playerObserver) {

@@ -2008,6 +2008,7 @@ async function handleCheckTranslationCache(data: any): Promise<any> {
     const cachedData = await translationCacheManager.get(
       data.videoId,
       data.sourceLang,
+      data.sourceKind,
       data.targetLang,
       data.service
     );

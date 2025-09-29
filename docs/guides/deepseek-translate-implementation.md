@@ -1,32 +1,53 @@
 # DeepSeek AI翻译API实现指南
 
-> 最后更新：2025-09-26
-> 状态：📝 规划中
+> 最后更新：2025-09-29
+> 状态：🚧 架构设计完成，待实现
 > 版本：V4架构兼容
 
 ## 📋 概述
 
-本文档提供完整的DeepSeek AI翻译API实现指南，包括认证、调用、批量优化和最佳实践。DeepSeek是一家中国AI公司，提供极低成本的高质量翻译服务，特别适合中文场景。
+本文档提供 DeepSeek 翻译 API 的落地指南，包括认证、调用、批量优化、节流策略与最佳实践。DeepSeek API 与 OpenAI 兼容，适合作为中文场景的低成本翻译备选方案。
 
 ## 🔑 核心特性
 
-- **极低成本**：比OpenAI便宜95%（$0.27/百万输入tokens）
-- **中文优化**：专为中文场景优化，翻译质量优秀
-- **OpenAI兼容**：完全兼容OpenAI SDK，易于集成
-- **大上下文**：支持64K上下文窗口
-- **官方支持**：有完整的官方文档和平台
+- **低成本**：输入（cache miss）$0.28/百万 token，输出 $0.42/百万 token，cache hit $0.028
+- **默认模型**：`deepseek-chat`（DeepSeek-V3.2-Exp 非思考模式）
+- **中文优化**：对中英互译表现稳定，适合字幕翻译场景
+- **OpenAI 兼容**：支持 OpenAI SDK / API 生态（`https://api.deepseek.com`）
+- **大上下文**：上下文窗口 128K token，默认输出 4K，可配置到 8K
+- **轻限流**：官方不设置硬性 rate limit，可自行按 200 ms 节奏节流
 
+## 📊 模型规格
+
+| 模型 | 模式 | 上下文 | 默认输出 | 最大输出 | 价格（输入 cache miss / hit / 输出） |
+|------|------|--------|----------|----------|-----------------------------------|
+| `deepseek-chat` | 非思考模式（推荐用于翻译） | 128K | 4K | 8K | $0.28 / $0.028 / $0.42 |
+> 数据来源：DeepSeek 官方文档（2025-09-29）。
 ## 🏗️ 架构设计
+
+### 基础配置
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| API 基础地址 | `https://api.deepseek.com` | 兼容 OpenAI SDK，可选 `/v1` |
+| 推荐模型 | `deepseek-chat` | DeepSeek-V3.2-Exp 非思考模式 |
+| 默认温度 | 内部固定 `1.3` | 不向用户暴露 |
+| 输出上限 | 默认 4K，`max_tokens` 可调到 8K | 超过会被截断 |
+| 节流建议 | 每批后延迟 ≥ 200 ms | 官方无硬限流，建议自行节流 |
+
+> 响应体包含 `usage.prompt_tokens` / `completion_tokens` / `total_tokens` 字段，可直接记录用量。
 
 ### 调用流程
 
 ```mermaid
 graph LR
-    A[准备API Key] --> B[构建请求]
-    B --> C[调用Chat API]
-    C --> D[解析响应]
-    D --> E[返回翻译结果]
-    C -.失败.-> F[错误处理]
+    A[准备 API Key / Base URL] --> B[紧急字幕翻译]
+    B --> C[批量分组 (≤20 条)]
+    C --> D[DeepSeek Chat API]
+    D --> E[解析译文 + 统计 token]
+    E --> F[延迟 requestDelayMs]
+    F -->|下一批| C
+    D -.失败.-> G[指数退避 + 重试]
 ```
 
 ## 📝 实现代码
@@ -41,12 +62,12 @@ graph LR
 
 interface DeepSeekConfig {
   apiKey: string;           // API密钥
-  model: string;            // 模型名称，默认deepseek-chat
-  temperature: number;      // 温度参数，翻译建议0.3
-  maxTokens: number;        // 最大输出tokens
-  batchSize: number;        // 批量大小
-  retryDelay: number;       // 重试延迟
+  model: string;            // 模型名称，默认 deepseek-chat
+  temperature: number;      // 内部固定 1.3（不暴露给用户）
+  maxOutputTokens: number;  // 单次最大输出 token（默认 4000，可提到 8000）
+  maxBatchSize: number;     // 单批最大字幕条数（默认 20 ）
   timeout: number;          // 请求超时
+  requestDelayMs: number;   // 批次之间的最小延迟（自带节流）
 }
 
 interface DeepSeekMessage {
@@ -83,11 +104,11 @@ export class DeepSeekTranslator {
   private config: DeepSeekConfig = {
     apiKey: '',
     model: 'deepseek-chat',
-    temperature: 0.3,
-    maxTokens: 2000,
-    batchSize: 10,
-    retryDelay: 500,
-    timeout: 10000
+    temperature: 1.3,
+    maxOutputTokens: 8000,
+    maxBatchSize: 20,
+    timeout: 10000,
+    requestDelayMs: 200
   };
 
   constructor(apiKey: string, customConfig?: Partial<DeepSeekConfig>) {
@@ -143,7 +164,7 @@ export class DeepSeekTranslator {
           model: this.config.model,
           messages,
           temperature: this.config.temperature,
-          max_tokens: this.config.maxTokens,
+          max_tokens: this.config.maxOutputTokens,
           stream: false
         } as DeepSeekRequest),
         signal: controller.signal
@@ -162,11 +183,7 @@ export class DeepSeekTranslator {
         throw new Error('DeepSeek API返回格式错误');
       }
 
-      console.log(`[DeepSeekTranslator] Token使用:
-        输入=${data.usage.prompt_tokens},
-        输出=${data.usage.completion_tokens},
-        总计=${data.usage.total_tokens},
-        成本≈$${(data.usage.prompt_tokens * 0.00000027 + data.usage.completion_tokens * 0.0000011).toFixed(6)}`);
+      console.log(`[DeepSeekTranslator] Token使用: 输入=${data.usage.prompt_tokens}, 输出=${data.usage.completion_tokens}, 总计=${data.usage.total_tokens}`);
 
       return data.choices[0].message.content;
     } catch (error) {
@@ -192,11 +209,11 @@ export class DeepSeekTranslator {
     const separator = '\n---\n';
 
     // 分批处理
-    for (let i = 0; i < texts.length; i += this.config.batchSize) {
-      const batch = texts.slice(i, i + this.config.batchSize);
+    for (let i = 0; i < texts.length; i += this.config.maxBatchSize) {
+      const batch = texts.slice(i, i + this.config.maxBatchSize);
 
       try {
-        console.log(`[DeepSeekTranslator] 翻译批次 ${Math.floor(i / this.config.batchSize) + 1}: ${batch.length}条文本`);
+        console.log(`[DeepSeekTranslator] 翻译批次 ${Math.floor(i / this.config.maxBatchSize) + 1}: ${batch.length} 条字幕`);
 
         const messages = this.buildTranslationPrompt(batch, sourceLang, targetLang);
         const response = await this.callAPI(messages);
@@ -231,8 +248,8 @@ export class DeepSeekTranslator {
       }
 
       // 批次间延迟
-      if (i + this.config.batchSize < texts.length) {
-        await new Promise(resolve => setTimeout(resolve, this.config.retryDelay));
+      if (i + this.config.maxBatchSize < texts.length) {
+        await new Promise(resolve => setTimeout(resolve, this.config.requestDelayMs));
       }
     }
 
@@ -260,24 +277,6 @@ export class DeepSeekTranslator {
 
     return await this.callAPI(messages);
   }
-
-  /**
-   * 估算翻译成本
-   */
-  public estimateCost(texts: string[]): number {
-    // 粗略估算：平均每条字幕50个字符
-    const totalChars = texts.reduce((sum, text) => sum + text.length, 0);
-
-    // 估算tokens（英文1.3 tokens/word，中文0.6 tokens/char）
-    const estimatedInputTokens = totalChars * 0.8; // 平均估算
-    const estimatedOutputTokens = totalChars * 0.8;
-
-    // 计算成本（美元）
-    const inputCost = estimatedInputTokens * 0.00000027;
-    const outputCost = estimatedOutputTokens * 0.0000011;
-
-    return inputCost + outputCost;
-  }
 }
 ```
 
@@ -302,9 +301,10 @@ export class TwoPhaseTranslatorV4 {
 
     if (deepseekApiKey) {
       this.deepseekTranslator = new DeepSeekTranslator(deepseekApiKey, {
-        batchSize: 5, // 字幕场景建议小批量
-        temperature: 0.3, // 低温度保证一致性
-        maxTokens: 2000
+        maxBatchSize: 20,
+        temperature: 1.3,
+        maxOutputTokens: 8000,
+        requestDelayMs: 200
       });
     }
   }
@@ -331,10 +331,6 @@ export class TwoPhaseTranslatorV4 {
         }
 
         try {
-          // 估算成本并提示
-          const estimatedCost = this.deepseekTranslator.estimateCost(texts);
-          console.log(`[TwoPhaseTranslatorV4] 预计DeepSeek翻译成本: $${estimatedCost.toFixed(6)}`);
-
           const translations = await this.deepseekTranslator.translate(
             texts,
             this.mapLanguageCode(sourceLang, 'deepseek'),
@@ -406,13 +402,9 @@ deepseekSection.innerHTML = `
       <button id="save-deepseek-key">保存</button>
     </div>
     <div class="api-info">
-      <p>💰 成本：约$0.001/100条字幕（比OpenAI便宜95%）</p>
       <p>🔗 获取API Key：<a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a></p>
-      <p>✨ 特点：中文翻译质量优秀，支持64K上下文</p>
-    </div>
-    <div class="cost-estimator">
-      <button id="estimate-cost">估算当前视频翻译成本</button>
-      <div id="cost-result"></div>
+      <p>✨ 特点：中文翻译质量优秀，上下文 128K token，输出可自定义到 8K token</p>
+      <p>⚙️ 内部固定 temperature = 1.3，不向用户暴露</p>
     </div>
   </div>
 `;
@@ -427,18 +419,9 @@ document.getElementById('save-deepseek-key')?.addEventListener('click', async ()
   }
 });
 
-// 成本估算
-document.getElementById('estimate-cost')?.addEventListener('click', async () => {
-  const response = await chrome.runtime.sendMessage({
-    type: 'estimateDeepSeekCost'
-  });
 
-  if (response.cost !== undefined) {
-    document.getElementById('cost-result')!.innerHTML =
-      `预计翻译成本：<strong>$${response.cost.toFixed(6)}</strong>
-       (约${response.subtitleCount}条字幕)`;
-  }
-});
+
+
 ```
 
 ## 🔧 配置选项
@@ -448,31 +431,32 @@ document.getElementById('estimate-cost')?.addEventListener('click', async () => 
 ```javascript
 const DEEPSEEK_CONFIG = {
   // API设置
-  model: 'deepseek-chat',    // 推荐模型
+  model: 'deepseek-chat',    // 默认使用非思考模式
 
   // 批量设置
-  batchSize: 5,              // 每批5条（字幕较长时）
-  maxBatchSize: 10,          // 最大批量（字幕较短时）
+  maxBatchSize: 20,          // 每批固定 20 条字幕
+  requestDelayMs: 200,       // 批次间延迟，防止瞬时拥塞
 
-  // 温度设置
-  temperature: 0.3,          // 低温度保证翻译一致性
+  // 温度 / 输出
+  temperature: 1.3,
+  maxOutputTokens: 8000,     // 显式放宽到 8K 输出 token
 
-  // Token限制
-  maxTokens: 2000,           // 单次请求最大输出
-  maxContextTokens: 4000,    // 包含输入的总token限制
-
-  // 超时设置
-  timeout: 10000,            // 请求超时10秒
-
-  // 重试策略
-  maxRetries: 2,             // 最多重试2次
-  retryDelay: 500,           // 重试延迟500ms
+  // 超时与重试
+  timeout: 10000,
+  maxRetries: 2,
 
   // 缓存设置
-  cacheEnabled: true,        // 启用翻译缓存
-  cacheDuration: 86400000    // 缓存24小时
+  cacheEnabled: true,
+  cacheDuration: 86_400_000
 };
 ```
+
+## ⚡ 批量策略
+
+- **紧急字幕**：沿用 V4 架构现有的前/后范围配置，紧急请求通常不会触碰 8K 输出上限。
+- **批量字幕**：固定每批 20 条字幕，估算输出 token 后设置 `max_tokens = 8000`，若触发截断则缩减批次。
+- **分隔符**：使用 `\n---\n` 等唯一标记拼接/拆分字幕，确保响应可按原顺序拆开。
+- **节流**：官方无硬限流，仍建议每批结束 `await delay(200)`；若收到 429/网络错误，指数退避后重试。
 
 ## ⚠️ 注意事项
 
@@ -483,14 +467,13 @@ const DEEPSEEK_CONFIG = {
 
 ### 最佳实践
 1. **批量优化**：
-   - 短字幕：10条一批
-   - 长字幕：5条一批
-   - 使用明确分隔符避免混淆
+   - 固定每批 20 条字幕，结合 `max_tokens=8000`
+   - 使用 `\n---\n` 等唯一分隔符保证可拆分
+   - 批次间保持 ≥200 ms 延迟，避免长连接堆积
 
-2. **成本控制**：
+2. **缓存与使用统计**：
    - 实现翻译缓存，避免重复翻译
-   - 提供成本估算功能
-   - 记录API使用统计
+   - 利用响应头中的 usage 字段统计 token 和用量
 
 3. **错误处理**：
    - API Key无效：提示用户检查设置
@@ -498,7 +481,7 @@ const DEEPSEEK_CONFIG = {
    - 网络错误：降级到其他翻译服务
 
 4. **质量保证**：
-   - Temperature设置0.3保证一致性
+   - Temperature 固定 1.3，保证风格稳定
    - 提供清晰的系统提示词
    - 批量失败时降级到单条翻译
 
@@ -507,14 +490,9 @@ const DEEPSEEK_CONFIG = {
 ### 1. 智能批处理
 
 ```typescript
-// 根据字幕长度动态调整批量大小
-function calculateOptimalBatchSize(texts: string[]): number {
-  const avgLength = texts.reduce((sum, t) => sum + t.length, 0) / texts.length;
-
-  if (avgLength < 30) return 10;   // 短字幕，10条一批
-  if (avgLength < 60) return 7;    // 中等字幕，7条一批
-  if (avgLength < 100) return 5;   // 较长字幕，5条一批
-  return 3;                         // 长字幕，3条一批
+// DeepSeek 固定每批 20 条字幕，避免触及 8K 输出上限
+function calculateDeepSeekBatchSize(): number {
+  return 20;
 }
 ```
 
@@ -595,7 +573,7 @@ curl -X POST https://api.deepseek.com/v1/chat/completions \
         "content": "Hello world"
       }
     ],
-    "temperature": 0.3
+    "temperature": 1.3
   }'
 ```
 
@@ -628,6 +606,7 @@ curl -X POST https://api.deepseek.com/v1/chat/completions \
 
 ## 📅 更新历史
 
+- **2025-09-29**：核实 DeepSeek-V3.2-Exp 规格，补充 20 条批量策略、温度与节流建议
 - **2025-09-26**：创建初始文档，完成API调研和实现设计
 
 ---

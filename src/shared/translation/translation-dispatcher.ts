@@ -32,6 +32,7 @@ export interface TranslationContext {
   videoId: string;
   sourceEvents: SubtitleEvent[];
   sourceLang: string;
+  sourceKind?: 'asr' | 'forced';
   targetLang: string;
   translationService: TranslationService;
   subtitleMode: SubtitleMode;
@@ -451,6 +452,7 @@ export class TranslationDispatcher {
         const dataToCache: TranslationCacheData = {
           videoId: context.videoId,
           sourceLang: context.sourceLang,
+          sourceKind: context.sourceKind,
           targetLang: context.targetLang,
           availableSourceLanguages: [], // TODO: 需要从合适的源获取
           translationService: { // 转换为安全的存储格式
@@ -844,6 +846,7 @@ export class TranslationDispatcher {
       const dataToCache: TranslationCacheData = {
         videoId: context.videoId,
         sourceLang: context.sourceLang,
+        sourceKind: context.sourceKind,
         targetLang: context.targetLang,
         availableSourceLanguages: [], // 修正：添加缺失的属性
         translationService: { // 修正：手动转换以匹配安全的存储类型
