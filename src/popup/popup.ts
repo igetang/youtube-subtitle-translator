@@ -20,6 +20,25 @@ const userPreferencesManager = UserPreferencesManager.getInstance();
 
 // 状态更新已通过Port连接机制自动处理，无需发送消息
 
+// === 防抖工具函数 ===
+
+/**
+ * 防抖函数 - 延迟执行直到停止触发
+ * @param func 需要防抖的函数
+ * @param delay 延迟时间（毫秒）
+ * @returns 防抖后的函数
+ */
+function debounce<T extends (...args: any[]) => any>(
+  func: T,
+  delay: number
+): (...args: Parameters<T>) => void {
+  let timeoutId: number;
+  return (...args: Parameters<T>) => {
+    clearTimeout(timeoutId);
+    timeoutId = window.setTimeout(() => func(...args), delay);
+  };
+}
+
 // === 语言族互斥检测工具函数 ===
 
 /**
@@ -1171,23 +1190,9 @@ function populateTargetLanguages(searchTerm: string = ''): void {
     if (currentTargetLang && lang.code === currentTargetLang) {
       option.classList.add('selected');
     }
-    
-    option.addEventListener('click', () => {
-      // 检查是否被禁用
-      if (option.classList.contains('disabled')) {
-        console.log(`[popup] 尝试选择被禁用的目标语言: ${lang.code}`);
-        return; // 禁止选择被禁用的选项
-      }
-      
-      if (targetLangSelectedValue) {
-        targetLangSelectedValue.textContent = generateTargetLanguageDisplayName(lang);
-      }
-      if (targetLangPanel) {
-        targetLangPanel.style.display = 'none';
-      }
-      saveTargetLanguage(lang.code);
-    });
-    
+
+    // 不再在这里绑定事件，改用事件委托（见 addEventListeners 函数）
+
     if (targetLangOptions) {
       targetLangOptions.appendChild(option);
     }
@@ -1212,6 +1217,8 @@ async function saveTargetLanguage(langCode: string): Promise<void> {
     }
 }
 
+// 创建防抖版本的保存函数，避免快速连续触发
+const debouncedSaveTargetLanguage = debounce(saveTargetLanguage, 300);
 
 /**
  * 添加事件监听器
@@ -1273,10 +1280,106 @@ function addEventListeners(): void {
       populateSourceLanguages(searchTerm);
     });
   }
-  
-  // 源语言选项点击事件已改为直接绑定（见populateSourceLanguages函数）
-  // 不再使用事件委托，每个选项在创建时直接绑定点击事件
-  
+
+  // === 目标语言选项的事件委托 ===
+  // 使用事件委托处理所有目标语言选项的点击，避免重复绑定
+  if (targetLangOptions) {
+    targetLangOptions.addEventListener('click', (e) => {
+      // 使用closest找到被点击的option元素
+      const option = (e.target as HTMLElement).closest('.custom-select-option') as HTMLElement;
+      if (!option) return;
+
+      // 检查是否被禁用
+      if (option.classList.contains('disabled')) {
+        console.log('[popup] 尝试选择被禁用的目标语言:', option.dataset.value);
+        return;
+      }
+
+      const langCode = option.dataset.value;
+      if (!langCode) return;
+
+      const lang = targetLanguages.find(l => l.code === langCode);
+      if (!lang) return;
+
+      console.log('[popup] 事件委托 - 选择目标语言:', langCode);
+
+      // 更新显示文本
+      if (targetLangSelectedValue) {
+        targetLangSelectedValue.textContent = generateTargetLanguageDisplayName(lang);
+      }
+
+      // 关闭下拉面板
+      if (targetLangPanel) {
+        targetLangPanel.style.display = 'none';
+      }
+
+      // 保存语言设置（使用防抖版本，避免快速连续触发）
+      debouncedSaveTargetLanguage(langCode);
+    });
+  }
+
+  // === 源语言选项的事件委托 ===
+  // 使用事件委托处理所有源语言选项的点击，避免重复绑定
+  if (sourceLangOptions) {
+    sourceLangOptions.addEventListener('click', async (e) => {
+      // 使用closest找到被点击的option元素
+      const option = (e.target as HTMLElement).closest('.custom-select-option') as HTMLElement;
+      if (!option) return;
+
+      // 检查是否被禁用
+      if (option.classList.contains('disabled')) {
+        console.log('[popup] 尝试选择被禁用的源语言:', option.dataset.value);
+        return;
+      }
+
+      const languageCode = option.dataset.value;
+      const trackKind = option.dataset.kind as 'asr' | 'forced' | undefined;
+
+      if (!languageCode) return;
+
+      // 从uiTrackData找到完整的track信息
+      const trackInfo = uiTrackData?.find(t =>
+        t.languageCode === languageCode && t.kind === trackKind
+      );
+
+      if (!trackInfo) {
+        console.warn('[popup] 未找到对应的track信息:', { languageCode, trackKind });
+        return;
+      }
+
+      console.log('[popup] 事件委托 - 选择源语言:', {
+        videoId: currentVideoId,
+        languageCode,
+        trackKind: trackKind ?? 'manual'
+      });
+
+      // 更新当前选中状态
+      currentSourceLang = languageCode;
+      currentSourceTrackKind = trackKind;
+
+      // 更新UI显示
+      updateSourceLanguageDisplay(languageCode, trackKind);
+
+      // 关闭下拉面板
+      if (sourceLangPanel) {
+        sourceLangPanel.style.display = 'none';
+      }
+
+      // 保存设置（使用防抖版本，避免快速连续触发）
+      console.log('[popup] 事件委托 - 准备保存源语言:', {
+        languageCode,
+        trackKind,
+        videoId: currentVideoId
+      });
+      await debouncedSaveSourceLanguage(languageCode, trackKind);
+
+      // 重新填充目标语言列表以应用语言族互斥
+      populateTargetLanguages();
+
+      console.log(`[popup] 源语言已选择: ${languageCode} (${trackKind ?? 'manual'})，目标语言列表已更新`);
+    });
+  }
+
   // 点击外部关闭下拉菜单
   document.addEventListener('click', (e) => {
     if (!targetLangContainer?.contains(e.target as Node)) {
@@ -1674,48 +1777,7 @@ function populateSourceLanguages(searchTerm: string = ''): void {
         option.classList.add('selected');
       }
 
-      // 为每个选项添加点击事件监听器（方案2：直接绑定）
-      option.addEventListener('click', async () => {
-        console.log('[popup][source] 用户点击源语言选项', {
-          videoId: currentVideoId,
-          languageCode: trackInfo.languageCode,
-          trackKind: trackInfo.kind,
-          uiTrackCount: uiTrackData.length
-        });
-
-        // 检查是否被禁用
-        if (option.classList.contains('disabled')) {
-          console.log(`[popup] 尝试选择被禁用的源语言: ${trackInfo.languageCode}`);
-          return;
-        }
-
-        // 更新当前选中的源语言
-        currentSourceLang = trackInfo.languageCode;
-        currentSourceTrackKind = trackInfo.kind === 'asr' || trackInfo.kind === 'forced'
-          ? trackInfo.kind
-          : undefined;
-
-        // 更新UI显示
-        updateSourceLanguageDisplay(trackInfo.languageCode, currentSourceTrackKind);
-
-        // 关闭下拉菜单
-        if (sourceLangPanel) {
-          sourceLangPanel.style.display = 'none';
-        }
-
-        // 保存到存储
-        console.log('[popup][source] 用户选择源语言，准备保存', {
-          languageCode: trackInfo.languageCode,
-          trackKind: trackInfo.kind,
-          videoId: currentVideoId
-        });
-        await saveSourceLanguage(trackInfo.languageCode, trackInfo.kind);
-
-        // 重新填充目标语言列表以应用语言族互斥逻辑
-        populateTargetLanguages();
-
-        console.log(`[popup] 源语言已选择: ${trackInfo.languageCode} (${trackInfo.kind ?? 'manual'})，目标语言列表已更新`);
-      });
+      // 不再在这里绑定事件，改用事件委托（见 addEventListeners 函数）
 
       sourceLangOptions!.appendChild(option);
     });
@@ -1724,64 +1786,6 @@ function populateSourceLanguages(searchTerm: string = ''): void {
   console.log(`[DEBUG] populateSourceLanguages 完成: 显示 ${uiTrackData?.length || 0} 个源语言选项 (搜索: "${searchTerm}")`);
   console.log('[DEBUG] sourceLangOptions 元素:', sourceLangOptions);
   console.log('[DEBUG] sourceLangOptions 子元素数量:', sourceLangOptions?.children.length);
-}
-
-/**
- * 处理源语言选项点击事件
- * @deprecated 已改为直接绑定方式，此函数不再使用（保留作为参考）
- */
-function handleSourceLanguageOptionClick(event: Event): void {
-  console.log('[DEBUG] handleSourceLanguageOptionClick 被调用，event:', event);
-  const target = event.target as HTMLElement;
-  console.log('[DEBUG] 点击目标元素:', target, 'classList:', target.classList);
-
-  // 使用closest查找最近的.custom-select-option元素
-  const optionElement = target.closest('.custom-select-option') as HTMLElement;
-  if (!optionElement) {
-    console.log('[DEBUG] 未找到 custom-select-option 元素，退出');
-    return;
-  }
-  console.log('[DEBUG] 找到选项元素:', optionElement);
-
-  const languageCode = optionElement.getAttribute('data-value');
-  const trackKindAttr = optionElement.getAttribute('data-kind');
-  const trackKind: 'asr' | 'forced' | undefined =
-    trackKindAttr === 'asr' || trackKindAttr === 'forced'
-      ? trackKindAttr
-      : undefined;
-
-  if (!languageCode) {
-    console.error('[popup] 无效的语言选项数据');
-    return;
-  }
-
-  // 检查是否被禁用
-  if (optionElement.classList.contains('disabled')) {
-    console.log(`[popup] 尝试选择被禁用的源语言: ${languageCode}`);
-    return; // 禁止选择被禁用的选项
-  }
-
-  // 更新当前选中的源语言
-  currentSourceLang = languageCode;
-  currentSourceTrackKind = trackKind;
-
-  // 更新UI显示
-  updateSourceLanguageDisplay(languageCode, trackKind);
-
-  // 关闭下拉菜单
-  if (sourceLangPanel) {
-    sourceLangPanel.style.display = 'none';
-  }
-
-  // 保存到存储
-  console.log('[DEBUG] 用户点击源语言选项，准备保存:', { languageCode, trackKind, currentVideoId });
-  saveSourceLanguage(languageCode, trackKind);
-
-  // 重新填充目标语言列表以应用语言族互斥逻辑
-  populateTargetLanguages();
-
-  console.log(`[popup] 源语言已选择: ${languageCode} (${trackKind ?? 'manual'})，目标语言列表已更新`);
-  console.log(`[popup] 语言族互斥检测已应用，当前源语言: ${languageCode}`);
 }
 
 /**
@@ -1878,6 +1882,9 @@ async function saveSourceLanguage(languageCode: string, trackKind: 'asr' | 'forc
     console.error('[popup] 保存源语言设置失败:', error);
   }
 }
+
+// 创建防抖版本的保存函数，避免快速连续触发
+const debouncedSaveSourceLanguage = debounce(saveSourceLanguage, 300);
 
 // 注意：setTargetLanguage、setSubtitleMode、setTranslationServiceConfig 函数已删除
 // 这些功能现在直接通过saveTargetLanguage和loadSettings中的UserPreferencesManager处理
