@@ -160,6 +160,516 @@ chrome.storage.local.get(null).then(items => {
 - 检查manifest.json权限配置
 - 确保只在允许的页面运行
 
+## 🔌 Claude Code MCP 配置指南
+
+### MCP 服务器配置常见问题
+
+#### Q: chrome-devtools-mcp 显示 "Failed to reconnect"
+
+**症状**：运行 `/mcp` 命令时，chrome-devtools-mcp 显示连接失败
+
+**根本原因**：
+- **配置文件优先级问题**：Claude Code 读取的是**项目级配置**，而非用户级配置
+- 项目级配置文件：`.claude.json`（项目根目录）
+- 用户级配置文件：`~/.config/claude/mcp.json`（会被忽略）
+
+**解决方案**：
+
+1. **使用官方 CLI 添加 MCP（推荐）**：
+   ```bash
+   # 进入项目目录
+   cd /path/to/your/project
+
+   # 使用 CLI 添加 MCP 服务器
+   claude mcp add chrome-devtools npx chrome-devtools-mcp@latest
+   ```
+
+   ✅ CLI 会自动添加到正确的配置文件（`.claude.json`）
+
+2. **手动配置（如果必须）**：
+
+   编辑项目根目录的 `.claude.json`：
+   ```json
+   {
+     "mcpServers": {
+       "chrome-devtools": {
+         "type": "stdio",
+         "command": "npx",
+         "args": ["chrome-devtools-mcp@latest"],
+         "env": {}
+       }
+     }
+   }
+   ```
+
+3. **验证配置**：
+   ```bash
+   # 检查 MCP 连接状态
+   claude mcp list
+
+   # 应该看到：
+   # chrome-devtools: npx chrome-devtools-mcp@latest - ✓ Connected
+   ```
+
+**常见错误配置**：
+
+❌ **错误 1**：修改了用户级配置
+```bash
+# 这个配置会被忽略！
+~/.config/claude/mcp.json
+```
+
+❌ **错误 2**：手动编辑项目级配置时格式不正确
+```json
+// 错误：缺少 "type" 字段
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["chrome-devtools-mcp@latest"]
+    }
+  }
+}
+```
+
+✅ **正确**：使用 CLI 或包含完整字段
+```json
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["chrome-devtools-mcp@latest"],
+      "env": {}
+    }
+  }
+}
+```
+
+### WSL2 环境特殊配置
+
+**环境**：Windows + WSL2 + Ubuntu + Claude Code
+
+**可能遇到的问题**：
+1. Chrome 路径问题
+2. 代理干扰
+3. 沙箱权限限制
+
+**推荐配置**：
+
+1. **在 WSL2 中安装 Chrome**：
+   ```bash
+   # 下载并安装 Chrome
+   wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+   sudo apt install ./google-chrome-stable_current_amd64.deb
+   ```
+
+2. **验证 Node 版本**：
+   ```bash
+   # 需要 Node >= 22.12.0
+   node -v
+
+   # 如果版本过低，升级 Node
+   nvm install 22
+   ```
+
+3. **清理 npm 缓存**（如遇到问题）：
+   ```bash
+   npm cache clean --force
+   npm cache verify
+   ```
+
+4. **禁用代理干扰**（如果使用代理）：
+   ```json
+   {
+     "mcpServers": {
+       "chrome-devtools": {
+         "type": "stdio",
+         "command": "npx",
+         "args": ["chrome-devtools-mcp@latest"],
+         "env": {
+           "NO_PROXY": "*",
+           "HTTP_PROXY": "",
+           "HTTPS_PROXY": ""
+         }
+       }
+     }
+   }
+   ```
+
+### MCP 配置最佳实践
+
+1. **始终使用 CLI 添加 MCP**：
+   ```bash
+   claude mcp add <server-name> <command> [args...]
+   ```
+
+2. **不要手动编辑 `~/.config/claude/mcp.json`**：
+   - 这个文件是用户级配置，在项目中会被忽略
+   - Claude Code 优先读取项目级配置
+
+3. **验证配置生效**：
+   ```bash
+   # 检查 MCP 状态
+   claude mcp list
+
+   # 应该看到所有 MCP 都显示 ✓ Connected
+   ```
+
+4. **调试 MCP 连接问题**：
+   ```bash
+   # 手动测试 MCP 是否能启动
+   npx chrome-devtools-mcp@latest
+
+   # 应该看到：
+   # Chrome DevTools MCP Server v0.x.x
+   # Chrome DevTools MCP Server connected
+   ```
+
+### 相关资源
+
+- [Claude Code MCP 官方文档](https://docs.claude.com/en/docs/claude-code/mcp)
+- [chrome-devtools-mcp GitHub](https://github.com/ChromeDevTools/chrome-devtools-mcp)
+- [MCP 配置故障排查](https://github.com/ChromeDevTools/chrome-devtools-mcp/issues)
+
+---
+
+### 使用Chrome DevTools MCP调试扩展程序（高级用法）⭐
+
+本节介绍如何使用Chrome DevTools MCP连接到你**已经打开的Chrome浏览器**来调试扩展程序，而不是让MCP自动启动新的Chrome实例。这对于需要在已登录状态、已加载扩展的真实环境中调试非常有用。
+
+#### 快速开始
+
+**核心要点：**
+1. **先手动启动Chrome**（带远程调试端口）
+2. **配置MCP连接到已打开的Chrome**（通过 `--browserUrl` 参数）
+3. **再启动Claude Code**
+
+#### 完整配置方法
+
+##### 1. 启动Chrome（带远程调试）
+
+**在WSL/Linux环境：**
+```bash
+google-chrome --remote-debugging-port=9222 \
+  --user-data-dir=~/.config/google-chrome-debug \
+  --load-extension=/path/to/your/extension/dist &
+```
+
+**参数说明：**
+- `--remote-debugging-port=9222` - 开启远程调试端口（必需）
+- `--user-data-dir` - 指定非默认数据目录（Chrome限制，必需）
+- `--load-extension` - 自动加载你的扩展（可选）
+
+**验证Chrome已启动调试端口：**
+```bash
+curl http://127.0.0.1:9222/json/version
+# 应该返回Chrome版本信息
+```
+
+##### 2. MCP项目配置（.mcp.json）
+
+**文件位置：** 项目根目录的 `.mcp.json`
+
+```json
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--browserUrl", "http://127.0.0.1:9222",
+        "--logFile", "/tmp/chrome-devtools-mcp.log"
+      ],
+      "env": {
+        "DEBUG": "*"
+      }
+    }
+  }
+}
+```
+
+**关键参数：**
+- `--browserUrl http://127.0.0.1:9222` - **最关键！** 告诉MCP连接到已打开的Chrome，而不是启动新实例
+- `--logFile` - 调试日志文件路径（可选，但强烈推荐）
+- `DEBUG: "*"` - 开启详细调试日志（可选）
+
+##### 3. 使用流程
+
+```bash
+# 步骤1：启动Chrome（带调试端口）
+google-chrome --remote-debugging-port=9222 \
+  --user-data-dir=~/.config/google-chrome-debug \
+  --load-extension=/home/k/chrome-9.15/dist &
+
+# 步骤2：手动操作（如需要）
+# - 登录你的账号
+# - 手动加载扩展（如果--load-extension没生效）
+# - 导航到测试页面
+
+# 步骤3：启动Claude Code
+claude
+
+# 步骤4：使用MCP工具
+# 在Claude Code中直接调用MCP工具，例如：
+# - mcp__chrome-devtools__list_pages
+# - mcp__chrome-devtools__take_snapshot
+# - mcp__chrome-devtools__navigate_page
+```
+
+#### 常见问题与解决方案（踩过的坑）⚠️
+
+##### 坑1：MCP多重配置冲突 ⭐ 最大的坑
+
+**问题描述：**
+项目配置文件 `.mcp.json` 里明明写了 `--browserUrl` 参数，但MCP启动时没有这个参数，导致MCP自己打开了新的Chrome实例。
+
+**根本原因：**
+Claude Code存在多个配置文件，优先级如下：
+- **Local scope** (`.claude.json` 中的 `mcpServers`) - 最高优先级
+- **Project scope** (`.mcp.json`) - 中等优先级
+- **User scope** (`~/.config/claude/mcp.json`) - 最低优先级
+
+如果Local配置中有chrome-devtools但没有 `--browserUrl` 参数，会覆盖Project配置。
+
+**如何排查：**
+```bash
+# 1. 检查项目根目录的 .claude.json
+cat .claude.json | grep -A 10 "mcpServers"
+
+# 2. 检查是否有User级配置
+cat ~/.config/claude/mcp.json 2>/dev/null
+cat ~/.claude/mcp.json 2>/dev/null
+
+# 3. 检查MCP进程的实际参数
+ps aux | grep chrome-devtools-mcp
+cat /proc/$(pgrep -f chrome-devtools-mcp)/cmdline | tr '\0' ' '
+```
+
+**解决方案：**
+```bash
+# 方案A：删除Local配置（推荐）
+claude mcp remove chrome-devtools -s local
+
+# 方案B：删除所有冲突的配置文件
+rm ~/.claude/mcp.json
+rm ~/.config/claude/mcp.json
+
+# 方案C：只保留项目级配置 .mcp.json
+# 确保其他配置文件都不包含chrome-devtools配置
+```
+
+**验证修复：**
+```bash
+# 重启Claude Code后，检查MCP进程参数
+ps aux | grep chrome-devtools-mcp
+
+# 应该看到类似：
+# node ... chrome-devtools-mcp --browserUrl http://127.0.0.1:9222 --logFile /tmp/...
+```
+
+##### 坑2：MCP总是打开新Chrome实例
+
+**问题描述：**
+明明Chrome已经启动了，但MCP还是自己开了一个新的Chrome。
+
+**原因：**
+缺少 `--browserUrl` 参数。MCP的默认行为是启动自己的Chrome实例。
+
+**解决方案：**
+确保 `.mcp.json` 中包含正确的 `--browserUrl` 参数：
+```json
+{
+  "args": [
+    "-y",
+    "chrome-devtools-mcp@latest",
+    "--browserUrl", "http://127.0.0.1:9222"  // ← 必须有这个！
+  ]
+}
+```
+
+##### 坑3：Windows Chrome无法从WSL访问
+
+**问题描述：**
+在Windows中启动了Chrome（带 `--remote-debugging-port=9222`），但WSL中的MCP无法连接。
+
+**原因：**
+Windows防火墙或WSL网络隔离问题。
+
+**解决方案：**
+直接在WSL中启动Chrome：
+```bash
+# 在WSL中安装Chrome
+wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo apt install ./google-chrome-stable_current_amd64.deb
+
+# 在WSL中启动Chrome
+google-chrome --remote-debugging-port=9222 \
+  --user-data-dir=~/.config/google-chrome-debug &
+```
+
+##### 坑4：Chrome不允许用默认数据目录调试
+
+**错误信息：**
+```
+DevTools remote debugging requires a non-default data directory
+```
+
+**原因：**
+Chrome的安全限制，不允许在默认用户数据目录下开启远程调试。
+
+**解决方案：**
+必须使用 `--user-data-dir` 参数指定自定义目录：
+```bash
+# 正确 ✓
+google-chrome --remote-debugging-port=9222 \
+  --user-data-dir=~/.config/google-chrome-debug
+
+# 错误 ✗（会报错）
+google-chrome --remote-debugging-port=9222
+```
+
+##### 坑5：命令换行格式错误
+
+**错误命令：**
+```bash
+google-chrome --remote-debugging-port=9222
+  --user-data-dir=xxx  # ❌ 这样会被当成新命令
+```
+
+**错误信息：**
+```
+-bash: --user-data-dir=xxx: No such file or directory
+```
+
+**正确格式：**
+```bash
+# 方式1：使用反斜杠续行 ✓
+google-chrome --remote-debugging-port=9222 \
+  --user-data-dir=~/.config/google-chrome-debug \
+  --load-extension=/path/to/extension &
+
+# 方式2：单行 ✓
+google-chrome --remote-debugging-port=9222 --user-data-dir=~/.config/google-chrome-debug &
+```
+
+#### 验证与调试
+
+##### 验证配置是否生效
+
+**方法1：检查Chrome调试端口**
+```bash
+curl http://127.0.0.1:9222/json/version
+# 应该返回类似：
+# {
+#   "Browser": "Chrome/120.0.6099.109",
+#   "Protocol-Version": "1.3",
+#   "User-Agent": "Mozilla/5.0...",
+#   "webSocketDebuggerUrl": "ws://127.0.0.1:9222/..."
+# }
+```
+
+**方法2：检查MCP进程参数**
+```bash
+# 查找chrome-devtools-mcp进程
+ps aux | grep chrome-devtools-mcp
+
+# 查看完整命令行参数
+cat /proc/$(pgrep -f chrome-devtools-mcp)/cmdline | tr '\0' ' '
+
+# 应该看到包含：
+# --browserUrl http://127.0.0.1:9222
+```
+
+**方法3：检查MCP日志**
+```bash
+tail -f /tmp/chrome-devtools-mcp.log
+
+# 成功连接应该看到类似：
+# [chrome-devtools-mcp] Connected to browser at http://127.0.0.1:9222
+# [chrome-devtools-mcp] Found extension: chrome-extension://xxxxx/
+```
+
+**方法4：在Claude Code中测试**
+```typescript
+// 列出所有页面
+mcp__chrome-devtools__list_pages
+
+// 应该看到你已打开的Chrome标签页，而不是空白页
+```
+
+##### 调试技巧
+
+**1. 确认只有一个Chrome实例运行：**
+```bash
+ps aux | grep google-chrome | grep -v grep | wc -l
+# 应该只有一个主进程（可能有多个子进程）
+```
+
+**2. 查看Chrome进程的启动参数：**
+```bash
+ps aux | grep google-chrome | grep remote-debugging-port
+# 确认看到 --remote-debugging-port=9222
+```
+
+**3. 测试MCP工具是否工作：**
+```bash
+# 在Claude Code中依次测试：
+mcp__chrome-devtools__list_pages          # 列出页面
+mcp__chrome-devtools__take_snapshot       # 抓取页面快照
+mcp__chrome-devtools__list_console_messages  # 查看控制台消息
+```
+
+**4. 如果MCP连接失败，重启流程：**
+```bash
+# 1. 杀掉所有Chrome进程
+pkill -f google-chrome
+
+# 2. 确认9222端口没被占用
+lsof -i :9222  # 应该没有输出
+
+# 3. 重新启动Chrome
+google-chrome --remote-debugging-port=9222 \
+  --user-data-dir=~/.config/google-chrome-debug &
+
+# 4. 验证端口
+curl http://127.0.0.1:9222/json/version
+
+# 5. 重启Claude Code
+# 退出并重新启动 claude 命令
+```
+
+#### 核心要点总结
+
+✅ **必做事项：**
+1. Chrome启动时必须带 `--remote-debugging-port=9222`
+2. Chrome启动时必须带 `--user-data-dir=非默认目录`
+3. MCP配置必须包含 `--browserUrl http://127.0.0.1:9222`
+4. 只保留项目级MCP配置（`.mcp.json`），避免多重配置冲突
+
+⚠️ **常见错误：**
+1. 忘记 `--browserUrl` 参数 → MCP自己开新Chrome
+2. 多重配置冲突 → `--browserUrl` 参数丢失
+3. 使用默认数据目录 → Chrome拒绝启动调试
+4. 命令换行格式错误 → Bash解析失败
+
+🔍 **验证配置的终极方法：**
+```bash
+# 这条命令能看到MCP进程的真实参数
+cat /proc/$(pgrep -f chrome-devtools-mcp)/cmdline | tr '\0' ' '
+
+# 如果看不到 "--browserUrl http://127.0.0.1:9222"，说明配置没生效！
+```
+
+💡 **最佳实践：**
+- 使用项目级配置（`.mcp.json`）而非全局配置
+- 开启调试日志（`--logFile` + `DEBUG=*`）便于排查问题
+- 先启动Chrome，再启动Claude Code
+- 用 `ps` 和 `curl` 验证配置是否正确
+
+---
+
 ## 📊 性能监控
 
 ### 内存使用监控

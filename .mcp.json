@@ -2,24 +2,35 @@
   "mcpServers": {
     "context7": {
       "command": "npx",
-      "args": ["@upstash/context7-mcp"],
+      "args": [
+        "@upstash/context7-mcp"
+      ],
       "env": {}
     },
     "browsermcp": {
       "command": "npx",
-      "args": ["@browsermcp/mcp@latest"]
+      "args": [
+        "@browsermcp/mcp@latest"
+      ]
     },
-    "spec-workflow": {
-      "command": "node",
-      "args": ["/home/k/chrome-9.15/node_modules/@pimzino/spec-workflow-mcp/dist/index.js", "/home/k/chrome-9.15"],
-      "env": {}
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "playwright-mcp"]
     },
     "chrome-devtools": {
       "command": "npx",
-      "args": ["@chrome/chrome-devtools-mcp"],
+      "args": ["-y", "chrome-devtools-mcp@latest", "--browserUrl", "http://127.0.0.1:9222", "--logFile", "/tmp/chrome-devtools-mcp.log"],
       "env": {
-        "CHROME_PATH": "/mnt/c/Program Files/Google/Chrome/Application/chrome.exe"
+        "DEBUG": "*"
       }
+    },
+    "spec-workflow": {
+      "command": "node",
+      "args": [
+        "/home/k/chrome-9.15/node_modules/@pimzino/spec-workflow-mcp/dist/index.js",
+        "/home/k/chrome-9.15"
+      ],
+      "env": {}
     }
   }
 }

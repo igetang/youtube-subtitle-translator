@@ -164,6 +164,9 @@ npm run dev:content   # 监听content script变化
 1. **Service Worker控制台**：chrome://extensions → 查看视图 → Service Worker
 2. **Content Script控制台**：F12 在YouTube页面
 3. **Popup控制台**：右键Popup → 检查
+4. **Chrome DevTools MCP调试**：通过MCP连接到真实Chrome浏览器进行高级调试
+   - 📖 详细配置指南：[docs/guides/troubleshooting.md - 使用Chrome DevTools MCP调试扩展程序](docs/guides/troubleshooting.md#使用chrome-devtools-mcp调试扩展程序高级用法)
+   - 核心步骤：先启动Chrome（带 `--remote-debugging-port=9222`），配置 `.mcp.json`，再启动Claude Code
 
 ### 日志格式规范
 ```javascript
