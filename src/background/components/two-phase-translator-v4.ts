@@ -10,6 +10,7 @@ import { IntelligentSegmenter } from './intelligent-segmenter';
 import { OpenAITranslator } from './openai-translator';
 import { MicrosoftTranslator } from './microsoft-translator';
 import { MicrosoftTextOptimizer } from './microsoft-text-optimizer';
+import { DeepSeekTranslator } from './deepseek-translator';
 
 /**
  * 两阶段翻译器 - 支持AbortSignal版本
@@ -268,7 +269,20 @@ export class TwoPhaseTranslatorV4 {
       
       // 批次失败计数
       let failedBatches = 0;
-      
+
+      // 根据翻译服务类型确定单批超时时间
+      let perBatchTimeout = 5000; // 默认5秒
+      if (serviceType === 'deepseek') {
+        perBatchTimeout = 30000; // DeepSeek需要30秒
+      } else if (serviceType === 'openai') {
+        perBatchTimeout = 10000; // OpenAI需要10秒
+      } else if (serviceType === 'google-free' || serviceType === 'google' ||
+                 serviceType === 'microsoft-free' || serviceType === 'microsoft') {
+        perBatchTimeout = 5000; // 免费服务5秒
+      } else {
+        perBatchTimeout = 10000; // 其他服务默认10秒
+      }
+
       // 逐批翻译
       for (let i = 0; i < batches.length; i++) {
         // 检查主信号（用户取消）
@@ -280,12 +294,12 @@ export class TwoPhaseTranslatorV4 {
         const texts = batch.map(sub => sub.text.replace(/\n/g, ' ').trim());
 
         try {
-          // 为每个批次创建独立的5秒超时信号
+          // 为每个批次创建独立的超时信号（根据服务类型动态设置）
           let batchSignal: AbortSignal;
 
           try {
             // 尝试使用现代API（Chrome 103+）
-            const timeoutSignal = AbortSignal.timeout(5000);
+            const timeoutSignal = AbortSignal.timeout(perBatchTimeout);
             // 组合主信号（用户取消）和批次超时信号
             batchSignal = AbortSignal.any([signal, timeoutSignal]);
           } catch (e) {
@@ -299,10 +313,10 @@ export class TwoPhaseTranslatorV4 {
               signal.addEventListener('abort', () => batchController.abort());
             }
 
-            // 设置5秒超时
+            // 设置动态超时
             const timeoutId = setTimeout(() => {
               batchController.abort(new DOMException('批次翻译超时', 'TimeoutError'));
-            }, 5000);
+            }, perBatchTimeout);
 
             // 清理定时器
             batchController.signal.addEventListener('abort', () => clearTimeout(timeoutId));
@@ -854,7 +868,25 @@ export class TwoPhaseTranslatorV4 {
           
           // 转换回文本数组
           translatedTexts = subtitles.map(sub => results[sub.id] || sub.text);
-          
+
+        } else if (service.type === 'deepseek') {
+          // 使用 DeepSeek 翻译
+          if (!service.apiKey) {
+            throw new Error('DeepSeek API密钥未配置');
+          }
+
+          const translator = new DeepSeekTranslator(service.apiKey);
+          const stage = options?.stage ?? 'batch';
+
+          // 调用翻译（传递 signal）
+          translatedTexts = await translator.translate(
+            texts,
+            sourceLang,
+            targetLang,
+            stage,
+            signal
+          );
+
         } else if (service.type === 'google' || service.type === 'google-free') {
           const stage = options?.stage ?? 'batch';
           const order = this.getGoogleEndpointOrder(stage);

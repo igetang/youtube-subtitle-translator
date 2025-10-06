@@ -495,7 +495,7 @@ export async function handleToggleTranslateV4(
     // 设置实际的翻译服务（使用用户配置的服务）
     translator.setTranslationService(preferences.translationService);
     
-    // 执行紧急翻译（5秒超时）
+    // 执行紧急翻译（30秒超时 - DeepSeek专用）
     const urgentResults = await session.executeStage(
       'urgent_translate',
       async (signal) => {
@@ -507,7 +507,7 @@ export async function handleToggleTranslateV4(
         );
       },
       {
-        timeoutMs: 5000,
+        timeoutMs: 30000,
         fallback: []  // 失败返回空
       }
     );
@@ -566,7 +566,39 @@ export async function handleToggleTranslateV4(
       throw new DOMException('等待期间会话被取消', 'AbortError');
     }
 
-    // 执行批量翻译（60秒总超时，每批独立5秒超时）
+    // 动态计算批量翻译总超时：批次数 × 单批超时
+    const subtitleCount = effectiveSubtitleData.subtitles.length;
+    const serviceType = preferences.translationService?.type;
+
+    // 根据翻译服务类型计算批次数和单批超时
+    let estimatedBatches = 1;
+    let perBatchTimeout = 5000; // 默认5秒
+
+    if (serviceType === 'deepseek') {
+      // DeepSeek: 20条/批，单批30秒
+      estimatedBatches = Math.ceil(subtitleCount / 20);
+      perBatchTimeout = 30000;
+    } else if (serviceType === 'google-free' || serviceType === 'google') {
+      // 谷歌: 智能分批（约120条限制），单批5秒
+      estimatedBatches = Math.ceil(subtitleCount / 120);
+      perBatchTimeout = 5000;
+    } else if (serviceType === 'microsoft-free' || serviceType === 'microsoft') {
+      // 微软: 不预先分批，估算1批，单批5秒
+      estimatedBatches = 1;
+      perBatchTimeout = 5000;
+    } else {
+      // 其他服务: 默认估算（假设20条/批）
+      estimatedBatches = Math.ceil(subtitleCount / 20);
+      perBatchTimeout = 10000;
+    }
+
+    const batchTotalTimeout = estimatedBatches * perBatchTimeout;
+    console.log(
+      `[service-worker-v4] 批量翻译超时设置: ${subtitleCount}条字幕, ` +
+      `预计${estimatedBatches}批 × ${perBatchTimeout}ms = ${batchTotalTimeout}ms总超时`
+    );
+
+    // 执行批量翻译（动态总超时）
     const batchResults = await session.executeStage(
       'batch_translate',
       async (signal) => {
@@ -584,7 +616,7 @@ export async function handleToggleTranslateV4(
         );
       },
       {
-        timeoutMs: 60000,  // 总超时60秒（保护机制，每批独立5秒）
+        timeoutMs: batchTotalTimeout,
         fallback: []  // 失败返回空
       }
     );

@@ -113,9 +113,9 @@ export const TRANSLATION_SERVICE_TEMPLATES: Record<TranslationServiceType, Omit<
     type: TranslationServiceType.DEEPSEEK,
     name: 'DeepSeek',
     model: 'deepseek-chat',
-    availableModels: ['deepseek-chat', 'deepseek-coder'],
-    temperature: 0.7,
-    maxTokens: 4000,
+    availableModels: ['deepseek-chat'],  // 只保留翻译模型
+    temperature: 1.3,  // 官方推荐值（固定，不暴露给用户）
+    maxTokens: 8000,   // 支持更长输出
     rpm: 50,
     tpm: 50000
   },

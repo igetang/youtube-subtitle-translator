@@ -3705,10 +3705,12 @@ async function testFreeTranslationService(apiType: string): Promise<{success: bo
  */
 async function testPaidApiService(apiType: string, apiKey: string): Promise<{success: boolean, message: string}> {
   console.log(`[service-worker] 测试付费API服务: ${apiType}`);
-  
+
   try {
     if (apiType === 'openai') {
       return await testOpenAIService(apiKey, 'gpt-3.5-turbo');
+    } else if (apiType === 'deepseek') {
+      return await testDeepSeekService(apiKey);
     } else if (apiType === 'deepl') {
       return {
         success: false,
@@ -4088,7 +4090,7 @@ async function testMicrosoftTranslatePathB(testText: string, sourceLang: string,
  */
 async function testOpenAIService(apiKey: string, model: string): Promise<{success: boolean, message: string}> {
   const url = 'https://api.openai.com/v1/chat/completions';
-  
+
   const options = {
     method: 'POST',
     headers: {
@@ -4107,18 +4109,18 @@ async function testOpenAIService(apiKey: string, model: string): Promise<{succes
       temperature: 0
     })
   };
-  
+
   try {
     const response = await fetch(url, options);
-    
+
     if (!response.ok) {
       const errorData = await response.json().catch(() => null);
       const errorMsg = errorData?.error?.message || `HTTP ${response.status}: ${response.statusText}`;
       throw new Error(errorMsg);
     }
-    
+
     const data = await response.json();
-    
+
     if (data.choices && data.choices.length > 0) {
       const result = data.choices[0].message?.content || '测试成功';
       return {
@@ -4133,6 +4135,60 @@ async function testOpenAIService(apiKey: string, model: string): Promise<{succes
     return {
       success: false,
       message: error instanceof Error ? error.message : 'OpenAI测试失败'
+    };
+  }
+}
+
+/**
+ * 测试DeepSeek API服务
+ */
+async function testDeepSeekService(apiKey: string): Promise<{success: boolean, message: string}> {
+  const url = 'https://api.deepseek.com/v1/chat/completions';
+
+  const options = {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'deepseek-chat',
+      messages: [
+        {
+          role: 'user',
+          content: 'Say "test successful" in Chinese.'
+        }
+      ],
+      max_tokens: 10,
+      temperature: 1.3
+    })
+  };
+
+  try {
+    const response = await fetch(url, options);
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      const errorMsg = errorData?.error?.message || `HTTP ${response.status}: ${response.statusText}`;
+      throw new Error(errorMsg);
+    }
+
+    const data = await response.json();
+
+    if (data.choices && data.choices.length > 0) {
+      const result = data.choices[0].message?.content || '测试成功';
+      return {
+        success: true,
+        message: `DeepSeek API测试成功: ${result}`
+      };
+    } else {
+      throw new Error('DeepSeek返回格式异常');
+    }
+  } catch (error) {
+    console.error(`[service-worker] ✗ DeepSeek测试: ${error instanceof Error ? error.message : String(error)}`);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : 'DeepSeek测试失败'
     };
   }
 }

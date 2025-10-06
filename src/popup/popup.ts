@@ -1038,6 +1038,7 @@ let temperatureInput: HTMLInputElement | null = null;
 let serviceTypePanel: HTMLDivElement | null = null;
 let membershipPanel: HTMLDivElement | null = null;
 let openaiBasicPanel: HTMLDivElement | null = null;
+let togglePasswordButton: HTMLButtonElement | null = null;
 
 /**
  * 初始化DOM元素引用（仅在YouTube页面调用）
@@ -1081,6 +1082,7 @@ function initializeDOMElements(): void {
   serviceTypePanel = document.getElementById('service-type-panel') as HTMLDivElement;
   membershipPanel = document.getElementById('membership-panel') as HTMLDivElement;
   openaiBasicPanel = document.getElementById('openai-basic-panel') as HTMLDivElement;
+  togglePasswordButton = document.getElementById('toggle-password') as HTMLButtonElement;
 }
 
 /**
@@ -1091,10 +1093,22 @@ function updateApiPanels(apiType: string): void {
   console.log(`[popup] 更新API面板: ${apiType}`);
   
   // 重置所有面板为隐藏
-  if (apiKeyPanel) apiKeyPanel.style.display = 'none';
-  if (serviceTypePanel) serviceTypePanel.style.display = 'none';
-  if (membershipPanel) membershipPanel.style.display = 'none';
-  if (customApiPanel) customApiPanel.style.display = 'none';
+  if (apiKeyPanel) {
+    apiKeyPanel.style.display = 'none';
+    apiKeyPanel.classList.remove('visible');
+  }
+  if (serviceTypePanel) {
+    serviceTypePanel.style.display = 'none';
+    serviceTypePanel.classList.remove('visible');
+  }
+  if (membershipPanel) {
+    membershipPanel.style.display = 'none';
+    membershipPanel.classList.remove('visible');
+  }
+  if (customApiPanel) {
+    customApiPanel.style.display = 'none';
+    customApiPanel.classList.remove('visible');
+  }
   if (openaiBasicPanel) openaiBasicPanel.style.display = 'none';
   
   // 根据API类型显示相应面板
@@ -1119,29 +1133,49 @@ function updateApiPanels(apiType: string): void {
   
   // 显示API密钥输入面板，对于所有需要密钥的API
   if (apiInfo.requiresKey && apiKeyPanel) {
+    console.log(`[popup] 显示API密钥输入框: ${apiType}, requiresKey=${apiInfo.requiresKey}`);
     apiKeyPanel.style.display = 'block';
-    
+    apiKeyPanel.classList.add('visible'); // 添加 visible 类触发 CSS 动画
+
     // 更新提示链接
     if (apiInfoLink && apiInfo.infoUrl) {
       apiInfoLink.href = apiInfo.infoUrl;
       apiInfoLink.textContent = `如何获取${apiInfo.name}API密钥？`;
     }
+  } else {
+    console.log(`[popup] 不显示API密钥输入框: ${apiType}, requiresKey=${apiInfo?.requiresKey}, apiKeyPanel=${!!apiKeyPanel}`);
   }
   
   // 自定义API
   if (apiInfo.customConfig && customApiPanel) {
     customApiPanel.style.display = 'block';
+    customApiPanel.classList.add('visible');
   }
   
   // 需要选择服务类型的API
   if (apiType === 'deepl') {
-    if (serviceTypePanel) serviceTypePanel.style.display = 'block';
+    if (serviceTypePanel) {
+      serviceTypePanel.style.display = 'block';
+      serviceTypePanel.classList.add('visible');
+    }
   }
   // 处理OpenAI相关面板
   else if (apiType === 'openai') {
     if (openaiBasicPanel) openaiBasicPanel.style.display = 'block';
     // 确保API密钥面板也显示
-    if (apiKeyPanel) apiKeyPanel.style.display = 'block';
+    if (apiKeyPanel) {
+      apiKeyPanel.style.display = 'block';
+      apiKeyPanel.classList.add('visible');
+    }
+  }
+  // 处理DeepSeek相关面板
+  else if (apiType === 'deepseek') {
+    // DeepSeek 只显示 API Key 输入框
+    // Model 和 Temperature 固定值，不暴露给用户
+    if (apiKeyPanel) {
+      apiKeyPanel.style.display = 'block';
+      apiKeyPanel.classList.add('visible');
+    }
   }
 }
     
@@ -1252,7 +1286,27 @@ function addEventListeners(): void {
   if (testApiKeyButton) {
     testApiKeyButton.addEventListener('click', () => handleTestApiConnection());
   }
-  
+
+  // 密码显示/隐藏切换按钮
+  if (togglePasswordButton && apiKeyInput) {
+    togglePasswordButton.addEventListener('click', () => {
+      const eyeOpen = togglePasswordButton.querySelector('.eye-open') as SVGElement;
+      const eyeClosed = togglePasswordButton.querySelector('.eye-closed') as SVGElement;
+
+      if (apiKeyInput.type === 'password') {
+        // 切换到显示密码
+        apiKeyInput.type = 'text';
+        if (eyeOpen) eyeOpen.style.display = 'none';
+        if (eyeClosed) eyeClosed.style.display = 'block';
+      } else {
+        // 切换到隐藏密码
+        apiKeyInput.type = 'password';
+        if (eyeOpen) eyeOpen.style.display = 'block';
+        if (eyeClosed) eyeClosed.style.display = 'none';
+      }
+    });
+  }
+
   // 源语言下拉菜单
   if (sourceLangTrigger) {
     sourceLangTrigger.addEventListener('click', () => {

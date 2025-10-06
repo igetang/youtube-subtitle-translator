@@ -160,6 +160,11 @@ npm run dev:main      # 监听popup变化
 npm run dev:content   # 监听content script变化
 ```
 
+**⚠️ 重要：构建规则**
+- **修改代码后不要自动构建** - 除非用户明确要求，否则不要执行 `npm run build` 命令
+- 用户会自己决定何时构建和测试
+- 只负责修改代码，构建工作交给用户
+
 ### 调试方法
 1. **Service Worker控制台**：chrome://extensions → 查看视图 → Service Worker
 2. **Content Script控制台**：F12 在YouTube页面

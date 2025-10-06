@@ -43,6 +43,11 @@ select {
     font-size: 0.9em;
 }
 
+select:focus {
+    outline: none;
+    border: 1px solid #fff;
+}
+
 /* --- Custom Select Styles --- 
  * 使用自定义下拉菜单替代原生select元素
  * 原因：在Mac系统上，原生select元素会显示为系统风格的弹出窗口
@@ -259,6 +264,11 @@ input[type="text"], textarea {
     box-sizing: border-box;
 }
 
+input[type="text"]:focus, textarea:focus {
+    outline: none;
+    border: 1px solid #fff;
+}
+
 textarea {
     max-height: 100px; /* Popup中限制高度 */
     font-family: monospace;
@@ -394,6 +404,11 @@ input[type="password"] {
     font-size: 0.9em;
     margin-bottom: 10px;
     box-sizing: border-box;
+}
+
+input[type="password"]:focus {
+    outline: none;
+    border: 1px solid #fff;
 }
 
 .button-container {
@@ -670,17 +685,20 @@ input[type="password"] {
     position: relative;
     width: 100%;
     display: flex;
+    align-items: center; /* 垂直居中 */
+    margin-bottom: 10px; /* 容器的 margin，而不是 input 的 */
 }
 
 .password-container input[type="password"],
 .password-container input[type="text"] {
     flex: 1;
-    padding-right: 35px; /* 留出按钮空间 */
+    padding-right: 40px; /* 留出按钮空间 */
+    margin-bottom: 0; /* 移除 input 的 margin，避免影响容器高度 */
 }
 
 .toggle-password {
     position: absolute;
-    right: 5px;
+    right: 8px;
     top: 50%;
     transform: translateY(-50%);
     background: none;
@@ -691,6 +709,7 @@ input[type="password"] {
     display: flex;
     align-items: center;
     justify-content: center;
+    z-index: 1;
 }
 
 .toggle-password:hover {

@@ -1,12 +1,12 @@
 # DeepSeek AI翻译API实现指南
 
-> 最后更新：2025-09-29
-> 状态：🚧 架构设计完成，待实现
-> 版本：V4架构兼容
+> 最后更新：2025-10-06
+> 状态：✅ V4架构优化完成，待实现
+> 版本：V4架构兼容（AbortSignal + 统一存储）
 
 ## 📋 概述
 
-本文档提供 DeepSeek 翻译 API 的落地指南，包括认证、调用、批量优化、节流策略与最佳实践。DeepSeek API 与 OpenAI 兼容，适合作为中文场景的低成本翻译备选方案。
+本文档提供 DeepSeek 翻译 API 的完整实现指南，符合项目 V4 架构规范。DeepSeek API 与 OpenAI 兼容，适合作为中文场景的低成本翻译备选方案，和 Google Free、Microsoft Free 并列为免费/低成本翻译选项。
 
 ## 🔑 核心特性
 
@@ -15,60 +15,79 @@
 - **中文优化**：对中英互译表现稳定，适合字幕翻译场景
 - **OpenAI 兼容**：支持 OpenAI SDK / API 生态（`https://api.deepseek.com`）
 - **大上下文**：上下文窗口 128K token，默认输出 4K，可配置到 8K
-- **轻限流**：官方不设置硬性 rate limit，可自行按 200 ms 节奏节流
+- **轻限流**：官方不设置硬性 rate limit，自行按 200 ms 节奏节流（batch 阶段）
+- **V4 架构集成**：完整支持 AbortSignal、两阶段翻译、统一缓存
 
 ## 📊 模型规格
 
 | 模型 | 模式 | 上下文 | 默认输出 | 最大输出 | 价格（输入 cache miss / hit / 输出） |
 |------|------|--------|----------|----------|-----------------------------------|
 | `deepseek-chat` | 非思考模式（推荐用于翻译） | 128K | 4K | 8K | $0.28 / $0.028 / $0.42 |
-> 数据来源：DeepSeek 官方文档（2025-09-29）。
+
+> 数据来源：DeepSeek 官方文档（2025-09-29）
+
 ## 🏗️ 架构设计
 
 ### 基础配置
 
 | 参数 | 值 | 说明 |
 |------|-----|------|
-| API 基础地址 | `https://api.deepseek.com` | 兼容 OpenAI SDK，可选 `/v1` |
-| 推荐模型 | `deepseek-chat` | DeepSeek-V3.2-Exp 非思考模式 |
-| 默认温度 | 内部固定 `1.3` | 不向用户暴露 |
-| 输出上限 | 默认 4K，`max_tokens` 可调到 8K | 超过会被截断 |
-| 节流建议 | 每批后延迟 ≥ 200 ms | 官方无硬限流，建议自行节流 |
+| API 基础地址 | `https://api.deepseek.com/v1/chat/completions` | 单一端点，无备用端点 |
+| 推荐模型 | `deepseek-chat` | 固定值，不暴露给用户 |
+| Temperature | `1.3` | 官方推荐值，固定不可配置 |
+| 输出上限 | `max_tokens: 8000` | 固定值 |
+| 批次大小 | 20 条字幕/批 | urgent 和 batch 阶段统一 |
+| 批次间延迟 | 200 ms（仅 batch 阶段） | urgent 阶段无延迟 |
+| 存储位置 | `translationService.apiKey` | 统一存储，不单独存储 |
 
 > 响应体包含 `usage.prompt_tokens` / `completion_tokens` / `total_tokens` 字段，可直接记录用量。
+
+### 存储架构（优化1）
+
+```typescript
+// ✅ 正确：统一存储在 translationService
+TRANSLATION_SERVICE_TEMPLATES = {
+  'deepseek': {
+    type: 'deepseek',
+    apiKey: '',                // 用户填写
+    model: 'deepseek-chat',    // 固定值
+    customModel: null,
+    temperature: 1.3           // 固定值，不暴露给用户
+  }
+}
+
+// ❌ 错误：不要单独存储
+// await chrome.storage.local.set({ deepseekApiKey: apiKey });
+```
 
 ### 调用流程
 
 ```mermaid
 graph LR
-    A[准备 API Key / Base URL] --> B[紧急字幕翻译]
-    B --> C[批量分组 (≤20 条)]
-    C --> D[DeepSeek Chat API]
-    D --> E[解析译文 + 统计 token]
-    E --> F[延迟 requestDelayMs]
-    F -->|下一批| C
-    D -.失败.-> G[指数退避 + 重试]
+    A[从 translationService 获取 API Key] --> B{检查 AbortSignal}
+    B -->|未取消| C[紧急翻译 urgent]
+    C --> D[批量分组 20条/批]
+    D --> E[DeepSeek Chat API]
+    E --> F[解析译文 + 统计 token]
+    F --> G{batch 阶段?}
+    G -->|是| H[延迟 200ms + 检查 AbortSignal]
+    G -->|否| I[无延迟]
+    H --> D
+    I --> D
+    E -.失败.-> J[抛出错误，不降级]
+    B -->|已取消| K[抛出 AbortError]
 ```
 
 ## 📝 实现代码
 
-### 1. TypeScript实现（推荐用于Chrome扩展）
+### 1. TypeScript实现（V4架构兼容）
 
 ```typescript
 /**
  * DeepSeek翻译服务实现
- * @file deepseek-translator.ts
+ * @file src/background/components/deepseek-translator.ts
+ * @version V4 - 支持 AbortSignal、两阶段翻译
  */
-
-interface DeepSeekConfig {
-  apiKey: string;           // API密钥
-  model: string;            // 模型名称，默认 deepseek-chat
-  temperature: number;      // 内部固定 1.3（不暴露给用户）
-  maxOutputTokens: number;  // 单次最大输出 token（默认 4000，可提到 8000）
-  maxBatchSize: number;     // 单批最大字幕条数（默认 20 ）
-  timeout: number;          // 请求超时
-  requestDelayMs: number;   // 批次之间的最小延迟（自带节流）
-}
 
 interface DeepSeekMessage {
   role: 'system' | 'user' | 'assistant';
@@ -78,9 +97,9 @@ interface DeepSeekMessage {
 interface DeepSeekRequest {
   model: string;
   messages: DeepSeekMessage[];
-  temperature?: number;
-  max_tokens?: number;
-  stream?: boolean;
+  temperature: number;
+  max_tokens: number;
+  stream: false;
 }
 
 interface DeepSeekResponse {
@@ -101,22 +120,85 @@ interface DeepSeekResponse {
 }
 
 export class DeepSeekTranslator {
-  private config: DeepSeekConfig = {
-    apiKey: '',
-    model: 'deepseek-chat',
-    temperature: 1.3,
-    maxOutputTokens: 8000,
-    maxBatchSize: 20,
-    timeout: 10000,
-    requestDelayMs: 200
-  };
+  // 常量配置
+  private static readonly ENDPOINT = 'https://api.deepseek.com/v1/chat/completions';
+  private static readonly MODEL = 'deepseek-chat';
+  private static readonly TEMPERATURE = 1.3;          // 官方推荐，固定值（优化8）
+  private static readonly MAX_TOKENS = 8000;
+  private static readonly BATCH_SIZE = 20;            // 统一批次大小（优化13）
+  private static readonly BATCH_DELAY_MS = 200;       // batch 阶段延迟
+  private static readonly SEPARATOR = '\n---\n';      // 分隔符
 
-  constructor(apiKey: string, customConfig?: Partial<DeepSeekConfig>) {
-    this.config = {
-      ...this.config,
-      apiKey,
-      ...customConfig
-    };
+  private apiKey: string;
+
+  constructor(apiKey: string) {
+    this.apiKey = apiKey;
+  }
+
+  /**
+   * 批量翻译文本（支持 AbortSignal 和两阶段翻译）
+   * @param texts 待翻译文本数组
+   * @param sourceLang 源语言代码（YouTube标准）
+   * @param targetLang 目标语言代码（YouTube标准）
+   * @param stage 翻译阶段：urgent（无延迟） | batch（200ms延迟）（优化9）
+   * @param signal AbortSignal 用于取消操作（优化2）
+   */
+  public async translate(
+    texts: string[],
+    sourceLang: string,
+    targetLang: string,
+    stage: 'urgent' | 'batch',
+    signal: AbortSignal
+  ): Promise<string[]> {
+    if (texts.length === 0) {
+      return [];
+    }
+
+    // 检查初始信号状态
+    if (signal.aborted) {
+      throw new DOMException('DeepSeek翻译开始前已取消', 'AbortError');
+    }
+
+    const results: string[] = [];
+
+    // 分批处理（统一 20 条/批）
+    for (let i = 0; i < texts.length; i += DeepSeekTranslator.BATCH_SIZE) {
+      const batch = texts.slice(i, i + DeepSeekTranslator.BATCH_SIZE);
+
+      console.log(
+        `[DeepSeekTranslator] 翻译批次 ${Math.floor(i / DeepSeekTranslator.BATCH_SIZE) + 1}: ` +
+        `${batch.length} 条字幕 (${stage}阶段)`
+      );
+
+      // 构建提示词并调用 API（单端点，失败直接抛错，优化6、7）
+      const messages = this.buildTranslationPrompt(
+        batch,
+        this.mapLanguageCode(sourceLang),
+        this.mapLanguageCode(targetLang)
+      );
+
+      const response = await this.callAPI(messages, signal);
+
+      // 解析响应
+      const translations = response.split(DeepSeekTranslator.SEPARATOR);
+
+      // 验证数量匹配
+      if (translations.length !== batch.length) {
+        console.error(
+          `[DeepSeekTranslator] 批次翻译数量不匹配: 期望${batch.length}, 实际${translations.length}`
+        );
+        throw new Error('DeepSeek翻译结果数量不匹配');
+      }
+
+      results.push(...translations.map(t => t.trim()));
+
+      // 批次间延迟（仅 batch 阶段，优化3、9）
+      if (stage === 'batch' && i + DeepSeekTranslator.BATCH_SIZE < texts.length) {
+        await this.delayWithSignal(DeepSeekTranslator.BATCH_DELAY_MS, signal);
+      }
+    }
+
+    return results;
   }
 
   /**
@@ -127,17 +209,15 @@ export class DeepSeekTranslator {
     sourceLang: string,
     targetLang: string
   ): DeepSeekMessage[] {
-    // 使用明确的分隔符处理批量翻译
-    const separator = '\n---\n';
-    const combinedText = texts.join(separator);
+    const combinedText = texts.join(DeepSeekTranslator.SEPARATOR);
 
     return [
       {
         role: 'system',
         content: `You are a professional translator. Translate from ${sourceLang} to ${targetLang}.
-                  Keep the same format and structure.
-                  If there are multiple texts separated by "---", translate each one and keep the separator.
-                  Return ONLY the translation without any explanation.`
+Keep the same format and structure.
+If there are multiple texts separated by "---", translate each one and keep the separator.
+Return ONLY the translation without any explanation.`
       },
       {
         role: 'user',
@@ -147,34 +227,46 @@ export class DeepSeekTranslator {
   }
 
   /**
-   * 调用DeepSeek API
+   * 调用 DeepSeek API（支持 AbortSignal，优化2、12）
    */
-  private async callAPI(messages: DeepSeekMessage[]): Promise<string> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.config.timeout);
-
+  private async callAPI(
+    messages: DeepSeekMessage[],
+    signal: AbortSignal
+  ): Promise<string> {
     try {
-      const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      const response = await fetch(DeepSeekTranslator.ENDPOINT, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${this.config.apiKey}`,
+          'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: this.config.model,
+          model: DeepSeekTranslator.MODEL,
           messages,
-          temperature: this.config.temperature,
-          max_tokens: this.config.maxOutputTokens,
+          temperature: DeepSeekTranslator.TEMPERATURE,
+          max_tokens: DeepSeekTranslator.MAX_TOKENS,
           stream: false
         } as DeepSeekRequest),
-        signal: controller.signal
+        signal  // 使用外部 AbortSignal
       });
 
-      clearTimeout(timeoutId);
-
+      // 错误处理细化（优化12）
       if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`DeepSeek API错误 (${response.status}): ${error}`);
+        const errorText = await response.text();
+
+        switch (response.status) {
+          case 401:
+          case 403:
+            throw new Error('DeepSeek API密钥无效，请检查设置');
+          case 429:
+            throw new Error('DeepSeek API速率限制，请稍后重试');
+          case 500:
+          case 502:
+          case 503:
+            throw new Error('DeepSeek服务暂时不可用');
+          default:
+            throw new Error(`DeepSeek API错误 (${response.status}): ${errorText}`);
+        }
       }
 
       const data: DeepSeekResponse = await response.json();
@@ -183,381 +275,295 @@ export class DeepSeekTranslator {
         throw new Error('DeepSeek API返回格式错误');
       }
 
-      console.log(`[DeepSeekTranslator] Token使用: 输入=${data.usage.prompt_tokens}, 输出=${data.usage.completion_tokens}, 总计=${data.usage.total_tokens}`);
+      // 记录 token 使用情况
+      console.log(
+        `[DeepSeekTranslator] Token使用: ` +
+        `输入=${data.usage.prompt_tokens}, ` +
+        `输出=${data.usage.completion_tokens}, ` +
+        `总计=${data.usage.total_tokens}`
+      );
 
       return data.choices[0].message.content;
-    } catch (error) {
-      clearTimeout(timeoutId);
 
+    } catch (error: any) {
+      // AbortError 处理
       if (error.name === 'AbortError') {
-        throw new Error('DeepSeek API请求超时');
+        throw new DOMException('DeepSeek API请求被取消', 'AbortError');
       }
-
       throw error;
     }
   }
 
   /**
-   * 批量翻译文本
+   * 延迟工具（支持 AbortSignal 中断，优化3）
    */
-  public async translate(
-    texts: string[],
-    sourceLang: string,
-    targetLang: string
-  ): Promise<string[]> {
-    const results: string[] = [];
-    const separator = '\n---\n';
+  private async delayWithSignal(ms: number, signal: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(resolve, ms);
 
-    // 分批处理
-    for (let i = 0; i < texts.length; i += this.config.maxBatchSize) {
-      const batch = texts.slice(i, i + this.config.maxBatchSize);
+      const abortHandler = () => {
+        clearTimeout(timer);
+        reject(new DOMException('延迟被取消', 'AbortError'));
+      };
 
-      try {
-        console.log(`[DeepSeekTranslator] 翻译批次 ${Math.floor(i / this.config.maxBatchSize) + 1}: ${batch.length} 条字幕`);
-
-        const messages = this.buildTranslationPrompt(batch, sourceLang, targetLang);
-        const response = await this.callAPI(messages);
-
-        // 分割响应
-        const translations = response.split(separator);
-
-        // 验证数量匹配
-        if (translations.length !== batch.length) {
-          console.warn(`[DeepSeekTranslator] 批次翻译数量不匹配: 期望${batch.length}, 实际${translations.length}`);
-          // 降级处理：逐条翻译
-          for (const text of batch) {
-            const singleTranslation = await this.translateSingle(text, sourceLang, targetLang);
-            results.push(singleTranslation);
-          }
-        } else {
-          results.push(...translations.map(t => t.trim()));
-        }
-      } catch (error) {
-        console.error(`[DeepSeekTranslator] 批次翻译失败:`, error);
-
-        // 降级处理：逐条翻译
-        for (const text of batch) {
-          try {
-            const singleTranslation = await this.translateSingle(text, sourceLang, targetLang);
-            results.push(singleTranslation);
-          } catch (singleError) {
-            console.error(`[DeepSeekTranslator] 单条翻译失败:`, singleError);
-            results.push(''); // 失败项返回空字符串
-          }
-        }
-      }
-
-      // 批次间延迟
-      if (i + this.config.maxBatchSize < texts.length) {
-        await new Promise(resolve => setTimeout(resolve, this.config.requestDelayMs));
-      }
-    }
-
-    return results;
+      signal.addEventListener('abort', abortHandler, { once: true });
+    });
   }
 
   /**
-   * 翻译单条文本
+   * 语言代码映射（YouTube标准 → DeepSeek标准，优化5）
    */
-  public async translateSingle(
-    text: string,
-    sourceLang: string,
-    targetLang: string
-  ): Promise<string> {
-    const messages: DeepSeekMessage[] = [
-      {
-        role: 'system',
-        content: `Translate from ${sourceLang} to ${targetLang}. Return only the translation.`
-      },
-      {
-        role: 'user',
-        content: text
-      }
-    ];
+  private mapLanguageCode(code: string): string {
+    // DeepSeek 使用标准 ISO 639-1 语言代码
+    const mapping: Record<string, string> = {
+      'zh-CN': 'zh',
+      'zh-TW': 'zh',
+      'zh-Hans': 'zh',
+      'zh-Hant': 'zh',
+      'en': 'en',
+      'ja': 'ja',
+      'ko': 'ko',
+      'es': 'es',
+      'fr': 'fr',
+      'de': 'de',
+      'ru': 'ru',
+      'ar': 'ar',
+      'pt': 'pt',
+      'it': 'it',
+      'nl': 'nl',
+      'hi': 'hi',
+      'vi': 'vi',
+      'th': 'th',
+      'id': 'id'
+    };
 
-    return await this.callAPI(messages);
+    return mapping[code] || code;
   }
 }
 ```
 
-### 2. 集成到V4架构
+### 2. 集成到 V4 架构（优化10）
 
 ```typescript
 /**
- * 集成到two-phase-translator-v4.ts
+ * 集成到 two-phase-translator-v4.ts
  */
 
 import { DeepSeekTranslator } from './deepseek-translator';
 
 export class TwoPhaseTranslatorV4 {
-  private deepseekTranslator: DeepSeekTranslator | null = null;
+  // ... 现有代码
 
   /**
-   * 初始化DeepSeek翻译器
+   * 在 callTranslationAPI 方法中添加 DeepSeek 分支
    */
-  private async initDeepSeekTranslator(): Promise<void> {
-    // 从存储获取API Key
-    const { deepseekApiKey } = await chrome.storage.local.get('deepseekApiKey');
-
-    if (deepseekApiKey) {
-      this.deepseekTranslator = new DeepSeekTranslator(deepseekApiKey, {
-        maxBatchSize: 20,
-        temperature: 1.3,
-        maxOutputTokens: 8000,
-        requestDelayMs: 200
-      });
-    }
-  }
-
-  /**
-   * 执行翻译
-   */
-  private async performTranslation(
+  private async callTranslationAPI(
     texts: string[],
+    service: any,
     sourceLang: string,
     targetLang: string,
-    service: TranslationServiceType
-  ): Promise<{ [id: string]: string }> {
-    const results: { [id: string]: string } = {};
+    signal: AbortSignal,
+    options?: { stage?: 'urgent' | 'batch' }
+  ): Promise<string[]> {
+    return new Promise<string[]>((resolve, reject) => {
+      // ... 现有 abort handler 代码
 
-    switch (service) {
-      case 'deepseek':
-        if (!this.deepseekTranslator) {
-          await this.initDeepSeekTranslator();
-        }
+      try {
+        let translatedTexts: string[] = [];
 
-        if (!this.deepseekTranslator) {
-          throw new Error('DeepSeek API密钥未配置');
-        }
+        // DeepSeek 分支
+        if (service.type === 'deepseek') {
+          if (!service.apiKey) {
+            throw new Error('DeepSeek API密钥未配置');
+          }
 
-        try {
-          const translations = await this.deepseekTranslator.translate(
+          const translator = new DeepSeekTranslator(service.apiKey);
+          const stage = options?.stage ?? 'batch';
+
+          // 调用翻译（传递 signal）
+          translatedTexts = await translator.translate(
             texts,
-            this.mapLanguageCode(sourceLang, 'deepseek'),
-            this.mapLanguageCode(targetLang, 'deepseek')
+            sourceLang,
+            targetLang,
+            stage,
+            signal
           );
-
-          texts.forEach((text, index) => {
-            results[index.toString()] = translations[index];
-          });
-        } catch (error) {
-          console.error('[TwoPhaseTranslatorV4] DeepSeek翻译失败:', error);
-          throw error;
         }
-        break;
+        // ... 其他服务分支（openai, google-free, microsoft-free）
 
-      // ... 其他翻译服务
-    }
+        resolve(translatedTexts);
 
-    return results;
-  }
-
-  /**
-   * 语言代码映射
-   */
-  private mapLanguageCode(code: string, service: 'deepseek' | 'google' | 'microsoft'): string {
-    if (service === 'deepseek') {
-      // DeepSeek使用标准语言代码
-      const mapping: Record<string, string> = {
-        'zh-CN': 'Chinese Simplified',
-        'zh-TW': 'Chinese Traditional',
-        'zh-Hans': 'Chinese Simplified',
-        'zh-Hant': 'Chinese Traditional',
-        'en': 'English',
-        'ja': 'Japanese',
-        'ko': 'Korean',
-        'es': 'Spanish',
-        'fr': 'French',
-        'de': 'German',
-        'ru': 'Russian',
-        'ar': 'Arabic',
-        'pt': 'Portuguese'
-      };
-      return mapping[code] || code;
-    }
-
-    // 其他服务的映射...
-    return code;
+      } catch (error) {
+        reject(error);
+      }
+    });
   }
 }
 ```
 
-### 3. Popup设置界面集成
+### 3. 用户偏好模板配置（优化1）
 
 ```typescript
 /**
- * 添加到popup.ts
+ * 在 src/shared/storage/user-preferences-manager.ts 中添加
  */
 
-// DeepSeek API设置部分
-const deepseekSection = document.createElement('div');
-deepseekSection.className = 'api-settings-section';
-deepseekSection.innerHTML = `
-  <div class="setting-group">
-    <h3>DeepSeek AI翻译设置</h3>
-    <div class="api-key-input">
-      <input type="password"
-             id="deepseek-api-key"
-             placeholder="输入DeepSeek API Key">
-      <button id="save-deepseek-key">保存</button>
-    </div>
-    <div class="api-info">
-      <p>🔗 获取API Key：<a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a></p>
-      <p>✨ 特点：中文翻译质量优秀，上下文 128K token，输出可自定义到 8K token</p>
-      <p>⚙️ 内部固定 temperature = 1.3，不向用户暴露</p>
-    </div>
-  </div>
-`;
+export const TRANSLATION_SERVICE_TEMPLATES: Record<TranslationServiceType, TranslationService> = {
+  // ... 现有模板
 
-// 保存API Key
-document.getElementById('save-deepseek-key')?.addEventListener('click', async () => {
-  const apiKey = (document.getElementById('deepseek-api-key') as HTMLInputElement).value;
-
-  if (apiKey) {
-    await chrome.storage.local.set({ deepseekApiKey: apiKey });
-    alert('DeepSeek API Key已保存');
+  'deepseek': {
+    type: 'deepseek',
+    apiKey: '',                      // 用户填写
+    model: 'deepseek-chat',          // 固定值，不暴露给用户
+    customModel: null,
+    temperature: 1.3                 // 固定值，不暴露给用户（官方推荐）
   }
-});
-
-
-
-
-```
-
-## 🔧 配置选项
-
-### 推荐配置
-
-```javascript
-const DEEPSEEK_CONFIG = {
-  // API设置
-  model: 'deepseek-chat',    // 默认使用非思考模式
-
-  // 批量设置
-  maxBatchSize: 20,          // 每批固定 20 条字幕
-  requestDelayMs: 200,       // 批次间延迟，防止瞬时拥塞
-
-  // 温度 / 输出
-  temperature: 1.3,
-  maxOutputTokens: 8000,     // 显式放宽到 8K 输出 token
-
-  // 超时与重试
-  timeout: 10000,
-  maxRetries: 2,
-
-  // 缓存设置
-  cacheEnabled: true,
-  cacheDuration: 86_400_000
 };
 ```
 
+### 4. Popup 设置界面集成（优化11）
+
+```typescript
+/**
+ * 在 popup.ts 中修改
+ */
+
+// HTML - 下拉菜单添加 DeepSeek 选项（与 Google/Microsoft 并列）
+<select id="translation-api-select">
+  <option value="google-free">Google 免费翻译</option>
+  <option value="microsoft-free">Microsoft 免费翻译</option>
+  <option value="deepseek">DeepSeek AI</option>  <!-- 新增 -->
+  <option value="openai">OpenAI</option>
+</select>
+
+// TypeScript - 显示/隐藏 API Key 输入框
+function updateTranslationServiceUI(serviceType: TranslationServiceType) {
+  const apiKeySection = document.getElementById('api-key-section');
+  const apiKeyLabel = document.getElementById('api-key-label');
+  const modelSection = document.getElementById('model-section');
+  const temperatureSection = document.getElementById('temperature-section');
+
+  if (serviceType === 'deepseek') {
+    // 显示 API Key 输入框
+    apiKeySection.style.display = 'block';
+    apiKeyLabel.textContent = 'DeepSeek API Key';
+
+    // 隐藏 Model 和 Temperature 设置（因为是固定值）
+    modelSection.style.display = 'none';
+    temperatureSection.style.display = 'none';
+  } else if (serviceType === 'openai') {
+    // OpenAI 显示所有设置
+    apiKeySection.style.display = 'block';
+    modelSection.style.display = 'block';
+    temperatureSection.style.display = 'block';
+  } else {
+    // Google/Microsoft 免费版不显示任何设置
+    apiKeySection.style.display = 'none';
+    modelSection.style.display = 'none';
+    temperatureSection.style.display = 'none';
+  }
+}
+
+// 保存设置时使用统一的 translationService 结构
+async function saveTranslationSettings() {
+  const serviceType = translationApiSelect.value as TranslationServiceType;
+  const apiKey = apiKeyInput.value;
+
+  const updatedService = {
+    ...userPreferences.translationService,
+    type: serviceType,
+    apiKey: apiKey || '',  // DeepSeek 的 API Key 存储在这里（优化1）
+  };
+
+  await UserPreferencesManager.getInstance().setUserPreferences({
+    ...userPreferences,
+    translationService: updatedService
+  });
+}
+```
+
+## 🔧 架构优化说明
+
+### 优化1：统一存储架构
+- **问题**：独立存储 API Key 导致架构不一致
+- **解决**：存储在 `translationService.apiKey`，和 OpenAI/Microsoft 保持一致
+- **安全性**：Chrome Storage 本身加密，导出时自动移除敏感信息
+
+### 优化2-3：AbortSignal 集成
+- **问题**：无法响应 V4 架构的取消信号
+- **解决**：所有方法接收 `signal: AbortSignal`，使用 `delayWithSignal` 支持中断
+
+### 优化4：复用缓存系统
+- **问题**：独立实现缓存导致重复代码
+- **解决**：删除 `DeepSeekCache`，使用项目统一的 `TranslationLocalStorage`（待实现时集成）
+
+### 优化5：语言代码规范化
+- **问题**：使用全名（"Chinese Simplified"）不符合项目规范
+- **解决**：使用 YouTube 标准语言代码（'zh', 'en'），内部映射
+
+### 优化6：降级策略统一
+- **问题**：批量失败降级到单条翻译，等待时间过长
+- **解决**：失败直接抛出错误，和 Google/Microsoft 保持一致
+
+### 优化7：单端点架构
+- **问题**：无备用端点
+- **解决**：明确说明单端点设计，失败直接返回错误
+
+### 优化8：Temperature 固定化
+- **问题**：是否暴露给用户配置
+- **解决**：固定 1.3（官方推荐），不暴露给用户，和 Google/Microsoft 免费版保持一致
+
+### 优化9：批处理阶段区分
+- **问题**：未区分 urgent 和 batch 阶段
+- **解决**：urgent 阶段无延迟，batch 阶段 200ms 延迟，和 Google/Microsoft 保持一致
+
+### 优化10：集成代码完善
+- **问题**：集成示例不完整
+- **解决**：提供完整的 `callTranslationAPI` 集成代码
+
+### 优化11：Popup UI 规范化
+- **问题**：独立 section 不符合现有架构
+- **解决**：DeepSeek 作为下拉选项，选中时显示 API Key 输入框，不显示 Model/Temperature
+
+### 优化12：错误处理细化
+- **问题**：只有简单的 try-catch
+- **解决**：细分错误类型（401/403、429、500+），提供明确的用户提示
+
+### 优化13：批次大小统一
+- **问题**：是否区分 urgent 和 batch 阶段的批次大小
+- **解决**：统一 20 条/批（DeepSeek 单批处理能力有限）
+
 ## ⚡ 批量策略
 
-- **紧急字幕**：沿用 V4 架构现有的前/后范围配置，紧急请求通常不会触碰 8K 输出上限。
-- **批量字幕**：固定每批 20 条字幕，估算输出 token 后设置 `max_tokens = 8000`，若触发截断则缩减批次。
-- **分隔符**：使用 `\n---\n` 等唯一标记拼接/拆分字幕，确保响应可按原顺序拆开。
-- **节流**：官方无硬限流，仍建议每批结束 `await delay(200)`；若收到 429/网络错误，指数退避后重试。
+- **紧急翻译（urgent）**：20 条/批，无延迟，快速响应
+- **批量翻译（batch）**：20 条/批，200ms 延迟，避免速率限制
+- **分隔符**：使用 `\n---\n` 拼接/拆分字幕
+- **失败策略**：直接抛出错误，不降级到单条翻译
 
 ## ⚠️ 注意事项
 
 ### 必要条件
-1. **需要API Key**：必须在platform.deepseek.com注册获取
+1. **需要 API Key**：必须在 platform.deepseek.com 注册获取
 2. **需要付费**：虽然成本极低，但仍需付费（有免费额度）
-3. **网络要求**：需要能访问api.deepseek.com
+3. **网络要求**：需要能访问 api.deepseek.com
+
+### 架构限制
+1. **单一端点**：只有一个 API 端点，无备用端点
+2. **固定参数**：Model 和 Temperature 固定，不可配置
+3. **批次限制**：统一 20 条/批，不动态调整
 
 ### 最佳实践
-1. **批量优化**：
-   - 固定每批 20 条字幕，结合 `max_tokens=8000`
-   - 使用 `\n---\n` 等唯一分隔符保证可拆分
-   - 批次间保持 ≥200 ms 延迟，避免长连接堆积
-
-2. **缓存与使用统计**：
-   - 实现翻译缓存，避免重复翻译
-   - 利用响应头中的 usage 字段统计 token 和用量
-
-3. **错误处理**：
-   - API Key无效：提示用户检查设置
-   - 配额用尽：提示用户充值
-   - 网络错误：降级到其他翻译服务
-
-4. **质量保证**：
-   - Temperature 固定 1.3，保证风格稳定
-   - 提供清晰的系统提示词
-   - 批量失败时降级到单条翻译
-
-## 📊 性能优化
-
-### 1. 智能批处理
-
-```typescript
-// DeepSeek 固定每批 20 条字幕，避免触及 8K 输出上限
-function calculateDeepSeekBatchSize(): number {
-  return 20;
-}
-```
-
-### 2. 缓存策略
-
-```typescript
-// 实现翻译缓存
-class DeepSeekCache {
-  private cache = new Map<string, { translation: string; timestamp: number }>();
-  private maxAge = 86400000; // 24小时
-
-  generateKey(text: string, from: string, to: string): string {
-    return `deepseek_${from}_${to}_${text}`;
-  }
-
-  get(text: string, from: string, to: string): string | null {
-    const key = this.generateKey(text, from, to);
-    const cached = this.cache.get(key);
-
-    if (cached && Date.now() - cached.timestamp < this.maxAge) {
-      return cached.translation;
-    }
-
-    return null;
-  }
-
-  set(text: string, translation: string, from: string, to: string): void {
-    const key = this.generateKey(text, from, to);
-    this.cache.set(key, { translation, timestamp: Date.now() });
-  }
-}
-```
-
-### 3. 并发控制
-
-```typescript
-// 避免并发请求过多
-class RateLimiter {
-  private queue: Array<() => void> = [];
-  private running = 0;
-  private maxConcurrent = 2;
-
-  async execute<T>(fn: () => Promise<T>): Promise<T> {
-    while (this.running >= this.maxConcurrent) {
-      await new Promise(resolve => this.queue.push(resolve));
-    }
-
-    this.running++;
-    try {
-      return await fn();
-    } finally {
-      this.running--;
-      const next = this.queue.shift();
-      if (next) next();
-    }
-  }
-}
-```
+1. **缓存使用**：复用项目统一的 `TranslationLocalStorage`
+2. **错误提示**：提供明确的错误信息，引导用户检查 API Key
+3. **取消支持**：完整支持 AbortSignal，响应用户取消操作
+4. **日志规范**：使用 `[DeepSeekTranslator]` 前缀
 
 ## 🧪 测试验证
 
 ### 测试脚本
 
 ```bash
-# 测试DeepSeek API
+# 测试 DeepSeek API
 curl -X POST https://api.deepseek.com/v1/chat/completions \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
@@ -566,14 +572,15 @@ curl -X POST https://api.deepseek.com/v1/chat/completions \
     "messages": [
       {
         "role": "system",
-        "content": "Translate from English to Chinese Simplified. Return only translation."
+        "content": "Translate from English to Chinese. Return only translation."
       },
       {
         "role": "user",
         "content": "Hello world"
       }
     ],
-    "temperature": 1.3
+    "temperature": 1.3,
+    "max_tokens": 8000
   }'
 ```
 
@@ -597,18 +604,33 @@ curl -X POST https://api.deepseek.com/v1/chat/completions \
 }
 ```
 
+### 功能测试清单
+
+- [ ] Popup 下拉菜单显示 "DeepSeek AI" 选项
+- [ ] 选中 DeepSeek 时显示 API Key 输入框
+- [ ] 选中 DeepSeek 时隐藏 Model 和 Temperature 设置
+- [ ] API Key 保存到 `translationService.apiKey`
+- [ ] 紧急翻译（urgent）正常工作，无延迟
+- [ ] 批量翻译（batch）正常工作，200ms 延迟
+- [ ] AbortSignal 能正确取消翻译
+- [ ] 401/403 错误提示 "API密钥无效"
+- [ ] 429 错误提示 "速率限制"
+- [ ] 翻译缓存正常工作（TranslationLocalStorage）
+- [ ] 切换到其他服务无影响
+
 ## 🔗 相关文档
 
-- [API文档](../api/api.md#deepseek-ai翻译api)
-- [决策日志](./decision-log.md#22-deepseek-ai翻译api集成-2025-09-26)
-- [架构设计](../architecture/03-component-design.md)
+- [V4 架构设计](../architecture/08-abort-timeout-architecture.md)
+- [用户偏好管理](../architecture/03-component-design.md)
+- [两阶段翻译器](../architecture/07-batch-translation-architecture.md)
 - [微软翻译实现](./microsoft-translate-implementation.md)
 
 ## 📅 更新历史
 
-- **2025-09-29**：核实 DeepSeek-V3.2-Exp 规格，补充 20 条批量策略、温度与节流建议
-- **2025-09-26**：创建初始文档，完成API调研和实现设计
+- **2025-10-06**：架构优化，集成 V4 规范（AbortSignal、统一存储、错误处理细化）
+- **2025-09-29**：核实 DeepSeek-V3.2-Exp 规格，补充 20 条批量策略
+- **2025-09-26**：创建初始文档，完成 API 调研和实现设计
 
 ---
 
-*本文档将随着实际实现和使用反馈持续更新*
+*本文档已完成 V4 架构优化，符合项目规范，可直接用于实现*
