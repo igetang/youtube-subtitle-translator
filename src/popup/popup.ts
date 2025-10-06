@@ -1247,10 +1247,7 @@ function addEventListeners(): void {
       populateTargetLanguages(searchTerm);
     });
   }
-  
-  // === 步骤3：统一监听器实现 ===
-  setupUnifiedSettingsListener();
-  
+
   // 测试API连接按钮
   if (testApiKeyButton) {
     testApiKeyButton.addEventListener('click', () => handleTestApiConnection());
@@ -2026,8 +2023,11 @@ async function handleTranslationServiceChange(): Promise<void> {
       ...userPreferences.translationService,
       type: (translationApiSelect?.value as TranslationServiceType) || userPreferences.translationService.type,
       apiKey: apiKeyInput?.value || userPreferences.translationService.apiKey || '',
-      model: modelSelect?.value || userPreferences.translationService.model,
-      temperature: temperatureInput?.value ? parseFloat(temperatureInput.value) : userPreferences.translationService.temperature
+      // 🔧 确保model和temperature始终是null而不是undefined（避免JSON序列化时字段丢失）
+      model: modelSelect?.value || userPreferences.translationService.model || null,
+      temperature: temperatureInput?.value
+        ? parseFloat(temperatureInput.value)
+        : (userPreferences.translationService.temperature ?? null)
     };
     
     // 一次性更新整个翻译服务配置

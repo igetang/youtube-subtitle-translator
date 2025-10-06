@@ -75,19 +75,52 @@ export class UserPreferencesManager {
     // 监听UserPreferences相关的存储变更
     const handleStorageChange = (changes: { [key: string]: chrome.storage.StorageChange }, area: string) => {
       if (area !== 'local') return;
-      
+
       // 检查是否是UserPreferences的变更
       const userPrefsKey = StorageKeys.USER_PREFERENCES_PREFIX;
       Object.keys(changes).forEach((key) => {
         if (key.startsWith(userPrefsKey)) {
           console.log('[user-preferences-manager] 检测到UserPreferences存储变更:', key);
-          
+
+          // 🔧 补全oldValue和newValue的translationService字段（防御性处理）
+          // 原因：旧数据或某些路径可能导致字段缺失，补全后再比较可避免误触发事件
+          let newPrefs = changes[key].newValue;
+          let oldPrefs = changes[key].oldValue;
+
+          // 补全newValue的translationService字段
+          if (newPrefs?.translationService?.type) {
+            const template = TRANSLATION_SERVICE_TEMPLATES[newPrefs.translationService.type];
+            if (template) {
+              newPrefs = {
+                ...newPrefs,
+                translationService: {
+                  ...template,
+                  ...newPrefs.translationService
+                }
+              };
+            }
+          }
+
+          // 补全oldValue的translationService字段
+          if (oldPrefs?.translationService?.type) {
+            const template = TRANSLATION_SERVICE_TEMPLATES[oldPrefs.translationService.type];
+            if (template) {
+              oldPrefs = {
+                ...oldPrefs,
+                translationService: {
+                  ...template,
+                  ...oldPrefs.translationService
+                }
+              };
+            }
+          }
+
           // 触发变更事件
-          this.triggerPreferencesChangeEvent(changes[key].newValue, changes[key].oldValue);
+          this.triggerPreferencesChangeEvent(newPrefs, oldPrefs);
         }
       });
     };
-    
+
     // 添加监听器
     this.storageManager.addChangeListener(StorageKeys.USER_PREFERENCES_PREFIX, handleStorageChange);
   }
@@ -106,15 +139,25 @@ export class UserPreferencesManager {
     }
 
     // 检查各个字段的变更
-    if (newPrefs.targetLang !== previousPrefs.targetLang) {
+
+    // 对比targetLang
+    const targetLangChanged = newPrefs.targetLang !== previousPrefs.targetLang;
+    if (targetLangChanged) {
       this.triggerChangeEvent(UserPreferenceChangeEvent.TARGET_LANG_CHANGED, newPrefs.targetLang, previousPrefs.targetLang);
     }
 
-    if (newPrefs.subtitleMode !== previousPrefs.subtitleMode) {
+    // 对比subtitleMode
+    const subtitleModeChanged = newPrefs.subtitleMode !== previousPrefs.subtitleMode;
+    if (subtitleModeChanged) {
       this.triggerChangeEvent(UserPreferenceChangeEvent.SUBTITLE_MODE_CHANGED, newPrefs.subtitleMode, previousPrefs.subtitleMode);
     }
 
-    if (JSON.stringify(newPrefs.translationService) !== JSON.stringify(previousPrefs.translationService)) {
+    // 对比translationService
+    const newServiceStr = JSON.stringify(newPrefs.translationService);
+    const prevServiceStr = JSON.stringify(previousPrefs.translationService);
+    const serviceChanged = newServiceStr !== prevServiceStr;
+
+    if (serviceChanged) {
       this.triggerChangeEvent(UserPreferenceChangeEvent.TRANSLATION_SERVICE_CHANGED, newPrefs.translationService, previousPrefs.translationService);
     }
   }
@@ -287,6 +330,20 @@ export class UserPreferencesManager {
       const data = await this.storageManager.get<UserPreferences | null>(storageKey, null);
 
       if (data) {
+        // 🔧 修复旧数据：补全translationService缺失的字段（如model、temperature等）
+        // 原因：旧版本或JSON序列化时undefined字段会被省略，导致字段缺失
+        if (data.translationService && data.translationService.type) {
+          const template = TRANSLATION_SERVICE_TEMPLATES[data.translationService.type];
+          if (template) {
+            // 使用模板补全缺失字段，保留用户自定义值
+            data.translationService = {
+              ...template,                    // 模板提供完整字段（包含null值）
+              ...data.translationService,     // 用户数据覆盖模板（保留apiKey等）
+            };
+            console.log('[user-preferences-manager] 🔧 translationService字段已补全:', data.translationService);
+          }
+        }
+
         // 验证数据完整性
         const validation = this.validateUserPreferences(data);
 

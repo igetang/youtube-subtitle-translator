@@ -1251,6 +1251,7 @@ function setupTranslationServiceChangeListener(): void {
 
         const translateState = stateManager?.getState('translateActive');
         const isActive = translateState === TranslateActiveState.ACTIVE || translateState === 'active';
+
         if (!isActive) {
           console.log('[content-script] 翻译服务变更但翻译未激活，忽略实时更新');
           return;
@@ -1365,19 +1366,23 @@ async function handleSourceLanguageCacheChange(
   const newVideoData = newCache?.items?.find((item: any) => item.videoId === currentVideoId);
   const oldVideoData = oldCache?.items?.find((item: any) => item.videoId === currentVideoId);
 
-  // 检查源语言或类型是否变化（同时比较languageCode和kind）
-  const sourceChanged =
-    newVideoData?.selectedSourceTrack?.languageCode !== oldVideoData?.selectedSourceTrack?.languageCode ||
-    newVideoData?.selectedSourceTrack?.kind !== oldVideoData?.selectedSourceTrack?.kind;
-
-  if (newVideoData?.selectedSourceTrack?.languageCode && sourceChanged) {
+  // 🔧 修复：移除 sourceChanged 检查，允许用户重复选择相同源语言来强制重新翻译
+  // 背景：下拉列表第一个选项可能是当前已选中的，点击后因为新旧值相同不触发翻译
+  // 解决：允许用户通过重新选择相同源语言来刷新翻译
+  if (newVideoData?.selectedSourceTrack?.languageCode) {
 
     // 复用stateManager获取当前翻译状态
     const translateState = stateManager?.getState('translateActive');
     const isActive = translateState === TranslateActiveState.ACTIVE || translateState === 'active';
 
     if (isActive) {
-      console.log('[content-script] 检测到源语言或类型变更:', {
+      // 检查源语言或类型是否变化（用于日志记录）
+      const sourceChanged =
+        newVideoData.selectedSourceTrack.languageCode !== oldVideoData?.selectedSourceTrack?.languageCode ||
+        newVideoData.selectedSourceTrack.kind !== oldVideoData?.selectedSourceTrack?.kind;
+
+      console.log('[content-script] 检测到源语言选择:', {
+        changed: sourceChanged,
         old: {
           languageCode: oldVideoData?.selectedSourceTrack?.languageCode,
           kind: oldVideoData?.selectedSourceTrack?.kind
@@ -1388,7 +1393,7 @@ async function handleSourceLanguageCacheChange(
         }
       });
 
-      // 处理源语言变更
+      // 处理源语言变更（即使未变化也执行，允许强制刷新）
       await handleSourceLanguageChange(newVideoData.selectedSourceTrack.languageCode);
     }
   }

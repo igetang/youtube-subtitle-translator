@@ -748,6 +748,170 @@ translateButton.addEventListener('click', () => {
 });
 ```
 
+### 案例4: 存储事件重复触发导致SessionAbortError ⭐
+**问题**：更改目标语言时触发双重事件（TARGET_LANG_CHANGED + TRANSLATION_SERVICE_CHANGED），导致翻译流程被重复执行，出现SessionAbortError。
+
+**症状**：
+```
+[user-preferences-manager] 🔔 用户偏好变更事件: TARGET_LANG_CHANGED
+[user-preferences-manager] 🔔 用户偏好变更事件: TRANSLATION_SERVICE_CHANGED  ← 不应该触发
+[service-worker] SessionAbortError: 翻译已被新的请求中断
+```
+
+**根本原因**：
+1. **JSON.stringify的undefined字段省略特性**：
+   ```typescript
+   JSON.stringify({a: undefined, b: 'value'})  // → '{"b":"value"}'  字段a被省略
+   JSON.stringify({a: null, b: 'value'})       // → '{"a":null,"b":"value"}'  字段a保留
+   ```
+
+2. **Popup构造translationService时可能产生undefined**：
+   ```typescript
+   // src/popup/popup.ts (修复前)
+   const updatedService = {
+     ...userPreferences.translationService,
+     model: modelSelect?.value || userPreferences.translationService.model,  // ← 可能返回undefined
+     temperature: temperatureInput?.value ? parseFloat(temperatureInput.value) : userPreferences.translationService.temperature
+   };
+   ```
+   - 当UI元素不存在或为空时，`modelSelect?.value` 返回 `undefined`
+   - `undefined || existingValue` 如果 `existingValue` 也是 `undefined`，结果仍是 `undefined`
+   - `chrome.storage.local.set()` 使用JSON序列化，会省略undefined字段
+
+3. **存储数据缺失字段导致比较失败**：
+   ```typescript
+   // 存储中的数据（字段被省略）
+   oldValue: { type: 'google_free', apiKey: '', rpm: 100 }  // 缺少model、temperature
+   newValue: { type: 'google_free', apiKey: '', model: null, temperature: null, rpm: 100 }  // 完整字段
+
+   // JSON.stringify后不相等 → 误触发TRANSLATION_SERVICE_CHANGED事件
+   ```
+
+**解决方案（双层防御）**：
+
+**Layer 1 - 源头修复（Popup）**：确保始终使用 `null` 而不是 `undefined`
+```typescript
+// src/popup/popup.ts (修复后)
+const updatedService = {
+  ...userPreferences.translationService,
+  type: (translationApiSelect?.value as TranslationServiceType) || userPreferences.translationService.type,
+  apiKey: apiKeyInput?.value || userPreferences.translationService.apiKey || '',
+  // 🔧 确保model和temperature始终是null而不是undefined（避免JSON序列化时字段丢失）
+  model: modelSelect?.value || userPreferences.translationService.model || null,  // ← 添加 || null
+  temperature: temperatureInput?.value
+    ? parseFloat(temperatureInput.value)
+    : (userPreferences.translationService.temperature ?? null)  // ← 使用 ?? null
+};
+```
+
+**Layer 2 - 防御层（Storage Listener）**：补全新旧值的字段后再比较
+```typescript
+// src/shared/storage/user-preferences-manager.ts
+private setupStorageListener(): void {
+  const handleStorageChange = (changes: { [key: string]: chrome.storage.StorageChange }, area: string) => {
+    if (area !== 'local') return;
+
+    const userPrefsKey = StorageKeys.USER_PREFERENCES_PREFIX;
+    Object.keys(changes).forEach((key) => {
+      if (key.startsWith(userPrefsKey)) {
+        console.log('[user-preferences-manager] 检测到UserPreferences存储变更:', key);
+
+        // 🔧 补全oldValue和newValue的translationService字段（防御性处理）
+        let newPrefs = changes[key].newValue;
+        let oldPrefs = changes[key].oldValue;
+
+        // 补全newValue的translationService字段
+        if (newPrefs?.translationService?.type) {
+          const template = TRANSLATION_SERVICE_TEMPLATES[newPrefs.translationService.type];
+          if (template) {
+            newPrefs = {
+              ...newPrefs,
+              translationService: {
+                ...template,                    // 模板提供完整字段（包含null值）
+                ...newPrefs.translationService  // 用户数据覆盖模板
+              }
+            };
+          }
+        }
+
+        // 补全oldValue的translationService字段
+        if (oldPrefs?.translationService?.type) {
+          const template = TRANSLATION_SERVICE_TEMPLATES[oldPrefs.translationService.type];
+          if (template) {
+            oldPrefs = {
+              ...oldPrefs,
+              translationService: {
+                ...template,
+                ...oldPrefs.translationService
+              }
+            };
+          }
+        }
+
+        // 触发变更事件（此时新旧值字段完整，比较公平）
+        this.triggerPreferencesChangeEvent(newPrefs, oldPrefs);
+      }
+    });
+  };
+
+  this.storageManager.addChangeListener(StorageKeys.USER_PREFERENCES_PREFIX, handleStorageChange);
+}
+```
+
+**关键技术点**：
+1. **undefined vs null**：
+   - `undefined` → JSON.stringify会省略字段
+   - `null` → JSON.stringify会保留字段
+   - 存储数据时必须使用 `null` 表示"无值"，而不是 `undefined`
+
+2. **字段补全模板**：
+   ```typescript
+   // src/shared/types/user-preferences-types.ts
+   export const TRANSLATION_SERVICE_TEMPLATES = {
+     [TranslationServiceType.GOOGLE_FREE]: {
+       type: TranslationServiceType.GOOGLE_FREE,
+       name: 'Google 翻译（免费）',
+       model: null,        // ← 必须明确定义为null
+       temperature: null,  // ← 必须明确定义为null
+       rpm: 100,
+       tpm: null
+     },
+     // ... 其他模板
+   };
+   ```
+
+3. **Nullish Coalescing Operator（??）**：
+   - `value || fallback` - 当value为falsy（0, false, ''等）时都会使用fallback
+   - `value ?? fallback` - 只有当value为null或undefined时才使用fallback
+   - 对于可能为0的数值字段，应使用 `??` 而不是 `||`
+
+**验证修复**：
+```bash
+# 1. 构建扩展
+npm run build
+
+# 2. 重新加载扩展并测试
+# 3. 在YouTube页面更改目标语言
+# 4. 检查Service Worker日志
+
+# 预期结果（修复后）：
+# [user-preferences-manager] 🔔 用户偏好变更事件: TARGET_LANG_CHANGED
+# （不再出现TRANSLATION_SERVICE_CHANGED事件）
+# （不再出现SessionAbortError）
+```
+
+**相关文件**：
+- `src/popup/popup.ts:2021-2031` - Popup构造逻辑修复
+- `src/shared/storage/user-preferences-manager.ts:74-126` - Storage监听器字段补全
+- `src/shared/storage/user-preferences-manager.ts:300-312` - getUserPreferences字段补全
+- `src/shared/types/user-preferences-types.ts:75-83` - 模板定义
+
+**经验教训**：
+1. 在Chrome扩展中操作存储时，始终使用 `null` 而不是 `undefined`
+2. 对于可选字段，应在类型定义中明确包含 `| null`，而不是依赖 `?:` 可选属性
+3. 存储数据的新旧值比较前，应确保数据结构完整性
+4. JSON序列化会改变数据结构（省略undefined字段），需特别注意
+
 ## 📋 自检清单
 
 ### 安装后检查
