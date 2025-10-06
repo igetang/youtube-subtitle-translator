@@ -1,18 +1,450 @@
 # OpenAI翻译API实现指南
 
-> 最后更新：2025-09-29
-> 状态：🚧 架构设计完成，待实现
+> 最后更新：2025-10-06
+> 状态：✅ V4架构优化完成，待实施
 > 版本：V4架构兼容
 
 ## 📋 概述
 
-本文档提供OpenAI翻译API的完整实现指南，包括架构设计、参数配置、批处理优化和错误处理。该实现追求**极简用户界面**与**智能内部处理**的平衡。
+本文档提供OpenAI翻译API的完整实现指南，基于项目V4架构规范，复用Google/Microsoft的智能断句和文本处理逻辑，实现与现有翻译服务一致的用户体验。
+
+## 📝 V4架构优化方案（1-13条）
+
+### ✅ 优化1：V4架构完整适配
+
+**实现内容**：
+- 添加 `AbortSignal` 支持，可中断翻译
+- 区分 `urgent`（紧急）和 `batch`（批量）阶段
+- 集成V4超时机制
+
+**代码结构**：
+```typescript
+public async translate(
+  texts: string[],
+  sourceLang: string,
+  targetLang: string,
+  stage: 'urgent' | 'batch',  // 阶段区分
+  signal: AbortSignal          // 取消支持
+): Promise<string[]>
+```
+
+---
+
+### ✅ 优化2：同权多模型支持
+
+**支持模型**：
+- `gpt-5`（旗舰，$1.25/$10）
+- `gpt-5-mini`（默认，$0.25/$2）
+- `gpt-5-nano`（极速，$0.05/$0.40）
+
+**用户偏好配置**：
+```typescript
+'openai': {
+  type: 'openai',
+  name: 'OpenAI GPT',
+  apiKey: '',
+  model: 'gpt-5-mini',                // 默认
+  availableModels: ['gpt-5', 'gpt-5-mini', 'gpt-5-nano'],
+  customModel: null,
+  temperature: 0.3,
+  maxTokens: 128000                   // 官方最大输出限制
+}
+```
+
+---
+
+### ✅ 优化3：批次大小优化（复用IntelligentSegmenter）
+
+**实现方式**：
+- 复用项目现有的 `IntelligentSegmenter` 类
+- 修改 `MAX_BATCH_SIZE` 为 160
+- 完全复用时间间隔智能断句逻辑
+
+**断句规则**：
+1. 160条硬断点（强制分批）
+2. 强断点：gap > 2秒
+3. 弱断点：maxGap - minGap > 400ms
+4. 最小批次：10条
+
+**代码**：
+```typescript
+// intelligent-segmenter.ts
+class IntelligentSegmenter {
+  private static readonly MAX_BATCH_SIZE = 160;  // 改为160
+  // 其他逻辑完全复用
+}
+
+// two-phase-translator-v4.ts
+const segmenter = new IntelligentSegmenter();
+const batches = segmenter.createSmartBatches(subtitles);
+```
+
+---
+
+### ✅ 优化4：文本拼接与拆分（复用Google/Microsoft逻辑）
+
+**处理流程**：
+```typescript
+// 1. 清理单条字幕内的换行符
+const cleanedTexts = texts.map(text => text.replace(/\n/g, ' ').trim());
+
+// 2. 用单换行符拼接
+const combined = cleanedTexts.join('\n');
+
+// 3. 构建提示词
+const messages = [
+  {
+    role: "system",
+    content: `You are a professional subtitle translator.
+Translate from ${sourceLang} to ${targetLang}.
+Input contains multiple subtitles separated by newlines.
+Each line is one subtitle. Keep the same number of lines.
+Do not add explanations.`
+  },
+  {
+    role: "user",
+    content: combined
+  }
+];
+
+// 4. 翻译后拆分
+const translations = translatedCombined.split(/\r?\n/).map(t => t.trim());
+
+// 5. 验证数量
+if (translations.length !== texts.length) {
+  throw new Error('翻译数量不匹配');
+}
+```
+
+**不使用**：
+- ❌ `|||SEP|||` 特殊分隔符
+- ❌ JSON格式输出
+- ❌ 双换行符 `\n\n`
+
+---
+
+### ✅ 优化5：动态超时机制
+
+**超时设置**：
+- urgent阶段：5秒
+- batch阶段：单批5秒，总超时 = 批数 × 5秒
+
+**实现位置**：
+```typescript
+// handle-toggle-translate-v4.ts
+if (serviceType === 'openai') {
+  // 紧急翻译
+  timeoutMs: 5000  // 5秒
+
+  // 批量翻译
+  estimatedBatches = Math.ceil(subtitleCount / 160);
+  perBatchTimeout = 5000;
+  batchTotalTimeout = estimatedBatches * 5000;
+}
+
+// two-phase-translator-v4.ts
+if (service.type === 'openai') {
+  perBatchTimeout = 5000;  // 单批5秒
+}
+```
+
+---
+
+### ❌ 优化6：Rate Limit响应头自动更新
+
+**决定**：暂不实现
+
+**原因**：
+- 已有200ms批次间隔
+- 已有160条/批限制
+- 足够避免限流
+
+**处理**：在本文档中说明Rate Limit策略即可
+
+**Rate Limit策略说明**：
+- 批次间隔：200ms（与Google/Microsoft一致）
+- 批次大小：160条（避免频繁请求）
+- 自然节流：避免触发429错误
+
+---
+
+### ✅ 优化7：Temperature开放给用户
+
+**参数设置**：
+- 默认值：0.3（字幕翻译推荐）
+- 范围：0-1（用户可调）
+- Popup UI显示滑块
+
+**UI实现**：
+```html
+<div class="setting-item">
+  <label>翻译风格:</label>
+  <div class="temperature-slider">
+    <span class="hint-left">精确</span>
+    <input type="range" id="openai-temperature"
+           min="0" max="1" step="0.1" value="0.3">
+    <span class="hint-right">创意</span>
+  </div>
+  <div class="temp-value">
+    当前: <span id="temp-value">0.3</span>
+    <small>（推荐0.2-0.4用于字幕）</small>
+  </div>
+</div>
+```
+
+---
+
+### ✅ 优化8：统一存储架构
+
+**存储位置**：
+- API Key存储在 `translationService.apiKey`
+- 与DeepSeek保持一致
+- 不单独存储
+
+**正确方式**：
+```typescript
+{
+  type: 'openai',
+  apiKey: '',           // 存储在这里
+  model: 'gpt-5-mini',
+  temperature: 0.3
+}
+```
+
+**错误方式**（不要这样做）：
+```typescript
+// ❌ 不要单独存储
+await chrome.storage.local.set({ openaiApiKey: apiKey });
+```
+
+---
+
+### ✅ 优化9：语言代码规范化
+
+**使用YouTube标准代码**：
+```typescript
+private mapLanguageCode(code: string): string {
+  const mapping: Record<string, string> = {
+    'zh-CN': 'zh',
+    'zh-Hans': 'zh',
+    'zh-Hant': 'zh',
+    'en': 'en',
+    'ja': 'ja',
+    'ko': 'ko',
+    'es': 'es',
+    'fr': 'fr',
+    'de': 'de',
+    'ru': 'ru',
+    'ar': 'ar',
+    'pt': 'pt',
+    'it': 'it',
+    'vi': 'vi',
+    'th': 'th',
+    'id': 'id'
+  };
+  return mapping[code] || code;
+}
+```
+
+**不使用全名**（错误）：
+```typescript
+// ❌ 不要这样
+'zh-Hans': 'Simplified Chinese'
+```
+
+---
+
+### ✅ 优化10：错误处理细化
+
+**HTTP状态码细分**：
+```typescript
+if (!response.ok) {
+  switch (response.status) {
+    case 401:
+    case 403:
+      throw new Error('OpenAI API密钥无效，请检查设置');
+    case 429:
+      throw new Error('OpenAI API速率限制，请稍后重试');
+    case 500:
+    case 502:
+    case 503:
+      throw new Error('OpenAI服务暂时不可用');
+    default:
+      throw new Error(`OpenAI API错误 (${response.status}): ${errorText}`);
+  }
+}
+
+// AbortError处理
+if (error.name === 'AbortError') {
+  throw new DOMException('OpenAI API请求被取消', 'AbortError');
+}
+```
+
+---
+
+### ✅ 优化11：API测试功能
+
+**测试函数**：
+```typescript
+// service-worker.ts
+async function testOpenAIService(
+  apiKey: string,
+  model: string
+): Promise<{success: boolean, message: string}> {
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: [{ role: 'user', content: 'Hi' }],
+        max_tokens: 10,
+        temperature: 0.3
+      })
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        return { success: false, message: 'API Key无效' };
+      }
+      return { success: false, message: `HTTP ${response.status}` };
+    }
+
+    const data = await response.json();
+    return {
+      success: true,
+      message: `测试成功，消耗 ${data.usage.total_tokens} tokens`
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : '测试失败'
+    };
+  }
+}
+```
+
+---
+
+### ✅ 优化12：移除流式响应
+
+**简化为非流式**：
+```typescript
+// 删除约300行流式处理代码
+const payload = {
+  model: this.model,
+  messages: messages,
+  temperature: this.temperature,
+  max_tokens: 128000,   // 官方最大输出限制
+  stream: false         // 非流式
+};
+
+const response = await fetch('https://api.openai.com/v1/chat/completions', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${this.apiKey}`
+  },
+  body: JSON.stringify(payload),
+  signal  // AbortSignal支持
+});
+
+const data = await response.json();
+const content = data.choices[0].message.content;
+const translations = content.split(/\r?\n/).map(t => t.trim());
+```
+
+**删除的内容**：
+- ❌ `callOpenAIStreamingAPI` 方法
+- ❌ 流式读取逻辑（reader.read()）
+- ❌ SSE格式解析（`data: [DONE]`）
+
+---
+
+### ✅ 优化13：模型配置映射表
+
+**配置定义**：
+```typescript
+const MODEL_CONFIGS: Record<string, {
+  contextWindow: number;
+  maxOutput: number;
+  pricing: {
+    input: number;    // $/百万tokens
+    output: number;
+  };
+}> = {
+  'gpt-5': {
+    contextWindow: 400_000,
+    maxOutput: 128_000,
+    pricing: { input: 1.25, output: 10.0 }
+  },
+  'gpt-5-mini': {
+    contextWindow: 400_000,
+    maxOutput: 128_000,
+    pricing: { input: 0.25, output: 2.0 }
+  },
+  'gpt-5-nano': {
+    contextWindow: 400_000,
+    maxOutput: 128_000,
+    pricing: { input: 0.05, output: 0.40 }
+  }
+};
+
+// 使用
+const config = MODEL_CONFIGS[this.model];
+console.log(`[OpenAI] 上下文窗口: ${config.contextWindow} tokens`);
+console.log(`[OpenAI] 最大输出: ${config.maxOutput} tokens`);
+```
+
+---
+
+## 📊 优化方案汇总
+
+| 编号 | 优化项 | 状态 | 优先级 | 代码改动 |
+|------|--------|------|--------|----------|
+| 1 | V4架构适配 | ✅ 实现 | P0 | ~50行 |
+| 2 | 同权多模型 | ✅ 实现 | P0 | ~30行 |
+| 3 | 批次大小优化 | ✅ 实现 | P0 | 修改1常量 |
+| 4 | 文本拼接拆分 | ✅ 实现 | P0 | ~20行 |
+| 5 | 动态超时机制 | ✅ 实现 | P1 | ~30行 |
+| 6 | Rate Limit | ❌ 不实现 | - | 0行 |
+| 7 | Temperature开放 | ✅ 实现 | P1 | ~40行 |
+| 8 | 统一存储架构 | ✅ 实现 | P1 | ~10行 |
+| 9 | 语言代码规范化 | ✅ 实现 | P1 | ~30行 |
+| 10 | 错误处理细化 | ✅ 实现 | P1 | ~30行 |
+| 11 | API测试功能 | ✅ 实现 | P1 | ~50行 |
+| 12 | 移除流式响应 | ✅ 实现 | P0 | 删除300行，新增30行 |
+| 13 | 模型配置映射表 | ✅ 实现 | P2 | ~30行 |
+
+**总计**：删除~300行，新增~320行，净增约20行，架构更清晰。
+
+---
+
+## 🎯 核心参数确认
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| **可选模型** | `gpt-5`, `gpt-5-mini`, `gpt-5-nano` | 三个同权模型 |
+| **默认模型** | `gpt-5-mini` | 性价比最优 |
+| **max_tokens** | `128000` | 官方最大输出限制 |
+| **temperature** | `0.3`（默认），0-1可调 | 字幕翻译推荐 |
+| **batch_size** | `160` | IntelligentSegmenter |
+| **separator** | `\n` | 单换行符 |
+| **stream** | `false` | 非流式 |
+| **超时（urgent）** | `5秒` | V4规范 |
+| **超时（batch单批）** | `5秒` | V4规范 |
+| **超时（batch总计）** | `批数 × 5秒` | 动态计算 |
+
+---
 
 ## 🎯 设计理念
 
-- **用户体验极简化**：只暴露必要的3个配置项
-- **内部处理智能化**：全自动管理Rate Limit、Token计算、批处理
-- **与现有服务一致性**：操作体验与谷歌/微软翻译保持一致
+- **用户体验极简化**：只暴露必要的3个配置项（API Key、Model、Temperature）
+- **内部处理智能化**：复用IntelligentSegmenter智能断句，复用Google/Microsoft文本处理逻辑
+- **与现有服务一致性**：操作体验与Google/Microsoft翻译保持一致
 
 ## 🔑 核心特性
 
