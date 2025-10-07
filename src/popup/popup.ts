@@ -1294,15 +1294,15 @@ function addEventListeners(): void {
       const eyeClosed = togglePasswordButton.querySelector('.eye-closed') as SVGElement;
 
       if (apiKeyInput.type === 'password') {
-        // 切换到显示密码
+        // 切换到显示密码 → 显示睁眼图标（能看到了）
         apiKeyInput.type = 'text';
-        if (eyeOpen) eyeOpen.style.display = 'none';
-        if (eyeClosed) eyeClosed.style.display = 'block';
-      } else {
-        // 切换到隐藏密码
-        apiKeyInput.type = 'password';
         if (eyeOpen) eyeOpen.style.display = 'block';
         if (eyeClosed) eyeClosed.style.display = 'none';
+      } else {
+        // 切换到隐藏密码 → 显示闭眼图标（看不到了）
+        apiKeyInput.type = 'password';
+        if (eyeOpen) eyeOpen.style.display = 'none';
+        if (eyeClosed) eyeClosed.style.display = 'block';
       }
     });
   }
