@@ -4105,7 +4105,7 @@ async function testOpenAIService(apiKey: string, model: string): Promise<{succes
           content: 'Say "test successful" in Chinese.'
         }
       ],
-      max_tokens: 10,
+      max_completion_tokens: 10,  // GPT-5系列使用max_completion_tokens
       temperature: 0
     })
   };
