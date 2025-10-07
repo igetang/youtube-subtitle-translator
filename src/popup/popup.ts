@@ -1950,21 +1950,21 @@ const debouncedSaveSourceLanguage = debounce(saveSourceLanguage, 300);
 function setupUnifiedSettingsListener(): void {
   document.addEventListener('change', async (event) => {
     const target = event.target as HTMLElement;
-    
+
     // 只处理我们关心的元素
     switch (target.id) {
       case 'source-language-select':
         await handleSourceLanguageChange(target as HTMLSelectElement);
         break;
-        
+
       case 'target-language-select':
         await handleTargetLanguageChange(target as HTMLSelectElement);
         break;
-        
+
       case 'subtitle-type-switch':
         await handleSubtitleModeChange(target as HTMLInputElement);
         break;
-        
+
       // 翻译服务相关的所有字段统一处理
       case 'translation-api':
       case 'api-key':
@@ -1972,10 +1972,22 @@ function setupUnifiedSettingsListener(): void {
       case 'openai-temperature':
         await handleTranslationServiceChange();
         break;
-        
+
       default:
         // 不是我们关心的元素，忽略
         return;
+    }
+  });
+
+  // Temperature滑块实时更新显示值
+  document.addEventListener('input', (event) => {
+    const target = event.target as HTMLElement;
+    if (target.id === 'openai-temperature') {
+      const slider = target as HTMLInputElement;
+      const valueDisplay = document.getElementById('openai-temperature-value');
+      if (valueDisplay) {
+        valueDisplay.textContent = slider.value;
+      }
     }
   });
 }
