@@ -102,68 +102,92 @@ export class OpenAITranslator {
       // 1. 清理每条字幕的内部换行符
       const cleanedTexts = texts.map(text => text.replace(/\n/g, ' ').trim());
 
-      // 2. 用单换行符拼接
-      const combined = cleanedTexts.join('\n');
+      // 2. 转换为JSON数组格式
+      const jsonInput = JSON.stringify(cleanedTexts);
+      console.log(`[OpenAITranslator] JSON输入长度: ${jsonInput.length}字符, ${cleanedTexts.length}条字幕`);
 
-      // 3. 构建messages
+      // 3. 构建messages（JSON格式）
       const messages = [
         {
           role: "system",
           content: `You are a professional subtitle translator.
 Translate from ${sourceLang} to ${targetLang}.
 
+INPUT FORMAT: JSON array containing ${texts.length} subtitle strings
+OUTPUT FORMAT: JSON array with EXACTLY ${texts.length} translated strings
+
 CRITICAL RULES:
-- Input has ${texts.length} lines (subtitles)
-- Output MUST have EXACTLY ${texts.length} lines
-- Each input line = one output line
-- PRESERVE the exact position of ALL line breaks (newlines)
-- Do NOT merge lines even if they form a complete sentence
-- Do NOT add or remove lines
-- Do NOT change the newline structure
-- Translate text ONLY, keep newlines UNCHANGED
+1. Input array length = ${texts.length}, output array length MUST = ${texts.length}
+2. Each input element corresponds to ONE output element (same index)
+3. Subtitles are time-based segments - ONE sentence may span MULTIPLE elements
+4. Do NOT merge array elements even if they form a complete sentence
+5. Translate each element independently but consider context from adjacent elements
+6. Return ONLY the JSON array, NO explanations or extra text
 
-Example:
-Input (2 lines):
-I think
-this is good
+Example (sentence in one subtitle):
+Input: ["Hello", "How are you", "I am fine"]
+Output: ["你好", "你好吗", "我很好"]
 
-Output (2 lines):
-我认为
-这很好
+Example (sentence spanning 2 subtitles):
+Input: ["I believe that", "we can do it"]
+Output: ["我相信", "我们能做到"]
+Note: This is ONE sentence split into TWO time segments - keep them separate!
 
-WRONG (merged):
-我认为这很好`
+Example (incomplete thought):
+Input: ["But I think", "maybe we should"]
+Output: ["但我认为", "也许我们应该"]`
         },
         {
           role: "user",
-          content: combined
+          content: jsonInput
         }
       ];
 
-      // 4. 调用API（动态计算max_completion_tokens）
-      const estimatedOutputTokens = this.estimateOutputTokens(combined);
-      const translatedCombined = await this.callOpenAIAPI(messages, signal, estimatedOutputTokens);
+      // 4. 调用API（动态计算max_completion_tokens，考虑JSON额外开销）
+      const jsonOverhead = texts.length * 4; // JSON格式额外字符：[] " " ,
+      const estimatedOutputTokens = this.estimateOutputTokens(jsonInput, jsonOverhead);
+      const responseText = await this.callOpenAIAPI(messages, signal, estimatedOutputTokens);
 
-      // 5. 拆分结果
-      const translations = translatedCombined.split(/\r?\n/).map(t => t.trim()).filter(t => t.length > 0);
+      // 5. 解析JSON结果
+      let translations: string[];
+      try {
+        // 尝试直接解析
+        translations = JSON.parse(responseText);
+        console.log(`[OpenAITranslator] ✓ JSON解析成功，收到${translations.length}条翻译`);
+      } catch (parseError) {
+        console.warn(`[OpenAITranslator] ⚠️  JSON解析失败，尝试提取JSON部分`, parseError);
 
-      // 6. 验证数量
-      if (translations.length !== texts.length) {
-        console.warn(`[OpenAITranslator] ⚠️  翻译数量不匹配: 期望${texts.length}条，实际${translations.length}条`);
-
-        // 尝试修复：补齐或截断
-        if (translations.length < texts.length) {
-          // 补齐缺失的翻译
-          while (translations.length < texts.length) {
-            translations.push('[翻译错误: 结果缺失]');
+        // 容错：提取JSON数组部分（AI可能返回了额外文字）
+        const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+          try {
+            translations = JSON.parse(jsonMatch[0]);
+            console.log(`[OpenAITranslator] ✓ 从响应中提取JSON成功，收到${translations.length}条翻译`);
+          } catch (e) {
+            const errorMsg = e instanceof Error ? e.message : String(e);
+            throw new Error(`JSON提取失败: ${errorMsg}\n原始响应: ${responseText.substring(0, 200)}`);
           }
         } else {
-          // 截断多余的翻译
-          translations.splice(texts.length);
+          throw new Error(`无法从响应中找到JSON数组\n原始响应: ${responseText.substring(0, 200)}`);
         }
       }
 
-      console.log(`[OpenAITranslator] ✓ 翻译完成: ${translations.length}条`);
+      // 6. 验证返回类型和数量
+      if (!Array.isArray(translations)) {
+        throw new Error(`OpenAI返回的不是数组: ${typeof translations}`);
+      }
+
+      if (translations.length !== texts.length) {
+        console.error(`[OpenAITranslator] ❌ 翻译数量不匹配: 期望${texts.length}条，实际${translations.length}条`);
+        console.error(`[OpenAITranslator] 原始输入(全部${texts.length}条):`, cleanedTexts);
+        console.error(`[OpenAITranslator] 返回结果(全部${translations.length}条):`, translations);
+        console.error(`[OpenAITranslator] API原始响应:`, responseText);
+
+        // JSON方案下，数量不匹配是严重错误，不做自动修复
+        throw new Error(`翻译数量不匹配: 期望${texts.length}条，实际${translations.length}条`);
+      }
+
+      console.log(`[OpenAITranslator] ✓ 翻译完成: ${translations.length}条字幕`);
       return translations;
 
     } catch (error) {
@@ -175,20 +199,27 @@ WRONG (merged):
   /**
    * 估算输出token数（基于输入长度）
    * 根据OpenAI最佳实践：设置合理的max_completion_tokens可以显著降低延迟
-   * @param inputText 输入文本
+   * @param inputText 输入文本（JSON格式）
+   * @param jsonOverhead JSON格式额外字符数
    * @returns 估算的输出token数
    */
-  private estimateOutputTokens(inputText: string): number {
-    // 估算逻辑（基于实际数据优化）：
-    // 实测：1182字符 → 1458 tokens，比例约 1.23
-    // 公式：字符数 × 2（包含翻译扩展 + 安全余量）
-    const estimated = Math.ceil(inputText.length * 2);
+  private estimateOutputTokens(inputText: string, jsonOverhead: number = 0): number {
+    // 估算逻辑（基于最新实测数据优化）：
+    // 实测数据（从截图）：
+    //   - 案例1: 1067字符 → 输入487 tokens, 输出265 tokens
+    //   - 案例2: 1922字符 → 输入600 tokens, 输出477 tokens
+    //   - 字符→token比例: 约2.5字符/token
+    //   - 输出/输入比例: 约0.5-0.8倍（输出比输入少）
+    //
+    // 新公式（保守估算）：
+    // 1. 字符数 → 估算输入tokens: 字符数 ÷ 2.5
+    // 2. 输入tokens → 估算输出tokens: 输入tokens × 1.2（20%余量）
+    const totalChars = inputText.length + jsonOverhead;
+    const estimatedInputTokens = totalChars / 2.5;  // 字符→输入tokens
+    const estimatedOutputTokens = Math.ceil(estimatedInputTokens * 1.2);  // 输出≈输入+20%余量
 
-    // 限制范围：最小500，最大4000（字幕翻译通常不超过4000）
-    const bounded = Math.max(500, Math.min(estimated, 4000));
-
-    console.log(`[OpenAITranslator] 📊 估算输出tokens: ${bounded} (输入${inputText.length}字符 × 2)`);
-    return bounded;
+    console.log(`[OpenAITranslator] 📊 估算: ${totalChars}字符 → 输入~${Math.round(estimatedInputTokens)}tokens → 输出~${estimatedOutputTokens}tokens`);
+    return estimatedOutputTokens;
   }
 
   /**
