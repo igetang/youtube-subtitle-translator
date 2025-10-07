@@ -173,22 +173,7 @@
             <option value="gpt-5-mini">gpt-5-mini (推荐)</option>
             <option value="gpt-5-nano">gpt-5-nano (极速)</option>
         </select>
-        
-        <!-- 添加OpenAI API限流信息面板 -->
-        <div id="openai-ratelimit-panel" class="setting-item ratelimit-panel" style="display: block;">
-            <h3>API限流信息</h3>
-            <div class="ratelimit-info">
-                <div class="ratelimit-item">
-                    <span class="ratelimit-label">每分钟请求限制:</span>
-                    <span id="x-ratelimit-limit-requests" class="ratelimit-value">- RPM</span>
-                </div>
-                <div class="ratelimit-item">
-                    <span class="ratelimit-label">每分钟令牌限制:</span>
-                    <span id="x-ratelimit-limit-tokens" class="ratelimit-value">- TPM</span>
-                </div>
-            </div>
-        </div>
-        
+
         <!-- Temperature设置 - 从高级设置移到这里 -->
         <div class="simple-setting-item">
             <label for="openai-temperature">Temperature:</label>
