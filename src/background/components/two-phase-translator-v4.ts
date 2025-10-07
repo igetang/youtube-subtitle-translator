@@ -36,7 +36,7 @@ export class TwoPhaseTranslatorV4 {
   private static readonly API_DELAY = 200;  // API调用间隔
   private static readonly URGENT_RESPONSE_TIME = 300;  // 紧急响应时间目标
   private static readonly BATCH_START_DELAY = 200;  // 批量翻译启动延迟（200ms）
-  private static readonly TIMEOUT_MS = 50000;  // 统一超时时间（50秒，适配OpenAI）
+  private static readonly TIMEOUT_MS = 15000;  // 统一超时时间（15秒，适配OpenAI）
   private static readonly MS_MAX_ITEMS = 10;  // 微软每次请求最大字幕条数
   private static readonly MS_MAX_CHARS = 5000;  // 微软单个文本最大字符数
   private static readonly MS_MAX_TOTAL_CHARS = 50000;  // 微软单次请求字符总量限制
@@ -275,7 +275,7 @@ export class TwoPhaseTranslatorV4 {
       if (serviceType === 'deepseek') {
         perBatchTimeout = 30000; // DeepSeek需要30秒
       } else if (serviceType === 'openai') {
-        perBatchTimeout = 50000; // OpenAI单批50秒（适配GPT-5响应时间）
+        perBatchTimeout = 15000; // OpenAI单批15秒（适配GPT-5响应时间）
       } else if (serviceType === 'google-free' || serviceType === 'google' ||
                  serviceType === 'microsoft-free' || serviceType === 'microsoft') {
         perBatchTimeout = 5000; // 免费服务5秒

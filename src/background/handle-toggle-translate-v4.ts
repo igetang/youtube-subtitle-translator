@@ -311,7 +311,7 @@ export async function handleToggleTranslateV4(
 
             return response;
           },
-          { timeoutMs: 50000 }
+          { timeoutMs: 15000 }
         );
 
         if (trackResponse?.success && trackResponse.tracks?.length > 0) {
@@ -460,7 +460,7 @@ export async function handleToggleTranslateV4(
           });
         },
         {
-          timeoutMs: 50000,
+          timeoutMs: 15000,
           critical: true  // 字幕获取失败则终止
         }
       );

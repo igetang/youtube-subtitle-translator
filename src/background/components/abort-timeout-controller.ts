@@ -42,7 +42,7 @@ export class AbortError extends Error {
  * 使用2025年最佳实践实现
  */
 export class AbortTimeoutController {
-  private static readonly DEFAULT_TIMEOUT = 50000;  // 默认50秒超时（适配OpenAI）
+  private static readonly DEFAULT_TIMEOUT = 15000;  // 默认15秒超时（适配OpenAI）
   
   /**
    * 执行带超时控制的异步操作
