@@ -94,7 +94,7 @@ export const TRANSLATION_SERVICE_TEMPLATES: Record<TranslationServiceType, Omit<
     name: 'OpenAI GPT',
     model: 'gpt-5-mini',
     availableModels: ['gpt-5', 'gpt-5-mini', 'gpt-5-nano'],
-    temperature: 0.3,
+    temperature: 1,  // GPT-5系列只支持默认值1
     maxTokens: 128000,
     rpm: 60,
     tpm: 40000

@@ -165,19 +165,27 @@ Do not add explanations.`
     const url = 'https://api.openai.com/v1/chat/completions';
 
     try {
+      // GPT-5系列模型不支持自定义temperature，只能使用默认值1
+      const isGPT5 = this.model.startsWith('gpt-5');
+      const requestBody: any = {
+        model: this.model,
+        messages: messages,
+        max_completion_tokens: 128000,  // GPT-5系列使用max_completion_tokens
+        stream: false                   // 非流式
+      };
+
+      // 只有非GPT-5模型才添加temperature参数
+      if (!isGPT5) {
+        requestBody.temperature = this.temperature;
+      }
+
       const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.apiKey}`
         },
-        body: JSON.stringify({
-          model: this.model,
-          messages: messages,
-          temperature: this.temperature,
-          max_completion_tokens: 128000,  // GPT-5系列使用max_completion_tokens
-          stream: false                   // 非流式
-        }),
+        body: JSON.stringify(requestBody),
         signal                          // AbortSignal支持
       });
 

@@ -4091,23 +4091,31 @@ async function testMicrosoftTranslatePathB(testText: string, sourceLang: string,
 async function testOpenAIService(apiKey: string, model: string): Promise<{success: boolean, message: string}> {
   const url = 'https://api.openai.com/v1/chat/completions';
 
+  // GPT-5系列模型不支持自定义temperature，只能使用默认值1
+  const isGPT5 = model.startsWith('gpt-5');
+  const requestBody: any = {
+    model: model,
+    messages: [
+      {
+        role: 'user',
+        content: 'Say "test successful" in Chinese.'
+      }
+    ],
+    max_completion_tokens: 10  // GPT-5系列使用max_completion_tokens
+  };
+
+  // 只有非GPT-5模型才添加temperature参数
+  if (!isGPT5) {
+    requestBody.temperature = 0;
+  }
+
   const options = {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({
-      model: model,
-      messages: [
-        {
-          role: 'user',
-          content: 'Say "test successful" in Chinese.'
-        }
-      ],
-      max_completion_tokens: 10,  // GPT-5系列使用max_completion_tokens
-      temperature: 0
-    })
+    body: JSON.stringify(requestBody)
   };
 
   try {
