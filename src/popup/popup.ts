@@ -1032,7 +1032,6 @@ let apiInfoLink: HTMLAnchorElement | null = null;
 let customApiPanel: HTMLDivElement | null = null;
 let testApiKeyButton: HTMLButtonElement | null = null;
 let modelSelect: HTMLSelectElement | null = null;
-let temperatureInput: HTMLInputElement | null = null;
 
 // === 新增: API面板相关元素引用 ===
 let serviceTypePanel: HTMLDivElement | null = null;
@@ -1076,7 +1075,6 @@ function initializeDOMElements(): void {
   customApiPanel = document.getElementById('custom-api-panel') as HTMLDivElement;
   testApiKeyButton = document.getElementById('test-api-key') as HTMLButtonElement;
   modelSelect = document.getElementById('openai-model') as HTMLSelectElement;
-  temperatureInput = document.getElementById('openai-temperature') as HTMLInputElement;
 
   // === 新增: API面板元素引用 ===
   serviceTypePanel = document.getElementById('service-type-panel') as HTMLDivElement;
@@ -1548,12 +1546,6 @@ async function updateUserPreferencesUI(userPreferences: UserPreferences): Promis
         modelSelect.value = service.model;
         console.log('[popup] 模型选择已设置:', service.model);
       }
-      
-      // 设置温度参数
-      if (temperatureInput && service.temperature !== null && service.temperature !== undefined) {
-        temperatureInput.value = service.temperature.toString();
-        console.log('[popup] 温度参数已设置:', service.temperature);
-      }
     }
     
     // 填充目标语言列表
@@ -1969,25 +1961,12 @@ function setupUnifiedSettingsListener(): void {
       case 'translation-api':
       case 'api-key':
       case 'openai-model':
-      case 'openai-temperature':
         await handleTranslationServiceChange();
         break;
 
       default:
         // 不是我们关心的元素，忽略
         return;
-    }
-  });
-
-  // Temperature滑块实时更新显示值
-  document.addEventListener('input', (event) => {
-    const target = event.target as HTMLElement;
-    if (target.id === 'openai-temperature') {
-      const slider = target as HTMLInputElement;
-      const valueDisplay = document.getElementById('openai-temperature-value');
-      if (valueDisplay) {
-        valueDisplay.textContent = slider.value;
-      }
     }
   });
 }
@@ -2089,11 +2068,9 @@ async function handleTranslationServiceChange(): Promise<void> {
       ...userPreferences.translationService,
       type: (translationApiSelect?.value as TranslationServiceType) || userPreferences.translationService.type,
       apiKey: apiKeyInput?.value || userPreferences.translationService.apiKey || '',
-      // 🔧 确保model和temperature始终是null而不是undefined（避免JSON序列化时字段丢失）
       model: modelSelect?.value || userPreferences.translationService.model || null,
-      temperature: temperatureInput?.value
-        ? parseFloat(temperatureInput.value)
-        : (userPreferences.translationService.temperature ?? null)
+      // GPT-5系列仅支持默认temperature=1，不需要UI设置
+      temperature: userPreferences.translationService.temperature ?? 1
     };
     
     // 一次性更新整个翻译服务配置
