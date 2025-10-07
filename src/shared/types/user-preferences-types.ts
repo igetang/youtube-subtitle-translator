@@ -92,10 +92,10 @@ export const TRANSLATION_SERVICE_TEMPLATES: Record<TranslationServiceType, Omit<
   [TranslationServiceType.OPENAI]: {
     type: TranslationServiceType.OPENAI,
     name: 'OpenAI GPT',
-    model: 'gpt-4o',
-    availableModels: ['gpt-4', 'gpt-4o', 'gpt-3.5-turbo'],
-    temperature: 0.7,
-    maxTokens: 4000,
+    model: 'gpt-5-mini',
+    availableModels: ['gpt-5', 'gpt-5-mini', 'gpt-5-nano', 'gpt-4o', 'gpt-4o-mini'],
+    temperature: 0.3,
+    maxTokens: 128000,
     rpm: 60,
     tpm: 40000
   },

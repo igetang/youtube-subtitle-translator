@@ -3461,14 +3461,14 @@ async function translateWithOpenAI(
 
 async function handleApiConnectionTest(data: any): Promise<any> {
   console.log('[service-worker] <- testApiConnection:', data);
-  
-  const { apiType, apiKey } = data;
-  
+
+  const { apiType, apiKey, model } = data;
+
   try {
     // 免费API测试逻辑
     if (apiType === 'google-free' || apiType === 'microsoft-free') {
       return await testFreeTranslationService(apiType);
-    } 
+    }
     // 付费API测试逻辑
     else {
       if (!apiKey || apiKey.trim() === '') {
@@ -3477,7 +3477,7 @@ async function handleApiConnectionTest(data: any): Promise<any> {
           message: '请输入API密钥'
         };
       }
-      return await testPaidApiService(apiType, apiKey);
+      return await testPaidApiService(apiType, apiKey, model);
     }
   } catch (error) {
     console.error(`[service-worker] ✗ testApiConnection: ${error instanceof Error ? error.message : String(error)}`);
@@ -3703,12 +3703,12 @@ async function testFreeTranslationService(apiType: string): Promise<{success: bo
 /**
  * 测试付费API服务
  */
-async function testPaidApiService(apiType: string, apiKey: string): Promise<{success: boolean, message: string}> {
-  console.log(`[service-worker] 测试付费API服务: ${apiType}`);
+async function testPaidApiService(apiType: string, apiKey: string, model?: string): Promise<{success: boolean, message: string}> {
+  console.log(`[service-worker] 测试付费API服务: ${apiType}, 模型: ${model || '默认'}`);
 
   try {
     if (apiType === 'openai') {
-      return await testOpenAIService(apiKey, 'gpt-3.5-turbo');
+      return await testOpenAIService(apiKey, model || 'gpt-5-mini');
     } else if (apiType === 'deepseek') {
       return await testDeepSeekService(apiKey);
     } else if (apiType === 'deepl') {

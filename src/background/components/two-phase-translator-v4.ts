@@ -275,7 +275,7 @@ export class TwoPhaseTranslatorV4 {
       if (serviceType === 'deepseek') {
         perBatchTimeout = 30000; // DeepSeek需要30秒
       } else if (serviceType === 'openai') {
-        perBatchTimeout = 10000; // OpenAI需要10秒
+        perBatchTimeout = 5000; // OpenAI单批5秒（V4优化）
       } else if (serviceType === 'google-free' || serviceType === 'google' ||
                  serviceType === 'microsoft-free' || serviceType === 'microsoft') {
         perBatchTimeout = 5000; // 免费服务5秒
@@ -843,31 +843,27 @@ export class TwoPhaseTranslatorV4 {
 
         // 根据翻译服务类型调用不同的API
         if (service.type === 'openai') {
-          // 使用OpenAI翻译
+          // 使用OpenAI翻译（V4架构）
+          if (!service.apiKey) {
+            throw new Error('OpenAI API密钥未配置');
+          }
+
           const translator = new OpenAITranslator(
             service.apiKey,
-            {
-              model: service.model || 'gpt-3.5-turbo',
-              customModel: service.customModel,
-              temperature: service.temperature || 0.3
-            }
+            service.model || 'gpt-5-mini',
+            service.temperature || 0.3
           );
-          
-          // 将文本数组转换为OpenAI期待的格式
-          const subtitles = texts.map((text, idx) => ({
-            id: `sub_${idx}`,
-            text: text
-          }));
-          
-          // 调用翻译
-          const results = await translator.translateSubtitles(
-            subtitles,
+
+          const stage = options?.stage ?? 'batch';
+
+          // 调用翻译（传递stage和signal）
+          translatedTexts = await translator.translate(
+            texts,
             sourceLang,
-            targetLang
+            targetLang,
+            stage,
+            signal
           );
-          
-          // 转换回文本数组
-          translatedTexts = subtitles.map(sub => results[sub.id] || sub.text);
 
         } else if (service.type === 'deepseek') {
           // 使用 DeepSeek 翻译
