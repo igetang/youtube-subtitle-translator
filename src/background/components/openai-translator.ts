@@ -175,8 +175,8 @@ Do not add explanations.`
           model: this.model,
           messages: messages,
           temperature: this.temperature,
-          max_tokens: 128000,           // 官方最大输出限制
-          stream: false                 // 非流式
+          max_completion_tokens: 128000,  // GPT-5系列使用max_completion_tokens
+          stream: false                   // 非流式
         }),
         signal                          // AbortSignal支持
       });
