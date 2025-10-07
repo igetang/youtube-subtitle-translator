@@ -176,12 +176,14 @@ const combinedSignal = AbortSignal.any([
 
 ### 4.1 超时时间设置
 
+> 📅 **更新**: 2025-10-07 - 批量翻译策略调整
+
 | 阶段 | 超时时间 | 降级策略 | 说明 |
 |-----|---------|---------|-----|
-| 字幕获取 | 5秒 | 返回null | 必须阶段，失败终止流程 |
-| 紧急翻译 | 5秒 | 返回空数组 | 可选阶段，失败继续批量 |
-| 批量翻译 | 5秒 | 返回原文 | 降级阶段，失败显示原文 |
-| API调用 | 3秒 | 使用缓存 | 网络请求，优先缓存 |
+| 字幕获取 | 5秒 | 无fallback | 必须阶段，失败终止流程 |
+| 紧急翻译 | 30秒 | 返回空数组 | 可选阶段，失败显示警告并继续批量 |
+| 批量翻译 | 动态计算 | 无fallback | 关键阶段，任何批次失败立即终止 |
+| API调用 | 3-15秒 | 视服务而定 | 网络请求，根据服务类型调整 |
 
 ### 4.2 降级策略详解
 
@@ -193,14 +195,35 @@ interface StageOptions {
   critical?: boolean;      // 是否关键阶段
 }
 
-// 使用示例
+// 使用示例（最新实现）
+
+// 1. 紧急翻译 - 有fallback，失败继续
+const urgentResults = await session.executeStage(
+  'urgent_translate',
+  async (signal) => translator.translateUrgent(...),
+  {
+    timeoutMs: 30000,
+    fallback: []  // 失败返回空数组，显示警告但继续
+  }
+);
+
+// 2. 批量翻译 - 无fallback，失败立即抛错
+const batchResults = await session.executeStage(
+  'batch_translate',
+  async (signal) => translator.translateBatch(...),
+  {
+    timeoutMs: batchTotalTimeout
+    // 不设置fallback，让错误向上抛出，立即终止
+  }
+);
+
+// 3. 字幕获取 - 关键阶段，失败终止
 const subtitles = await session.executeStage(
   'subtitle_fetch',
   fetchOperation,
   {
     timeoutMs: 5000,
-    fallback: null,      // 失败返回null
-    critical: true       // 关键阶段，失败终止
+    critical: true  // 关键阶段，失败终止整个流程
   }
 );
 ```
@@ -452,7 +475,10 @@ A: Promise.race无法真正取消操作，失败的Promise仍在运行，造成�
 A: Chrome 103+支持，我们的最低要求是Chrome 90，需要polyfill。
 
 ### Q3: 如何处理部分超时？
-A: 每个阶段独立超时，支持降级策略，紧急翻译超时不影响批量翻译。
+A: 采用分级处理策略：
+- **紧急翻译超时**: 返回空数组（fallback），显示警告，继续批量翻译
+- **批量翻译超时**: 无fallback，立即抛错，终止流程，按钮恢复可重试
+- **任何批次失败**: 整体失败，不会出现半中半英的混乱状态
 
 ### Q4: 性能影响大吗？
 A: 几乎无影响，AbortController是原生实现，比setTimeout更高效。

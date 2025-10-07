@@ -543,26 +543,26 @@ class ErrorHandler {
     return translatedArray;
   }
   
-  // 3. 批次失败隔离
-  async translateWithIsolation(batches) {
+  // 3. 批次失败处理（最新策略：任何失败立即中断）
+  async translateWithFailFast(batches) {
     const results = new Map();
-    const failedBatches = [];
-    
-    for (const batch of batches) {
+
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i];
       try {
         const translated = await this.translateBatch(batch);
         results.set(batch.id, translated);
       } catch (error) {
-        failedBatches.push(batch);
-        console.error(`批次${batch.id}失败，稍后重试`);
+        // 任何批次失败，立即抛出详细错误
+        const errorMsg = error.name === 'TimeoutError'
+          ? `翻译超时：第${i + 1}/${batches.length}批次`
+          : `翻译失败：第${i + 1}/${batches.length}批次 - ${error.message}`;
+
+        console.error(`[TwoPhaseTranslatorV4] ✗ ${errorMsg}`);
+        throw new Error(`${errorMsg}，请重试`);
       }
     }
-    
-    // 重试失败批次
-    if (failedBatches.length > 0) {
-      await this.retryFailedBatches(failedBatches, results);
-    }
-    
+
     return results;
   }
 }
@@ -1321,6 +1321,18 @@ class SimplifiedTwoPhaseTranslator {
 
 ### 10.5 错误处理策略
 
+> 📅 **更新日期**: 2025-10-07
+> 🎯 **最新策略**: 紧急翻译失败继续，批量翻译失败立即中断
+
+#### 10.5.1 核心原则
+
+1. **紧急翻译失败** - 警告但继续
+2. **批量翻译失败** - 立即中断并报错
+3. **明确反馈** - 所有失败都告知用户
+4. **快速恢复** - 按钮立即恢复，可重试
+
+#### 10.5.2 实现策略
+
 ```typescript
 class ErrorHandlingStrategy {
   // 1. 字幕获取失败 - 完全失败
@@ -1328,24 +1340,60 @@ class ErrorHandlingStrategy {
     this.showUserMessage('无法获取字幕，请检查网络连接');
     this.setTranslateState('INACTIVE');
   }
-  
-  // 2. 紧急翻译失败 - 静默降级
+
+  // 2. 紧急翻译失败 - 显示警告，继续批量
   handleUrgentTranslationError() {
-    console.log('[紧急翻译] 失败，等待批量翻译');
-    // 不提示用户，因为批量翻译可能成功
+    console.log('[紧急翻译] 失败，继续批量翻译');
+    // 发送警告消息给用户
+    this.showWarningMessage('快速翻译失败，正在执行完整翻译...', 5000);
+    // 继续执行批量翻译，不中断流程
   }
-  
-  // 3. 批量翻译失败 - 部分降级
-  handleBatchTranslationError(batchIndex: number) {
-    console.log(`[批量翻译] 批次${batchIndex}失败，显示原文`);
-    // 该批显示原文，其他批次继续
+
+  // 3. 批量翻译失败 - 立即中断，明确报错
+  handleBatchTranslationError(batchIndex: number, batchCount: number, error: Error) {
+    // 构建详细错误信息
+    const errorMsg = error.name === 'TimeoutError'
+      ? `翻译超时：第${batchIndex}/${batchCount}批次（超时）`
+      : `翻译失败：第${batchIndex}/${batchCount}批次 - ${error.message}`;
+
+    // 立即抛出错误，中断整个翻译流程
+    throw new Error(`${errorMsg}，请重试`);
   }
-  
-  // 4. 全部失败 - 友好提示
-  handleCompleteFailure() {
-    this.showUserMessage('翻译服务暂时不可用，显示原始字幕');
-    // 显示原文，保证基本可用性
+
+  // 4. 最终错误处理 - 恢复状态，提示重试
+  handleFinalError(error: Error) {
+    // 设置状态为INACTIVE
+    this.setTranslateState('INACTIVE');
+    // 显示错误消息（5秒）
+    this.showErrorMessage(error.message || '翻译失败，请重试', 5000);
+    // 按钮恢复到未激活状态，用户可立即重试
   }
+}
+```
+
+#### 10.5.3 关键变更说明
+
+**之前的实现问题**：
+- 批量翻译有 `fallback: []`，失败返回空数组但不报错
+- 导致批量失败后继续执行，使用紧急翻译结果
+- 用户看到部分成功的错误状态
+
+**最新实现方案**：
+- 紧急翻译保留 `fallback: []`，失败不中断
+- 批量翻译去掉 `fallback`，失败立即抛错
+- 任何批次失败都是整体失败，不会出现半成功状态
+
+```typescript
+// 紧急翻译配置（保留fallback）
+{
+  timeoutMs: 30000,
+  fallback: []  // 失败返回空，继续批量
+}
+
+// 批量翻译配置（无fallback）
+{
+  timeoutMs: batchTotalTimeout
+  // 不设置fallback，让错误向上抛出
 }
 ```
 

@@ -507,7 +507,15 @@ function setupMessageHandlers(): void {
       sendResponse({ success: true });
       return false;
     }
-    
+
+    // 处理SHOW_WARNING_MESSAGE消息
+    if (messageType === 'SHOW_WARNING_MESSAGE') {
+      console.log('[content-script] 收到警告消息:', message.data);
+      showErrorMessage(message.data);  // 复用错误显示逻辑，level字段会控制样式
+      sendResponse({ success: true });
+      return false;
+    }
+
     // 处理CLEAR_ERROR_MESSAGE消息
     if (messageType === 'CLEAR_ERROR_MESSAGE') {
       console.log('[content-script] 清除错误消息');

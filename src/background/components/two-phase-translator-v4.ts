@@ -266,9 +266,6 @@ export class TwoPhaseTranslatorV4 {
         batches = batchesWithMeta.map(batch => batch.subtitles);
         console.log(`[TwoPhaseTranslatorV4] → 谷歌翻译：分成 ${batches.length} 个批次`);
       }
-      
-      // 批次失败计数
-      let failedBatches = 0;
 
       // 根据翻译服务类型确定单批超时时间
       let perBatchTimeout = 5000; // 默认5秒
@@ -375,44 +372,24 @@ export class TwoPhaseTranslatorV4 {
           }
           
         } catch (batchError: any) {
-          // 区分错误类型
+          // 用户取消，保持原逻辑
           if (batchError.name === 'AbortError' && signal.aborted) {
-            // 用户主动取消，终止整个批量翻译
             console.log(`[TwoPhaseTranslatorV4] 用户取消批量翻译（批次 ${i + 1}）`);
             throw batchError;
           }
 
-          // 批次超时或其他错误，记录但继续下一批
-          if (batchError.name === 'TimeoutError' || batchError.message === '批次翻译超时') {
-            console.warn(`[TwoPhaseTranslatorV4] 批次 ${i + 1}/${batches.length} 超时（5秒），使用原文`);
-          } else {
-            console.error(`[TwoPhaseTranslatorV4] 批次 ${i + 1}/${batches.length} 失败:`, batchError.message);
-          }
+          // 任何批次失败，构建详细错误信息并立即抛出
+          const errorMsg = batchError.name === 'TimeoutError' || batchError.message === '批次翻译超时'
+            ? `翻译超时：第${i + 1}/${batches.length}批次（${perBatchTimeout/1000}秒超时）`
+            : `翻译失败：第${i + 1}/${batches.length}批次 - ${batchError.message}`;
 
-          // 批次失败计数
-          failedBatches++;
-
-          // 失败批次使用原文
-          batch.forEach(sub => {
-            const originalIndex = subtitles.indexOf(sub);
-            if (originalIndex !== -1) {
-              results.push({
-                index: originalIndex,
-                originalText: sub.text,
-                translatedText: sub.text,  // 使用原文
-                isUrgent: false
-              });
-            }
-          });
+          console.error(`[TwoPhaseTranslatorV4] ✗ ${errorMsg}`);
+          throw new Error(errorMsg);
         }
       }
-      
+
       // 汇总报告
-      if (failedBatches > 0) {
-        console.log(`[TwoPhaseTranslatorV4] ✓ 批量翻译完成: ${results.length} 条 (有 ${failedBatches}/${batches.length} 个批次失败)`);
-      } else {
-        console.log(`[TwoPhaseTranslatorV4] ✓ 批量翻译完成: ${results.length} 条`);
-      }
+      console.log(`[TwoPhaseTranslatorV4] ✓ 批量翻译完成: ${results.length} 条`);
       
     } catch (error: any) {
       if (error.name === 'AbortError') {

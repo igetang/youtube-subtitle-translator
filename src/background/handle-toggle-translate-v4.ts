@@ -514,8 +514,25 @@ export async function handleToggleTranslateV4(
 
     // 紧急翻译完成日志已在 TwoPhaseTranslatorV4 中打印
 
-    // 立即发送紧急翻译结果到content-script显示
-    if (urgentResults.length > 0) {
+    // 检查紧急翻译是否失败
+    if (urgentResults.length === 0) {
+      console.log('[service-worker-v4] ⚠️ 紧急翻译失败，继续批量翻译');
+
+      // 发送警告消息给用户
+      try {
+        await chrome.tabs.sendMessage(tabId, {
+          type: 'SHOW_WARNING_MESSAGE',
+          data: {
+            message: '快速翻译失败，正在执行完整翻译...',
+            level: 'warning',
+            duration: 5000  // 5秒
+          }
+        });
+      } catch (err) {
+        console.error('[service-worker-v4] 发送警告消息失败:', err);
+      }
+    } else {
+      // 立即发送紧急翻译结果到content-script显示
       console.log('[service-worker-v4] → 发送紧急翻译结果到前端显示');
 
       // 构建紧急翻译的字幕数据 - 统一为SubtitleEntry格式
@@ -616,8 +633,8 @@ export async function handleToggleTranslateV4(
         );
       },
       {
-        timeoutMs: batchTotalTimeout,
-        fallback: []  // 失败返回空
+        timeoutMs: batchTotalTimeout
+        // 不设置fallback，让错误向上抛出
       }
     );
 
@@ -658,23 +675,19 @@ export async function handleToggleTranslateV4(
     );
 
     // 批量翻译完成后，发送完整的翻译结果（完全覆盖紧急翻译）
-    if (batchResults.length > 0) {
-      console.log('[service-worker-v4] → 发送批量翻译完整结果（完全覆盖）');
+    console.log('[service-worker-v4] → 发送批量翻译完整结果（完全覆盖）');
 
-      try {
-        await chrome.tabs.sendMessage(tabId, {
-          type: 'TRANSLATION_UPDATE',
-          data: {
-            updateType: 'progressive',
-            translatedSubtitles: finalSubtitles  // 完整的字幕列表
-          }
-        });
-        console.log(`[service-worker-v4] ✓ 已发送批量翻译 ${finalSubtitles.length} 条（完全覆盖紧急翻译）`);
-      } catch (err) {
-        console.error('[service-worker-v4] 发送批量翻译失败:', err);
-      }
-    } else {
-      console.log('[service-worker-v4] ⚠️ 批量翻译结果为空，使用紧急翻译结果');
+    try {
+      await chrome.tabs.sendMessage(tabId, {
+        type: 'TRANSLATION_UPDATE',
+        data: {
+          updateType: 'progressive',
+          translatedSubtitles: finalSubtitles  // 完整的字幕列表
+        }
+      });
+      console.log(`[service-worker-v4] ✓ 已发送批量翻译 ${finalSubtitles.length} 条（完全覆盖紧急翻译）`);
+    } catch (err) {
+      console.error('[service-worker-v4] 发送批量翻译失败:', err);
     }
 
     // 异步保存缓存（使用VTT格式）
@@ -721,7 +734,7 @@ export async function handleToggleTranslateV4(
       errorLevel = ErrorLevel.INFO;
       console.log('[service-worker-v4] 用户取消翻译');
     } else {
-      userMessage = error.message || '翻译失败';
+      userMessage = `${error.message || '翻译失败'}，请重试`;
     }
     
     // 取消会话
