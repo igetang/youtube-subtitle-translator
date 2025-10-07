@@ -169,14 +169,12 @@
     <div id="openai-basic-panel" class="setting-item" style="display: none;">
         <label for="openai-model">模型:</label>
         <select id="openai-model" name="openai-model">
-            <option value="gpt-4.1">gpt-4.1</option>
-            <option value="gpt-4.1-mini">gpt-4.1-mini</option>
-            <option value="gpt-4.1-nano">gpt-4.1-nano</option>
+            <option value="gpt-5">gpt-5 (旗舰)</option>
+            <option value="gpt-5-mini">gpt-5-mini (推荐)</option>
+            <option value="gpt-5-nano">gpt-5-nano (极速)</option>
             <option value="gpt-4o">gpt-4o</option>
             <option value="gpt-4o-mini">gpt-4o-mini</option>
-            <option value="custom">自定义...</option>
         </select>
-        <input type="text" id="openai-custom-model" name="openai-custom-model" placeholder="输入自定义模型ID..." style="display: none;">
         
         <!-- 添加OpenAI API限流信息面板 -->
         <div id="openai-ratelimit-panel" class="setting-item ratelimit-panel" style="display: block;">
