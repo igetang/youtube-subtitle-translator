@@ -18,7 +18,7 @@ import { StorageManager } from '../shared/storage/storage-manager';
 import { TranslationCacheManager } from '../shared/storage/translation-cache-manager';
 import { VideoSourceLanguageCacheManager } from '../shared/storage/video-source-language-cache-manager';
 import { extractOriginalSubtitles } from '../shared/utils/vtt-utils';
-import { SimplifiedCaptionTrack } from '../shared/types/subtitle-types';
+import { SimplifiedCaptionTrack, TrackMetadata } from '../shared/types/subtitle-types';
 
 // === 批量翻译组件导入（基于07架构文档） ===
 import { TimeGapAnalyzer } from './components/time-gap-analyzer';
@@ -986,7 +986,7 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
           // 保存到Local Storage
           if (availableSourceLanguages.length > 0) {
             const matchedTrack = lastSelectedTrack
-              ? availableSourceLanguages.find(t =>
+              ? availableSourceLanguages.find((t: TrackMetadata) =>
                   t.languageCode === lastSelectedTrack!.languageCode &&
                   (lastSelectedTrack!.kind ? t.kind === lastSelectedTrack!.kind : !t.kind))
               : undefined;
@@ -2144,10 +2144,10 @@ interface SubtitleData {
  * 4. 降级到第一个可用轨道
  */
 function selectBestSourceLanguage(
-  tracks: Array<{ languageCode: string; name: string; kind?: string }>,
+  tracks: Array<{ languageCode: string; name: string; kind?: 'asr' | 'forced' }>,
   targetLang: string,
-  lastSelectedTrack?: { languageCode: string; kind?: string }
-): { languageCode: string; kind?: string } {
+  lastSelectedTrack?: { languageCode: string; kind?: 'asr' | 'forced' }
+): { languageCode: string; kind?: 'asr' | 'forced' } {
   if (!tracks || tracks.length === 0) {
     return { languageCode: 'en' }; // 默认返回英语
   }
@@ -2306,7 +2306,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     const sourceData = await videoSourceManager.get(videoId);
     
     let sourceLang: string = 'auto'; // 默认值
-    let sourceKind: string | undefined;
+    let sourceKind: 'asr' | 'forced' | undefined;
 
     if (sourceData && sourceData.availableSourceLanguages && sourceData.availableSourceLanguages.length > 0) {
       // 调试：检查selectedSourceTrack的类型
@@ -2544,7 +2544,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
                     // 不保存 baseUrl（6小时过期）
                   }));
                   
-                  const selectedTrackForCache = trackMetadata.find(track =>
+                  const selectedTrackForCache = trackMetadata.find((track: TrackMetadata) =>
                     track.languageCode === sourceLang &&
                     (sourceKind ? track.kind === sourceKind : !track.kind)
                   );

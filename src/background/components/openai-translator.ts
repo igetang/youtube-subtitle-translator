@@ -111,9 +111,28 @@ export class OpenAITranslator {
           role: "system",
           content: `You are a professional subtitle translator.
 Translate from ${sourceLang} to ${targetLang}.
-Input contains multiple subtitles separated by newlines.
-Each line is one subtitle. Keep the same number of lines.
-Do not add explanations.`
+
+CRITICAL RULES:
+- Input has ${texts.length} lines (subtitles)
+- Output MUST have EXACTLY ${texts.length} lines
+- Each input line = one output line
+- PRESERVE the exact position of ALL line breaks (newlines)
+- Do NOT merge lines even if they form a complete sentence
+- Do NOT add or remove lines
+- Do NOT change the newline structure
+- Translate text ONLY, keep newlines UNCHANGED
+
+Example:
+Input (2 lines):
+I think
+this is good
+
+Output (2 lines):
+我认为
+这很好
+
+WRONG (merged):
+我认为这很好`
         },
         {
           role: "user",
@@ -121,8 +140,9 @@ Do not add explanations.`
         }
       ];
 
-      // 4. 调用API
-      const translatedCombined = await this.callOpenAIAPI(messages, signal);
+      // 4. 调用API（动态计算max_completion_tokens）
+      const estimatedOutputTokens = this.estimateOutputTokens(combined);
+      const translatedCombined = await this.callOpenAIAPI(messages, signal, estimatedOutputTokens);
 
       // 5. 拆分结果
       const translations = translatedCombined.split(/\r?\n/).map(t => t.trim()).filter(t => t.length > 0);
@@ -153,14 +173,35 @@ Do not add explanations.`
   }
 
   /**
+   * 估算输出token数（基于输入长度）
+   * 根据OpenAI最佳实践：设置合理的max_completion_tokens可以显著降低延迟
+   * @param inputText 输入文本
+   * @returns 估算的输出token数
+   */
+  private estimateOutputTokens(inputText: string): number {
+    // 估算逻辑（基于实际数据优化）：
+    // 实测：1182字符 → 1458 tokens，比例约 1.23
+    // 公式：字符数 × 2（包含翻译扩展 + 安全余量）
+    const estimated = Math.ceil(inputText.length * 2);
+
+    // 限制范围：最小500，最大4000（字幕翻译通常不超过4000）
+    const bounded = Math.max(500, Math.min(estimated, 4000));
+
+    console.log(`[OpenAITranslator] 📊 估算输出tokens: ${bounded} (输入${inputText.length}字符 × 2)`);
+    return bounded;
+  }
+
+  /**
    * 调用OpenAI API (非流式)
    * @param messages 消息数组
    * @param signal AbortSignal
+   * @param maxCompletionTokens 最大完成token数
    * @returns 翻译后的组合文本
    */
   private async callOpenAIAPI(
     messages: any[],
-    signal: AbortSignal
+    signal: AbortSignal,
+    maxCompletionTokens: number
   ): Promise<string> {
     const url = 'https://api.openai.com/v1/chat/completions';
 
@@ -170,12 +211,17 @@ Do not add explanations.`
       const requestBody: any = {
         model: this.model,
         messages: messages,
-        max_completion_tokens: 128000,  // GPT-5系列使用max_completion_tokens
-        stream: false                   // 非流式
+        max_completion_tokens: maxCompletionTokens,  // 动态设置，避免过大值导致延迟
+        stream: false                                 // 非流式
       };
 
-      // 只有非GPT-5模型才添加temperature参数
-      if (!isGPT5) {
+      // GPT-5模型优化参数（加速响应）
+      if (isGPT5) {
+        requestBody.reasoning_effort = 'minimal';  // 最小推理，更快响应
+        requestBody.verbosity = 'low';              // 简洁输出
+        console.log('[OpenAITranslator] GPT-5优化: reasoning_effort=minimal, verbosity=low');
+      } else {
+        // 非GPT-5模型使用temperature参数
         requestBody.temperature = this.temperature;
       }
 
@@ -199,6 +245,22 @@ Do not add explanations.`
 
       if (!content) {
         throw new Error('OpenAI API返回内容为空');
+      }
+
+      // 📊 打印实际token使用情况并对比估算值
+      if (data.usage) {
+        const actualInput = data.usage.prompt_tokens;
+        const actualOutput = data.usage.completion_tokens;
+        const actualTotal = data.usage.total_tokens;
+        const estimatedOutput = maxCompletionTokens;
+        const diff = estimatedOutput - actualOutput;
+        const diffPercent = ((diff / actualOutput) * 100).toFixed(1);
+
+        console.log(`[OpenAITranslator] 📊 Token实际用量:` +
+          ` 输入${actualInput}, 输出${actualOutput}, 总计${actualTotal}`);
+        console.log(`[OpenAITranslator] 📊 估算对比:` +
+          ` 估算${estimatedOutput} vs 实际${actualOutput}` +
+          ` (差距${diff}, ${diffPercent}%)`);
       }
 
       return content;
