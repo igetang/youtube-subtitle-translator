@@ -10,7 +10,11 @@
 5. **[05-performance-optimization.md](05-performance-optimization.md)** - 性能优化策略
 6. **[06-simplified-popup-architecture.md](06-simplified-popup-architecture.md)** - 简化的Popup直接调用架构
 7. **[07-batch-translation-architecture.md](07-batch-translation-architecture.md)** - 批量翻译架构（时间间隔断句）
-8. **[08-abort-timeout-architecture.md](08-abort-timeout-architecture.md)** - 🆕 基于AbortController的超时架构（v4.0）
+8. **[08-abort-timeout-architecture.md](08-abort-timeout-architecture.md)** - 基于AbortController的超时架构（v4.0）
+9. **[09-subtitle-data-format-architecture.md](09-subtitle-data-format-architecture.md)** - 字幕数据格式架构
+10. **[10-asr-subtitle-selection-solution.md](10-asr-subtitle-selection-solution.md)** - ASR字幕轨道选择解决方案
+11. **[11-responsive-subtitle-implementation.md](11-responsive-subtitle-implementation.md)** - 响应式字幕实现
+12. **[12-native-subtitle-injection-architecture.md](12-native-subtitle-injection-architecture.md)** - 🆕 YouTube原生字幕注入架构（Hook XHR方案）
 
 ### 专题文档
 - **[popup.md](popup.md)** - Popup界面设计（替代SidePanel）
