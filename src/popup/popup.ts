@@ -11,7 +11,7 @@ import { isLanguageRelevantToUI } from '../shared/utils/language-processing';
 import { 
   UserPreferencesManager
 } from '../shared/storage';
-import { SubtitleMode, TranslationServiceType, UserPreferences, VideoSourceLanguageCache } from '../shared/types/user-preferences-types';
+import { SubtitleMode, TranslationServiceType, TranslationServiceComplete, TRANSLATION_SERVICE_TEMPLATES, UserPreferences, VideoSourceLanguageCache } from '../shared/types/user-preferences-types';
 import { SimplifiedCaptionTrack, TrackMetadata } from '../shared/types/subtitle-types';
 
 const userPreferencesManager = UserPreferencesManager.getInstance();
@@ -2048,43 +2048,73 @@ async function handleSubtitleModeChange(switchElement: HTMLInputElement): Promis
 }
 
 /**
- * 处理翻译服务变更（整体更新）
+ * 处理翻译服务变更（智能判断变更类型）
  */
 async function handleTranslationServiceChange(): Promise<void> {
   try {
     console.log('[popup] 统一监听器 - 翻译服务变更');
-    
-    // 从UI读取完整的翻译服务配置
+
+    // 从UI读取当前值
     const translationApiSelect = document.getElementById('translation-api') as HTMLSelectElement;
     const apiKeyInput = document.getElementById('api-key') as HTMLInputElement;
     const modelSelect = document.getElementById('openai-model') as HTMLSelectElement;
-    const temperatureInput = document.getElementById('openai-temperature') as HTMLInputElement;
-    
+
+    const newType = (translationApiSelect?.value as TranslationServiceType);
+    const newApiKey = apiKeyInput?.value;
+    const newModel = modelSelect?.value;
+
     // 获取当前用户设置
     const userPreferences = await userPreferencesManager.getUserPreferences();
-    
-    // 构建新的翻译服务配置（基于现有配置更新）
-    const updatedService = {
-      ...userPreferences.translationService,
-      type: (translationApiSelect?.value as TranslationServiceType) || userPreferences.translationService.type,
-      apiKey: apiKeyInput?.value || userPreferences.translationService.apiKey || '',
-      model: modelSelect?.value || userPreferences.translationService.model || null,
-      // GPT-5系列仅支持默认temperature=1，不需要UI设置
-      temperature: userPreferences.translationService.temperature ?? 1
-    };
-    
+    const oldConfig = userPreferences.translationService;
+
+    // 🎯 智能判断：服务类型或模型是否变更？
+    const serviceTypeChanged = newType !== oldConfig.type;
+    const modelChanged = newModel && newModel !== oldConfig.model;
+
+    let updatedService: TranslationServiceComplete;
+
+    if (serviceTypeChanged) {
+      // 场景1：切换服务 → 完全使用新模板（不读取旧UI的model值）
+      console.log('[popup] 检测到服务类型变更，从模板重建配置');
+      updatedService = {
+        ...TRANSLATION_SERVICE_TEMPLATES[newType],  // ✅ 完整使用新模板
+        apiKey: newApiKey || undefined  // 只取当前输入的apiKey
+      };
+    } else if (modelChanged) {
+      // 场景2：只改模型 → 使用新模型的模板，保留apiKey
+      console.log('[popup] 检测到模型变更，更新配置');
+      updatedService = {
+        ...TRANSLATION_SERVICE_TEMPLATES[newType],
+        apiKey: oldConfig.apiKey,  // 保留原apiKey
+        model: newModel  // 使用新模型
+      };
+    } else {
+      // 场景3：只修改apiKey → 保留原配置
+      console.log('[popup] 只修改apiKey，保留原配置');
+      updatedService = {
+        ...oldConfig,
+        apiKey: newApiKey || oldConfig.apiKey || undefined
+      };
+    }
+
     // 一次性更新整个翻译服务配置
     await userPreferencesManager.updateUserPreferences({ translationService: updatedService });
-    
+
     // 更新UI面板显示
     if (translationApiSelect?.value) {
       updateApiPanels(translationApiSelect.value);
     }
-    
-    console.log('[popup] 统一监听器 - 翻译服务配置已更新:', updatedService);
-    
+
+    // 更新model下拉框的值（如果有默认值）
+    if (modelSelect && updatedService.model) {
+      modelSelect.value = updatedService.model;
+      console.log('[popup] 模型选择已更新为:', updatedService.model);
+    }
+
+    console.log('[popup] 翻译服务配置已更新:', updatedService);
+
   } catch (error) {
-    console.error('[popup] 统一监听器 - 翻译服务变更失败:', error);
+    console.error('[popup] 翻译服务变更失败:', error);
   }
 }
 

@@ -7,6 +7,7 @@
 
 import type { ToggleTranslateRequest, ToggleTranslateResponse } from '../shared/types/message-types';
 import { TranslateActiveState } from '../shared/types/runtime-state-types';
+import { ERROR_MESSAGE_DURATION } from '../shared/constants';
 
 // 定义字幕数据接口
 interface SubtitleData {
@@ -496,21 +497,46 @@ export async function handleToggleTranslateV4(
     translator.setTranslationService(preferences.translationService);
     
     // 执行紧急翻译（30秒超时 - DeepSeek专用）
-    const urgentResults = await session.executeStage(
-      'urgent_translate',
-      async (signal) => {
-        return await translator.translateUrgent(
-          effectiveSubtitleData.subtitles,
-          effectiveSubtitleData.currentTime || 0,
-          preferences,
-          signal
-        );
-      },
-      {
-        timeoutMs: 30000,
-        fallback: []  // 失败返回空
+    let urgentResults: any[] = [];
+    let urgentError: any = null;
+
+    try {
+      urgentResults = await session.executeStage(
+        'urgent_translate',
+        async (signal) => {
+          return await translator.translateUrgent(
+            effectiveSubtitleData.subtitles,
+            effectiveSubtitleData.currentTime || 0,
+            preferences,
+            signal
+          );
+        },
+        {
+          timeoutMs: 30000
+          // 移除 fallback，让错误抛出以便判断是否为致命错误
+        }
+      );
+    } catch (error) {
+      urgentError = error;
+      console.warn('[service-worker-v4] ⚠️ 紧急翻译失败:', error);
+
+      // 判断是否为致命错误（API密钥问题）
+      const errorMsg = error.message || '';
+      const isFatalError =
+        errorMsg.includes('API密钥') ||
+        errorMsg.includes('密钥未配置') ||
+        errorMsg.includes('密钥无效') ||
+        (error as any).status === 401 ||
+        (error as any).status === 403;
+
+      if (isFatalError) {
+        console.error('[service-worker-v4] ❌ 致命错误（API密钥问题），终止翻译流程');
+        throw error; // 直接抛出，进入外层catch
       }
-    );
+
+      // 可重试错误（如超时），继续执行批量翻译
+      console.log('[service-worker-v4] 非致命错误（如超时），将继续尝试批量翻译');
+    }
 
     // 紧急翻译完成日志已在 TwoPhaseTranslatorV4 中打印
 
@@ -525,7 +551,7 @@ export async function handleToggleTranslateV4(
           data: {
             message: '快速翻译失败，正在执行完整翻译...',
             level: 'warning',
-            duration: 5000  // 5秒
+            duration: ERROR_MESSAGE_DURATION
           }
         });
       } catch (err) {
@@ -542,7 +568,7 @@ export async function handleToggleTranslateV4(
           return {
             start: sub.start,
             duration: sub.end - sub.start,
-            text: sub.text,
+            text: result.originalText,  // 使用处理后的单行文本
             translation: result.translatedText,
             id: String(sub.start),
             isUrgent: true  // 标记为紧急翻译
@@ -647,7 +673,7 @@ export async function handleToggleTranslateV4(
       return {
         start: sub.start,
         duration: sub.end - sub.start,
-        text: sub.text,
+        text: result?.originalText || sub.text,  // 优先使用处理后的单行文本
         translation: result?.translatedText || sub.text,
         id: String(sub.start),
         isUrgent: false  // 全部标记为非紧急（白色显示）
@@ -656,12 +682,15 @@ export async function handleToggleTranslateV4(
 
     // 为缓存准备VTT格式（原始字幕）
     const originalVtt = createVttString(
-      effectiveSubtitleData.subtitles.map((sub: any) => ({
-        start: sub.start,
-        duration: sub.end - sub.start,
-        text: sub.text,
-        id: String(sub.start)
-      }))
+      effectiveSubtitleData.subtitles.map((sub: any, idx: number) => {
+        const result = batchResults.find(r => r.index === idx);
+        return {
+          start: sub.start,
+          duration: sub.end - sub.start,
+          text: result?.originalText || sub.text,  // 使用处理后的单行文本
+          id: String(sub.start)
+        };
+      })
     );
 
     // 为缓存准备VTT格式（翻译字幕）- 基于finalSubtitles
@@ -719,11 +748,11 @@ export async function handleToggleTranslateV4(
     
   } catch (error: any) {
     console.error('[service-worker-v4] 翻译失败:', error);
-    
-    // 分析错误类型
+
+    // 分析错误类型，使用 getUserFriendlyMessage 统一处理
     let userMessage = '';
     let errorLevel = ErrorLevel.ERROR;
-    
+
     if (isTimeoutError(error)) {
       userMessage = getUserFriendlyMessage(error);
       errorLevel = getErrorLevel(error);
@@ -734,21 +763,27 @@ export async function handleToggleTranslateV4(
       errorLevel = ErrorLevel.INFO;
       console.log('[service-worker-v4] 用户取消翻译');
     } else {
-      userMessage = `${error.message || '翻译失败'}，请重试`;
+      // 使用统一的错误消息映射（去掉技术细节）
+      userMessage = getUserFriendlyMessage(error);
+      errorLevel = getErrorLevel(error);
     }
-    
+
     // 取消会话
     session.abort(error.message);
-    
-    // 回退状态
-    console.log('[service-worker-v4] → 设置状态为 INACTIVE（错误回退）');
-    await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
-    
-    // 通知UI状态变更
-    console.log('[service-worker-v4] → 通知UI状态变更: INACTIVE（错误回退）');
-    await notifyStateChange(tabId, 'translateActive', TranslateActiveState.INACTIVE);
-    
-    // 显示错误消息
+
+    // 🔥 第一步：先清除字幕（通过发送消息到content-script）
+    if (tabId) {
+      try {
+        await chrome.tabs.sendMessage(tabId, {
+          type: 'CLEAR_SUBTITLE_OVERLAY'
+        });
+        console.log('[service-worker-v4] → 已清除字幕显示');
+      } catch (err) {
+        console.error('[service-worker-v4] 清除字幕失败:', err);
+      }
+    }
+
+    // 🔥 第二步：显示错误消息（完整的5秒显示）
     if (userMessage && tabId) {
       try {
         await chrome.tabs.sendMessage(tabId, {
@@ -756,13 +791,22 @@ export async function handleToggleTranslateV4(
           data: {
             message: userMessage,
             level: errorLevel.toString(),
-            duration: 5000
+            duration: ERROR_MESSAGE_DURATION
           }
         });
+        console.log('[service-worker-v4] → 已发送错误消息到前端');
       } catch (err) {
         console.error('[service-worker-v4] 发送错误消息失败:', err);
       }
     }
+
+    // 🔥 第三步：回退状态（此时UI变更不会再清除字幕）
+    console.log('[service-worker-v4] → 设置状态为 INACTIVE（错误回退）');
+    await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
+
+    // 通知UI状态变更
+    console.log('[service-worker-v4] → 通知UI状态变更: INACTIVE（错误回退）');
+    await notifyStateChange(tabId, 'translateActive', TranslateActiveState.INACTIVE);
     
     return {
       success: false,
