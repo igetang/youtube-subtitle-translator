@@ -174,7 +174,6 @@ export class VideoSourceLanguageCacheManager {
     }
 
     await this.saveCache();
-    console.log(`[video-source-cache] ✓ 缓存已保存到存储`);
   }
 
   /**
@@ -268,13 +267,6 @@ export class VideoSourceLanguageCacheManager {
 
     const { videoId, availableSourceLanguages, selectedSourceTrack } = data;
 
-    // 调试：检查selectedSourceTrack的类型
-    console.log('[video-source-cache] upsertFromPopup 调试 - selectedSourceTrack:', {
-      value: selectedSourceTrack,
-      type: typeof selectedSourceTrack,
-      isObject: selectedSourceTrack && typeof selectedSourceTrack === 'object',
-      languageCode: selectedSourceTrack?.languageCode
-    });
     const now = Date.now();
     const existingIndex = this.cache.items.findIndex(item => item.videoId === videoId);
 

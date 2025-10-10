@@ -214,13 +214,13 @@ export async function fetchSubtitlesWithSignal(
     data: { videoId }
   };
   
-  console.log(`[message-with-signal] 发送字幕获取请求: ${videoId}`);
+  console.debug(`[debug][message-with-signal] 发送字幕获取请求: ${videoId}`);
   
   try {
     const response = await sendMessageWithSignal(tabId, message, signal);
     
     if (response?.subtitles) {
-      console.log(`[message-with-signal] ✓ 获取到 ${response.subtitles.length} 条字幕`);
+      console.debug(`[debug][message-with-signal] ✓ 获取到 ${response.subtitles.length} 条字幕`);
       return response;
     } else {
       throw new Error('未获取到字幕数据');
@@ -246,11 +246,11 @@ export async function triggerSubtitleLoadWithSignal(
     type: 'TRIGGER_SUBTITLE_LOAD'
   };
   
-  console.log('[message-with-signal] 触发字幕加载');
+  console.debug('[debug][message-with-signal] 触发字幕加载');
   
   try {
     const response = await sendMessageWithSignal(tabId, message, signal);
-    console.log('[message-with-signal] ✓ 字幕加载触发成功');
+    console.debug('[debug][message-with-signal] ✓ 字幕加载触发成功');
     return response;
   } catch (error: any) {
     if (error.name === 'AbortError') {

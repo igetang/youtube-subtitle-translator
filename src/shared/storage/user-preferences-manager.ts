@@ -16,7 +16,7 @@ import {
 } from '../types/user-preferences-types';
 
 // 立即验证导入的默认值
-console.log('[user-preferences-manager] 模块加载时 DEFAULT_USER_PREFERENCES:', {
+console.debug('[debug][user-preferences-manager] 模块加载时 DEFAULT_USER_PREFERENCES:', {
   hasDefaultImported: !!DEFAULT_USER_PREFERENCES,
   hasTranslationService: !!DEFAULT_USER_PREFERENCES?.translationService,
   translationServiceType: DEFAULT_USER_PREFERENCES?.translationService?.type,
@@ -80,7 +80,7 @@ export class UserPreferencesManager {
       const userPrefsKey = StorageKeys.USER_PREFERENCES_PREFIX;
       Object.keys(changes).forEach((key) => {
         if (key.startsWith(userPrefsKey)) {
-          console.log('[user-preferences-manager] 检测到UserPreferences存储变更:', key);
+          console.debug('[debug][user-preferences-manager] 检测到UserPreferences存储变更:', key);
 
           // 🔧 补全oldValue和newValue的translationService字段（防御性处理）
           // 原因：旧数据或某些路径可能导致字段缺失，补全后再比较可避免误触发事件
@@ -135,7 +135,7 @@ export class UserPreferencesManager {
     const previousPrefs = oldPrefs ?? DEFAULT_USER_PREFERENCES;
 
     if (!oldPrefs) {
-      console.log('[user-preferences-manager] 未检测到旧的偏好设置，使用默认值作为比较基准');
+      console.debug('[debug][user-preferences-manager] 未检测到旧的偏好设置，使用默认值作为比较基准');
     }
 
     // 检查各个字段的变更
@@ -309,10 +309,16 @@ export class UserPreferencesManager {
    */
   private async ensureDefaultPreferences(): Promise<void> {
     try {
-      const existing = await this.getUserPreferences();
-      if (!existing) {
-        console.log('[user-preferences-manager] 设置默认偏好配置');
+      // 🔧 修复：直接检查存储中是否有数据，而不是依赖getUserPreferences()的返回值
+      // 原因：getUserPreferences()在没有数据时会返回DEFAULT_USER_PREFERENCES对象，导致判断失效
+      const storageKey = `${StorageKeys.USER_PREFERENCES_PREFIX}main`;
+      const data = await this.storageManager.get<UserPreferences | null>(storageKey, null);
+
+      if (!data) {
+        console.debug('[debug][user-preferences-manager] 未检测到偏好设置，保存默认配置到Local Storage');
         await this.setUserPreferences(DEFAULT_USER_PREFERENCES);
+      } else {
+        console.debug('[debug][user-preferences-manager] 已存在偏好设置，跳过初始化保存');
       }
     } catch (error) {
       console.error('[user-preferences-manager] 设置默认偏好配置失败:', error);
@@ -326,7 +332,7 @@ export class UserPreferencesManager {
   public async getUserPreferences(): Promise<UserPreferences> {
     try {
       const storageKey = `${StorageKeys.USER_PREFERENCES_PREFIX}main`;
-      console.log('[user-preferences-manager] 从Local Storage读取偏好设置, key:', storageKey);
+      console.debug('[debug][user-preferences-manager] 从Local Storage读取偏好设置, key:', storageKey);
       const data = await this.storageManager.get<UserPreferences | null>(storageKey, null);
 
       if (data) {
@@ -340,7 +346,7 @@ export class UserPreferencesManager {
               ...template,                    // 模板提供完整字段（包含null值）
               ...data.translationService,     // 用户数据覆盖模板（保留apiKey等）
             };
-            console.log('[user-preferences-manager] 🔧 translationService字段已补全:', data.translationService);
+            console.debug('[debug][user-preferences-manager] 🔧 translationService字段已补全:', data.translationService);
           }
         }
 
@@ -348,7 +354,7 @@ export class UserPreferencesManager {
         const validation = this.validateUserPreferences(data);
 
         if (validation.isValid) {
-          console.log('[user-preferences-manager] ✓ 读取成功:', {
+          console.debug('[debug][user-preferences-manager] ✓ 读取成功:', {
             targetLang: data.targetLang,
             subtitleMode: data.subtitleMode,
             translationServiceType: data.translationService?.type
@@ -360,7 +366,7 @@ export class UserPreferencesManager {
       }
 
       // 如果没有找到有效数据，返回默认设置
-      console.log('[user-preferences-manager] 使用默认偏好设置');
+      console.debug('[debug][user-preferences-manager] 使用默认偏好设置');
       return DEFAULT_USER_PREFERENCES;
 
     } catch (error) {
@@ -396,7 +402,7 @@ export class UserPreferencesManager {
       const storageKey = `${StorageKeys.USER_PREFERENCES_PREFIX}main`;
       await this.storageManager.set(storageKey, finalPreferences);
 
-      console.log('[user-preferences-manager] ✓ setUserPreferences: 成功');
+      console.debug('[debug][user-preferences-manager] ✓ setUserPreferences: 成功');
 
     } catch (error) {
       console.error('[user-preferences-manager] ✗ setUserPreferences:', error);
@@ -520,12 +526,12 @@ export class UserPreferencesManager {
     try {
       const storageKey = `${StorageKeys.LOCAL.VIDEO_SETTINGS_PREFIX}${videoId}`;
       const videoData = await this.storageManager.get<VideoSettings | null>(storageKey, null, 'local');
-      
+
       if (videoData) {
-        console.log(`[user-preferences-manager] ✓ getVideoSettings: ${videoId}`);
+        console.debug(`[debug][user-preferences-manager] ✓ getVideoSettings: ${videoId}`);
         return videoData;
       } else {
-        console.log(`[user-preferences-manager] getVideoSettings: ${videoId} 未找到`);
+        console.debug(`[debug][user-preferences-manager] getVideoSettings: ${videoId} 未找到`);
         return null;
       }
     } catch (error) {
@@ -579,10 +585,10 @@ export class UserPreferencesManager {
       }
 
       const writeReason = hasChanges ? '数据变更' : '仅时间戳更新';
-      console.log(`[user-preferences-manager] 保存视频数据 ${videoData.videoId} (${writeReason}): ${changeDetails.length > 0 ? changeDetails.join(', ') : '无实质变更'}`);
+      console.debug(`[debug][user-preferences-manager] 保存视频数据 ${videoData.videoId} (${writeReason}): ${changeDetails.length > 0 ? changeDetails.join(', ') : '无实质变更'}`);
 
       await this.storageManager.set(storageKey, dataToSave, 'local');
-      console.log(`[user-preferences-manager] ✓ saveVideoSettings: ${videoData.videoId}`);
+      console.debug(`[debug][user-preferences-manager] ✓ saveVideoSettings: ${videoData.videoId}`);
 
       // 更新最近使用的视频列表
       await this.updateLastUsedVideos(videoData.videoId);
@@ -626,22 +632,22 @@ export class UserPreferencesManager {
         .filter(key => key.startsWith(StorageKeys.LOCAL.VIDEO_SETTINGS_PREFIX));
       
       if (videoSettingsKeys.length > MAX_CACHED_VIDEOS) {
-        console.log(`[user-preferences-manager] 视频缓存数量(${videoSettingsKeys.length})超出限制(${MAX_CACHED_VIDEOS})，开始清理`);
-        
+        console.debug(`[debug][user-preferences-manager] 视频缓存数量(${videoSettingsKeys.length})超出限制(${MAX_CACHED_VIDEOS})，开始清理`);
+
         const sortedEntries = videoSettingsKeys
           .map(key => ({
             key,
             lastUsed: (storageData[key] as VideoSettings).lastUsed || 0
           }))
           .sort((a, b) => a.lastUsed - b.lastUsed);
-        
+
         const removeCount = videoSettingsKeys.length - MAX_CACHED_VIDEOS;
         const keysToRemove = sortedEntries
           .slice(0, removeCount)
           .map(entry => entry.key);
-        
+
         await this.storageManager.remove(keysToRemove, 'local');
-        console.log(`[user-preferences-manager] 已清理 ${removeCount} 个最老的视频数据`);
+        console.debug(`[debug][user-preferences-manager] 已清理 ${removeCount} 个最老的视频数据`);
       }
     } catch (error) {
       console.error('[user-preferences-manager] 管理缓存大小失败:', error);

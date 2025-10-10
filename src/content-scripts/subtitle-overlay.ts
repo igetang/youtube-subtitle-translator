@@ -179,10 +179,10 @@ export class SubtitleOverlay {
         }
       `;
       document.head.appendChild(style);
-      console.log('[SubtitleOverlay] 控制栏响应CSS已注入');
+      console.debug('[debug][SubtitleOverlay] 控制栏响应CSS已注入');
     }
   }
-  
+
   /**
    * 显示翻译后的字幕 - 智能识别输入格式
    */
@@ -193,17 +193,17 @@ export class SubtitleOverlay {
       // 智能识别输入格式
       // 情况1: 直接传入数组（纯数组格式）
       if (Array.isArray(translationData)) {
-        console.log('[SubtitleOverlay] 输入格式: 纯数组');
+        console.debug('[debug][SubtitleOverlay] 输入格式: 纯数组');
         this.currentSubtitles = translationData;
       }
       // 情况2: V4架构当前格式（translatedSubtitles是数组）
       else if (translationData.translatedSubtitles && Array.isArray(translationData.translatedSubtitles)) {
-        console.log('[SubtitleOverlay] 输入格式: V4架构数组格式');
+        console.debug('[debug][SubtitleOverlay] 输入格式: V4架构数组格式');
         this.currentSubtitles = translationData.translatedSubtitles;
       }
       // 情况3: 缓存格式（VTT字符串）
       else if (translationData.translatedSubtitles && typeof translationData.translatedSubtitles === 'string') {
-        console.log('[SubtitleOverlay] 输入格式: VTT字符串格式');
+        console.debug('[debug][SubtitleOverlay] 输入格式: VTT字符串格式');
 
         if (!translationData.originalSubtitles) {
           console.warn('[SubtitleOverlay] 缺少原始字幕');
@@ -223,12 +223,12 @@ export class SubtitleOverlay {
         return;
       }
 
-      console.log('[SubtitleOverlay] 解析后的字幕条数:', this.currentSubtitles.length);
+      console.debug(`[debug][SubtitleOverlay] 解析后的字幕条数: ${this.currentSubtitles.length}`);
 
       // 从用户偏好读取显示模式
       const userPrefs = await this.userPreferencesManager.getUserPreferences();
       this.currentLanguageMode = userPrefs.subtitleMode === SubtitleMode.BILINGUAL ? 'bilingual' : 'targetOnly';
-      console.log('[SubtitleOverlay] 使用字幕模式:', this.currentLanguageMode);
+      console.debug(`[debug][SubtitleOverlay] 使用字幕模式: ${this.currentLanguageMode}`);
 
       this.isActive = true;
 
@@ -439,7 +439,7 @@ export class SubtitleOverlay {
     // 同步读取最新的用户字幕模式设置
     const userPrefs = await this.userPreferencesManager.getUserPreferences();
     this.currentLanguageMode = userPrefs.subtitleMode === SubtitleMode.BILINGUAL ? 'bilingual' : 'targetOnly';
-    console.log('[SubtitleOverlay] 更新翻译时字幕模式:', this.currentLanguageMode);
+    console.debug(`[debug][SubtitleOverlay] 更新翻译时字幕模式: ${this.currentLanguageMode}`);
 
     if (replaceAll) {
       // 完全替换模式：用于紧急翻译和批量翻译
@@ -577,11 +577,11 @@ export class SubtitleOverlay {
         document.head.appendChild(style);
       }
 
-      console.log('[SubtitleOverlay] 显示PENDING消息:', message);
+      console.debug(`[debug][SubtitleOverlay] 显示PENDING消息: ${message}`);
 
       // 设置自动隐藏定时器
       this.pendingMessageTimer = window.setTimeout(() => {
-        console.log('[SubtitleOverlay] Pending消息超时，自动隐藏');
+        console.debug('[debug][SubtitleOverlay] Pending消息超时，自动隐藏');
         this.hide();
         this.pendingMessageTimer = null;
       }, timeout);
@@ -623,7 +623,7 @@ export class SubtitleOverlay {
       this.overlayElement.style.setProperty('--calculated-font-size', `${fontSize}px`);
       this.overlayElement.style.setProperty('--calculated-font-size-small', `${fontSizeSmall}px`);
 
-      console.log(`[SubtitleOverlay] 初始播放器尺寸: ${width}x${height}, 字体: ${fontSize.toFixed(1)}px / ${fontSizeSmall.toFixed(1)}px`);
+      console.debug(`[debug][SubtitleOverlay] 初始播放器尺寸: ${width}x${height}, 字体: ${fontSize.toFixed(1)}px / ${fontSizeSmall.toFixed(1)}px`);
     }
   }
 
@@ -673,43 +673,45 @@ export class SubtitleOverlay {
 
           this.overlayElement.style.setProperty('--calculated-font-size', `${fontSize}px`);
           this.overlayElement.style.setProperty('--calculated-font-size-small', `${fontSizeSmall}px`);
-          console.log(`[SubtitleOverlay] 播放器尺寸: ${width}x${height}, 字体: ${fontSize.toFixed(1)}px / ${fontSizeSmall.toFixed(1)}px`);
+          console.debug(`[debug][SubtitleOverlay] 播放器尺寸: ${width}x${height}, 字体: ${fontSize.toFixed(1)}px / ${fontSizeSmall.toFixed(1)}px`);
         }
 
-        // 调试：获取YouTube原生字幕大小
-        const nativeSubtitle = document.querySelector('.ytp-caption-segment');
-        let nativeFontSize = 0;
-        if (nativeSubtitle) {
-          const nativeStyles = window.getComputedStyle(nativeSubtitle);
-          nativeFontSize = parseFloat(nativeStyles.fontSize);
-        }
-
-        // 获取我们的字幕大小
-        let ourFontSize = 0;
-        if (this.overlayElement) {
-          const subtitleEl = this.overlayElement.querySelector('.subtitle-translation, .subtitle-original') as HTMLElement;
-          if (subtitleEl) {
-            const ourStyles = window.getComputedStyle(subtitleEl);
-            ourFontSize = parseFloat(ourStyles.fontSize);
-          }
-        }
-
-        // 计算理论值
-        const theoreticalSize = width * 0.025; // 2.5%播放器宽度
-        const viewportWidth = window.innerWidth;
-
-        // 获取容器实际宽度
-        const containerWidth = this.overlayElement ? this.overlayElement.offsetWidth : 0;
-        const containerPercent = width > 0 ? (containerWidth / width * 100).toFixed(1) : 0;
-
-        console.log(`%c[响应式字幕调试] ===========================`, 'color: #00ff00; font-weight: bold');
-        console.log(`📐 窗口宽度: ${viewportWidth}px | 播放器宽度: ${width}px | 播放器高度: ${height}px`);
-        console.log(`📦 字幕容器: ${containerWidth}px (播放器的${containerPercent}%)`);
-        console.log(`🎯 YouTube原生字幕: ${nativeFontSize.toFixed(2)}px`);
-        console.log(`📝 我们的字幕(新): ${ourFontSize.toFixed(2)}px`);
-        console.log(`📊 理论值(2.5%播放器): ${theoreticalSize.toFixed(2)}px`);
-        console.log(`✅ 匹配度: 原生vs我们=${Math.abs(nativeFontSize - ourFontSize).toFixed(2)}px 差异`);
-        console.log(`%c=========================================`, 'color: #00ff00; font-weight: bold');
+        // ========== 响应式字幕调试代码（已注释） ==========
+//         // 调试：获取YouTube原生字幕大小
+//         const nativeSubtitle = document.querySelector('.ytp-caption-segment');
+//         let nativeFontSize = 0;
+//         if (nativeSubtitle) {
+//           const nativeStyles = window.getComputedStyle(nativeSubtitle);
+//           nativeFontSize = parseFloat(nativeStyles.fontSize);
+//         }
+// 
+//         // 获取我们的字幕大小
+//         let ourFontSize = 0;
+//         if (this.overlayElement) {
+//           const subtitleEl = this.overlayElement.querySelector('.subtitle-translation, .subtitle-original') as HTMLElement;
+//           if (subtitleEl) {
+//             const ourStyles = window.getComputedStyle(subtitleEl);
+//             ourFontSize = parseFloat(ourStyles.fontSize);
+//           }
+//         }
+// 
+//         // 计算理论值
+//         const theoreticalSize = width * 0.025; // 2.5%播放器宽度
+//         const viewportWidth = window.innerWidth;
+// 
+//         // 获取容器实际宽度
+//         const containerWidth = this.overlayElement ? this.overlayElement.offsetWidth : 0;
+//         const containerPercent = width > 0 ? (containerWidth / width * 100).toFixed(1) : 0;
+// 
+//         console.log(`%c[响应式字幕调试] ===========================`, 'color: #00ff00; font-weight: bold');
+//         console.log(`📐 窗口宽度: ${viewportWidth}px | 播放器宽度: ${width}px | 播放器高度: ${height}px`);
+//         console.log(`📦 字幕容器: ${containerWidth}px (播放器的${containerPercent}%)`);
+//         console.log(`🎯 YouTube原生字幕: ${nativeFontSize.toFixed(2)}px`);
+//         console.log(`📝 我们的字幕(新): ${ourFontSize.toFixed(2)}px`);
+//         console.log(`📊 理论值(2.5%播放器): ${theoreticalSize.toFixed(2)}px`);
+//         console.log(`✅ 匹配度: 原生vs我们=${Math.abs(nativeFontSize - ourFontSize).toFixed(2)}px 差异`);
+//         console.log(`%c=========================================`, 'color: #00ff00; font-weight: bold');
+        // ========== 响应式字幕调试代码结束 ==========
       }
     });
 

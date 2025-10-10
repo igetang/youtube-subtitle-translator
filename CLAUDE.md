@@ -174,6 +174,8 @@ npm run dev:content   # 监听content script变化
    - 核心步骤：先启动Chrome（带 `--remote-debugging-port=9222`），配置 `.mcp.json`，再启动Claude Code
 
 ### 日志格式规范
+
+#### 基本格式
 ```javascript
 // 基本格式
 [组件名] 操作说明
@@ -185,6 +187,132 @@ npm run dev:content   # 监听content script变化
 // 状态变更
 [runtime-state-manager] 状态变更: translateActive [inactive → pending]
 ```
+
+#### 日志级别使用规范（⭐核心原则）
+
+**1. console.log - 关键操作和决策点**
+- 用户操作（点击按钮、切换设置）
+- 重要状态变更（PENDING → ACTIVE）
+- API调用结果（成功/失败）
+- 关键决策点（选择了哪个字幕轨道、使用哪个翻译服务）
+- 错误和警告（console.error / console.warn）
+
+**2. console.debug - 详细执行步骤**
+- 格式：`console.debug('[debug][组件名] 详细信息')`
+- 内部计算过程（token估算、批次分割细节）
+- 方法调用参数（传入什么参数）
+- 中间状态（正在处理第X批）
+- 缓存读写细节（从缓存读取了什么）
+- 配置信息（使用了什么配置参数）
+
+```javascript
+// ✓ 正确示例
+console.log('[service-worker-v4] ✓ 智能选择并设置: en-US (manual) | 可用: 3个');  // 关键决策
+console.debug('[debug][IntelligentSegmenter] 找到强断点: 索引40, 间隔2100ms');     // 详细步骤
+
+// ✗ 错误示例
+console.log('[IntelligentSegmenter] 找到强断点: 索引40, 间隔2100ms');  // 应该用debug
+console.debug('[service-worker-v4] ✓ 智能选择并设置: en-US');           // 应该用log
+```
+
+#### 内外层日志原则（⭐避免重复）
+
+**规则：外层打印摘要，内层使用debug或不打印**
+
+```javascript
+// ✓ 正确示例
+// 外层（handle-toggle-translate-v4.ts）
+console.log('[service-worker-v4] ✓ 智能选择并设置: en-US (manual) | 可用: 3个');
+
+// 内层（service-worker.ts的智能选择方法）
+console.debug('[debug][service-worker] 选择英语手动字幕: en-US');  // 改为debug或删除
+
+// ✗ 错误示例（重复打印）
+// 外层
+console.log('[service-worker-v4] 创建会话: translate_123_abc');
+// 内层
+console.log('[AbortTimeoutManager] 创建会话: translate_123_abc');  // 重复！
+```
+
+**典型场景：**
+- 外层调用`createSession()`时打印"创建会话"，内层`createSession()`方法内部不再打印或改为debug
+- 外层打印"选择字幕轨道: en-US"，内层选择逻辑不再打印或改为debug
+- 外层打印"缓存已保存"，内层存储管理器不再打印
+
+#### 日志去重规则（⭐多次调用处理）
+
+**规则：被多次调用的方法，只在实际发生变更时打印**
+
+```javascript
+// ✓ 正确示例：只在实际补全字段时打印
+const needsFill = !data.translationService || !data.sourceLang;
+if (needsFill) {
+  console.debug('[debug][user-preferences-manager] 🔧 translationService字段已补全:', data.translationService);
+}
+
+// ✗ 错误示例：每次调用都打印
+console.debug('[debug][user-preferences-manager] 🔧 translationService字段已补全:', data.translationService);
+// 问题：getUserPreferences()被调用3次，就会打印3次相同日志
+```
+
+**适用场景：**
+- `getUserPreferences()` - 只在实际补全缺失字段时打印
+- `getCache()` - 只在cache hit时打印，不在cache miss时打印
+- `validateConfig()` - 只在配置无效时打印警告
+
+#### 日志合并原则（⭐提高可读性）
+
+**规则：相关信息合并到1-2行，避免拆分成多行**
+
+```javascript
+// ✓ 正确示例：合并为1行
+console.log(`[TwoPhaseTranslatorV4] → 批量翻译: 100条 | OpenAI | 160条/批`);
+
+// ✗ 错误示例：拆分成7行
+console.log('[service-worker-v4] Stage 3: 获取字幕轨道');
+console.log('[service-worker-v4] 需要获取字幕轨道信息...');
+console.log('[service-worker-v4] 调用YouTube API...');
+console.log('[service-worker-v4] 获取到3个轨道');
+console.log('[service-worker-v4] 选择英语手动字幕');
+console.log('[service-worker-v4] 智能选择结果: en-US');
+console.log('[service-worker-v4] ✓ 设置字幕语言: en-US');
+```
+
+**合并策略：**
+- 操作 + 结果 + 关键参数 合并为一行
+- 使用 `|` 分隔不同维度的信息
+- 使用符号（✓ ✗ →）增强可读性
+
+#### 日志密度控制（⭐避免过度打印）
+
+**规则：简单操作不过度打印，复杂操作打印关键节点**
+
+```javascript
+// ✓ 正确示例：简单操作用一行
+console.debug('[debug][video-source-cache] 读取缓存: videoId123');
+
+// ✗ 错误示例：简单操作过度打印
+console.log('[video-source-cache] 开始读取缓存...');
+console.log('[video-source-cache] 构建缓存键: videoId123');
+console.log('[video-source-cache] 查询存储...');
+console.log('[video-source-cache] 找到缓存数据');
+console.log('[video-source-cache] ✓ 读取成功');
+```
+
+**密度标准：**
+- **简单操作**（缓存读写、参数验证）：0-1行debug日志
+- **中等操作**（API调用、批次处理）：1-2行log日志
+- **复杂操作**（两阶段翻译、智能断句）：3-5行log日志 + N行debug日志
+
+#### 日志优化检查清单
+
+在编写或修改日志时，检查以下5点：
+
+- [ ] **级别正确？** 关键操作用log，详细步骤用debug
+- [ ] **有重复吗？** 内外层是否打印了同样的信息
+- [ ] **多次调用？** 方法被多次调用是否每次都打印
+- [ ] **能合并吗？** 相关信息是否拆成了多行
+- [ ] **太密集吗？** 简单操作是否打印了过多日志
 
 ## 🔄 翻译开关执行流程（V4架构）
 

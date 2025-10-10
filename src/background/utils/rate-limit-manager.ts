@@ -56,7 +56,7 @@ export class RateLimitManager {
     if (resetRequests) this.currentLimits.resetRequestsTime = new Date(resetRequests);
     if (resetTokens) this.currentLimits.resetTokensTime = new Date(resetTokens);
     
-    console.log('[RateLimitManager] 更新限制信息:', {
+    console.debug('[debug][RateLimitManager] 更新限制信息:', {
       requestsPerMinute: this.currentLimits.requestsPerMinute,
       tokensPerMinute: this.currentLimits.tokensPerMinute,
       remainingRequests: this.currentLimits.remainingRequests,
@@ -142,7 +142,7 @@ export class RateLimitManager {
     // 限制在合理范围内
     optimalBatchSize = Math.max(1, Math.min(10, optimalBatchSize));
     
-    console.log(`[RateLimitManager] 计算最佳批量大小: ${optimalBatchSize} (平均每项${avgTokensPerItem}tokens)`);
+    console.debug(`[debug][RateLimitManager] 计算最佳批量大小: ${optimalBatchSize} (平均每项${avgTokensPerItem}tokens)`);
     return optimalBatchSize;
   }
   

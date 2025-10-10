@@ -45,8 +45,8 @@ export class TwoPhaseTranslatorV4 {
   private static readonly USE_MICROSOFT_OPTIMIZER = true;  // 设为true启用新优化器
   
   private translationService: any = null;  // 翻译服务配置
-  
-  private segmenter: IntelligentSegmenter;
+
+  private segmenter!: IntelligentSegmenter;  // 懒加载，根据服务类型创建
   private microsoftTranslator: MicrosoftTranslator;
   private microsoftOptimizer: MicrosoftTextOptimizer;  // 新增：5000字符优化器
   private isComplete: boolean = false;
@@ -55,16 +55,31 @@ export class TwoPhaseTranslatorV4 {
   private failedGoogleEndpoints = new Set<GoogleEndpointId>();
 
   constructor() {
-    this.segmenter = new IntelligentSegmenter();
     this.microsoftTranslator = new MicrosoftTranslator();
     this.microsoftOptimizer = new MicrosoftTextOptimizer();  // 新增：初始化优化器
   }
-  
+
   /**
-   * 设置翻译服务配置
+   * 设置翻译服务配置（并根据服务类型创建对应的IntelligentSegmenter）
    */
   public setTranslationService(service: any): void {
     this.translationService = service;
+
+    // 根据翻译服务类型创建不同配置的IntelligentSegmenter
+    const serviceType = service?.type;
+    if (serviceType === 'openai') {
+      // OpenAI使用160条/批（充分利用400K上下文窗口）
+      this.segmenter = new IntelligentSegmenter(160);
+      console.debug('[debug][TwoPhaseTranslatorV4] 使用OpenAI配置：160条/批');
+    } else if (serviceType === 'deepseek') {
+      // DeepSeek使用20条/批（单批处理能力有限，避免二次分批）
+      this.segmenter = new IntelligentSegmenter(20);
+      console.debug('[debug][TwoPhaseTranslatorV4] 使用DeepSeek配置：20条/批');
+    } else {
+      // Google/Microsoft等其他服务使用40条/批
+      this.segmenter = new IntelligentSegmenter(40);
+      console.debug('[debug][TwoPhaseTranslatorV4] 使用Google/Microsoft配置：40条/批');
+    }
   }
   
   /**
@@ -172,11 +187,11 @@ export class TwoPhaseTranslatorV4 {
       urgentBatch.forEach((sub, idx) => {
         const translatedText = translatedLines[idx] || sub.text;
         const originalIndex = subtitles.indexOf(sub);
-        
+
         if (originalIndex !== -1) {
           results.push({
             index: originalIndex,
-            originalText: sub.text,
+            originalText: texts[idx],  // 复用已处理的单行文本
             translatedText: translatedText,
             isUrgent: true
           });
@@ -240,8 +255,6 @@ export class TwoPhaseTranslatorV4 {
         throw new Error('紧急翻译未确定可用的Google端点，跳过批量翻译');
       }
 
-      console.log(`[TwoPhaseTranslatorV4] → 开始批量翻译 ${subtitles.length} 条字幕`);
-
       // 批量翻译应该翻译全部字幕（包括紧急翻译的部分）
       // 理由：1. 获得更好的上下文 2. 提升翻译质量 3. 保持翻译一致性
       const batchSubtitles = subtitles;
@@ -251,21 +264,24 @@ export class TwoPhaseTranslatorV4 {
         console.log('[TwoPhaseTranslatorV4] 紧急翻译已覆盖全部字幕，跳过批量翻译');
         return urgentResults;
       }
-      
+
       // 根据翻译服务类型选择分批策略
       let batches: Array<typeof batchSubtitles>;
+      let strategyInfo = '';
 
       if (isMicrosoftService) {
         // 微软翻译：不使用智能分段，直接传递所有字幕，让内部5000字符优化器处理
-        console.log(`[TwoPhaseTranslatorV4] → 微软翻译：使用5000字符优化，不预先分批`);
         batches = [batchSubtitles];  // 所有字幕作为一个批次
+        strategyInfo = '微软5000字符优化';
       } else {
         // 谷歌翻译等：使用智能分段（基于时间间隔，120条限制）
         const batchesWithMeta = this.segmenter.createSmartBatches(batchSubtitles);
         // 从批次元数据中提取字幕数组
         batches = batchesWithMeta.map(batch => batch.subtitles);
-        console.log(`[TwoPhaseTranslatorV4] → 谷歌翻译：分成 ${batches.length} 个批次`);
+        strategyInfo = `智能分批${batches.length}个`;
       }
+
+      console.log(`[TwoPhaseTranslatorV4] → 批量翻译: ${subtitles.length}条 | ${strategyInfo}`);
 
       // 根据翻译服务类型确定单批超时时间
       let perBatchTimeout = 5000; // 默认5秒
@@ -322,9 +338,9 @@ export class TwoPhaseTranslatorV4 {
           }
 
           if (isMicrosoftService) {
-            console.log(`[TwoPhaseTranslatorV4] 调用微软翻译处理 ${batch.length} 条字幕（内部将使用5000字符优化）`);
+            console.debug(`[debug][TwoPhaseTranslatorV4] 调用微软翻译处理 ${batch.length} 条字幕（内部将使用5000字符优化）`);
           } else {
-            console.log(`[TwoPhaseTranslatorV4] 翻译批次 ${i + 1}/${batches.length}（${texts.length}条）`);
+            console.debug(`[debug][TwoPhaseTranslatorV4] 翻译批次 ${i + 1}/${batches.length}（${texts.length}条）`);
           }
 
           let translatedTexts: string[];
@@ -353,11 +369,11 @@ export class TwoPhaseTranslatorV4 {
           batch.forEach((sub, idx) => {
             const translatedText = translatedLines[idx] || sub.text;
             const originalIndex = subtitles.indexOf(sub);
-            
+
             if (originalIndex !== -1) {
               results.push({
                 index: originalIndex,
-                originalText: sub.text,
+                originalText: texts[idx],  // 复用已处理的单行文本
                 translatedText: translatedText,
                 isUrgent: false
               });
@@ -378,12 +394,12 @@ export class TwoPhaseTranslatorV4 {
             throw batchError;
           }
 
-          // 任何批次失败，构建详细错误信息并立即抛出
+          // 任何批次失败，抛出简化的错误消息（去掉批次号和超时时间）
           const errorMsg = batchError.name === 'TimeoutError' || batchError.message === '批次翻译超时'
-            ? `翻译超时：第${i + 1}/${batches.length}批次（${perBatchTimeout/1000}秒超时）`
-            : `翻译失败：第${i + 1}/${batches.length}批次 - ${batchError.message}`;
+            ? '翻译超时'
+            : batchError.message || '翻译失败';
 
-          console.error(`[TwoPhaseTranslatorV4] ✗ ${errorMsg}`);
+          console.error(`[TwoPhaseTranslatorV4] ✗ 批次 ${i + 1}/${batches.length} 失败:`, batchError);
           throw new Error(errorMsg);
         }
       }
@@ -432,8 +448,8 @@ export class TwoPhaseTranslatorV4 {
         const originalRequests = Math.ceil(subtitles.length / 10);
         const optimizedRequests = optimizedBatches.length;
         const reduction = Math.round(((originalRequests - optimizedRequests) / originalRequests) * 100);
-        console.log(
-          `[TwoPhaseTranslatorV4] 优化效果: ${originalRequests}个请求 → ${optimizedRequests}个请求 (减少${reduction}%)`
+        console.debug(
+          `[debug][TwoPhaseTranslatorV4] 优化效果: ${originalRequests}个请求 → ${optimizedRequests}个请求 (减少${reduction}%)`
         );
 
         // 收集所有翻译结果
@@ -449,8 +465,8 @@ export class TwoPhaseTranslatorV4 {
             throw new DOMException('微软翻译已取消', 'AbortError');
           }
 
-          console.log(
-            `[TwoPhaseTranslatorV4] 处理批次 ${batchIndex + 1}/${optimizedBatches.length}: ` +
+          console.debug(
+            `[debug][TwoPhaseTranslatorV4] 处理批次 ${batchIndex + 1}/${optimizedBatches.length}: ` +
             `${batch.texts.length}个Text对象`
           );
 
@@ -993,8 +1009,8 @@ export class TwoPhaseTranslatorV4 {
           );
         }
 
-        console.log(
-          `[TwoPhaseTranslatorV4] Google endpoint=${endpoint.id} success (${normalized.length}条)`
+        console.debug(
+          `[debug][TwoPhaseTranslatorV4] Google端点=${endpoint.id} 成功 (${normalized.length}条)`
         );
 
         if (options?.recordStatistics) {
@@ -1005,9 +1021,8 @@ export class TwoPhaseTranslatorV4 {
         return { translations: normalized, endpoint: endpoint.id };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.warn(
-          `[TwoPhaseTranslatorV4] Google endpoint=${endpoint.id} failed，尝试切换`,
-          message
+        console.debug(
+          `[debug][TwoPhaseTranslatorV4] Google端点=${endpoint.id} 失败，切换中: ${message}`
         );
         errors.push(`${endpoint.id}: ${message}`);
 

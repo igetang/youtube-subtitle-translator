@@ -61,10 +61,10 @@ export interface UserPreferences {
   // === 核心翻译设置 ===
   targetLang: string;                           // 目标语言（全局默认）
   subtitleMode: SubtitleMode;                   // 字幕显示模式
-  
+
   // === 翻译服务配置（统一） ===
   translationService: TranslationServiceComplete;  // 完整的翻译服务配置
-  
+
   // === 数据完整性 ===
   hash: string;                                 // 设置hash值
 }

@@ -67,7 +67,7 @@ export class TimeoutController {
         this.timeout(timeoutMs, stage)
       ]);
       
-      console.log(`[TimeoutController] ${stage} 成功完成`);
+      console.debug(`[debug][TimeoutController] ${stage} 成功完成`);
       return result;
       
     } catch (error) {

@@ -45,7 +45,8 @@ export function createVttString(
     const finalText = translatedText ?? event.text ?? '';
 
     vtt += `${formatTime(event.start)} --> ${formatTime(end)}\n`;
-    vtt += `${finalText.replace(/\n/g, ' ')}\n\n`;
+    // 直接使用文本内容（原文已是一行，译文可能多行）
+    vtt += `${finalText}\n\n`;
   });
 
   return vtt;
@@ -121,11 +122,14 @@ export function parseVttString(
       const entry: SubtitleEntry = {
         start,
         duration,
+        // 原文：VTT存储时已是单行，直接使用
+        // 译文：保留换行符（可能是多行）
         text: includeTranslation ? '' : text.trim(),
         id: String(start)
       };
 
       if (includeTranslation) {
+        // 译文保留原始换行符
         entry.translation = text.trim();
       }
 

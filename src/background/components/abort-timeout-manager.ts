@@ -52,7 +52,7 @@ export class AbortTimeoutManager {
       startTime: Date.now()
     });
     
-    console.log(`[AbortTimeoutManager] 创建会话: ${sessionId}`);
+    console.debug(`[debug][AbortTimeoutManager] 创建会话: ${sessionId}`);
     return session;
   }
   

@@ -90,7 +90,7 @@ export class MicrosoftTranslator {
       do {
         try {
           const pathLabel = endpoint === queryPrimary ? 'A' : 'B';
-          console.log(`[MicrosoftTranslator] 调用路径${pathLabel}，批次 ${batch.length} 条`);
+          console.debug(`[debug][MicrosoftTranslator] 调用路径${pathLabel}，批次 ${batch.length} 条`);
           const translations = await this.executeRequest(endpoint, token, batch, stage);
           return translations;
         } catch (error) {
@@ -209,8 +209,8 @@ export class MicrosoftTranslator {
       return [];
     }
 
-    console.log(
-      `[MicrosoftTranslator] translateOptimized: ` +
+    console.debug(
+      `[debug][MicrosoftTranslator] translateOptimized: ` +
       `处理 ${optimizedTexts.length} 个优化文本组 (${stage}阶段)`
     );
 
@@ -226,8 +226,8 @@ export class MicrosoftTranslator {
       do {
         try {
           const pathLabel = endpoint === queryPrimary ? 'A' : 'B';
-          console.log(
-            `[MicrosoftTranslator] 调用优化路径${pathLabel}，` +
+          console.debug(
+            `[debug][MicrosoftTranslator] 调用优化路径${pathLabel}，` +
             `${optimizedTexts.length} 个文本组`
           );
 
@@ -273,8 +273,8 @@ export class MicrosoftTranslator {
             return optimizedTexts[idx];
           });
 
-          console.log(
-            `[MicrosoftTranslator] 优化翻译成功，返回 ${translations.length} 个翻译结果`
+          console.debug(
+            `[debug][MicrosoftTranslator] 优化翻译成功，返回 ${translations.length} 个翻译结果`
           );
 
           return translations;

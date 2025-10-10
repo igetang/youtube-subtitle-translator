@@ -79,7 +79,7 @@ export class TimeGapAnalyzer {
       over2s: gaps.filter(g => g >= 2).length
     };
     
-    console.log(`[TimeGapAnalyzer] 间隔分析结果:`, {
+    console.debug(`[debug][TimeGapAnalyzer] 间隔分析结果:`, {
       样本数: gaps.length,
       平均间隔: `${avgGap.toFixed(2)}s`,
       中位数: `${medianGap.toFixed(2)}s`,

@@ -11,6 +11,7 @@ import { subtitleOverlay } from './subtitle-overlay';
 import { StorageManager, StorageKeys } from '@shared/storage/storage-manager';
 import { UserPreferencesManager } from '@shared/storage/user-preferences-manager';
 import { UserPreferenceChangeEvent } from '@shared/types/user-preferences-types';
+import { ERROR_MESSAGE_DURATION } from '@shared/constants';
 
 // ==================== 初始化 ====================
 
@@ -34,6 +35,10 @@ const apiResponseHandlers = new Map<string, (response: any) => void>();
 let currentVideoId: string | null = null;
 let isNavigating = false;
 let urlCheckInterval: number | null = null;
+
+// 错误消息定时器（需要管理两个：外层和内层）
+let errorMessageTimer: number | null = null;
+let errorMessageHideTimer: number | null = null;
 
 
 /**
@@ -192,9 +197,9 @@ async function checkAndCreateButtons(): Promise<void> {
  */
 function handleUserAction(action: string, data: any): void {
   if (action === 'buttonClick') {
-    console.log(`[content-script] 按钮点击: ${data.buttonType}`);
+    console.debug(`[debug][content-script] 按钮点击: ${data.buttonType}`);
   }
-  
+
   switch (action) {
     case 'buttonClick':
       handleButtonClick(data);
@@ -233,21 +238,21 @@ function handleButtonClick(data: any): void {
  */
 function handleStateChange(data: any): void {
   const { key, value, updates } = data;
-  
+
   // 处理批量更新（来自updateStates）
   if (updates) {
-    if (updates.translateActive === 'inactive') {
-      subtitleOverlay.hide();
-    }
+    // 🔥 不再在状态变更时清除字幕
+    // 字幕清除由错误处理流程通过 CLEAR_SUBTITLE_OVERLAY 消息统一管理
+    // 或者用户手动关闭时通过 hideTranslatedSubtitles() 处理
     if (uiRenderer) {
       uiRenderer.update(updates);
     }
-  } 
+  }
   // 处理单个更新（来自updateState）
   else if (key && value !== undefined) {
-    if (key === 'translateActive' && value === 'inactive') {
-      subtitleOverlay.hide();
-    }
+    // 🔥 不再在状态变更时清除字幕
+    // 字幕清除由错误处理流程通过 CLEAR_SUBTITLE_OVERLAY 消息统一管理
+    // 或者用户手动关闭时通过 hideTranslatedSubtitles() 处理
     if (uiRenderer) {
       uiRenderer.update({ [key]: value });
     }
@@ -259,7 +264,7 @@ function handleStateChange(data: any): void {
  */
 function handleChromeMessage(data: any): void {
   const { messageType, message } = data;
-  console.log(`[content-script] 处理Chrome消息: ${messageType}`);
+  console.debug(`[debug][content-script] 处理Chrome消息: ${messageType}`);
   
   switch (messageType) {
     case 'UPDATE_BUTTON_STATE':
@@ -312,7 +317,7 @@ async function toggleTranslation(): Promise<void> {
   // 在任何操作之前，先记录字幕按钮的原始状态
   const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
   const originalSubtitleState = subtitleBtn?.getAttribute('aria-pressed') === 'true';
-  console.log(`[content-script] 翻译开始前，字幕按钮原始状态: ${originalSubtitleState ? '开启' : '关闭'}`);
+  console.debug(`[debug][content-script] 翻译开始前，字幕按钮原始状态: ${originalSubtitleState ? '开启' : '关闭'}`);
 
   // 立即设置为PENDING状态，提供即时反馈
   if (isEnabling) {
@@ -324,7 +329,7 @@ async function toggleTranslation(): Promise<void> {
   const videoElement = document.querySelector('video');
   if (videoElement) {
     currentTime = videoElement.currentTime;
-    console.log(`[content-script] 当前播放时间: ${currentTime}s`);
+    console.debug(`[debug][content-script] 当前播放时间: ${currentTime}s`);
   }
 
   try {
@@ -368,7 +373,7 @@ async function toggleTranslation(): Promise<void> {
  * 请求字幕捕获（带超时保护）
  */
 function requestSubtitleCapture(): void {
-  console.log('[content-script] 发送字幕捕获请求到main-world...');
+  console.debug('[debug][content-script] 发送字幕捕获请求到main-world...');
   window.postMessage({
     source: 'content-script',
     type: 'REQUEST_SUBTITLE_CAPTURE'
@@ -377,7 +382,7 @@ function requestSubtitleCapture(): void {
   // 设置6秒超时（比拦截器内部的5秒稍长，确保能收到超时消息）
   setTimeout(() => {
     // 发送销毁消息（兜底保护）
-    console.log('[content-script] 字幕捕获6秒超时，强制销毁拦截器');
+    console.debug('[debug][content-script] 字幕捕获6秒超时，强制销毁拦截器');
     window.postMessage({
       source: 'content-script',
       type: 'DESTROY_SUBTITLE_INTERCEPTOR'
@@ -399,7 +404,7 @@ async function displayTranslatedSubtitles(data: any): Promise<void> {
  * 隐藏翻译字幕
  */
 function hideTranslatedSubtitles(): void {
-  console.log('[content-script] 隐藏翻译字幕');
+  console.debug('[debug][content-script] 隐藏翻译字幕');
   subtitleOverlay.hide();
   // 状态更新由Background通过STATE_CHANGED消息统一管理，避免重复更新
   // stateManager?.updateState('translateActive', 'inactive');
@@ -417,29 +422,29 @@ async function togglePopup(): Promise<void> {
     });
     
     const currentState = stateResponse.isOpen;
-    
+
     if (currentState) {
-      console.log('[content-script] Popup已打开，将由Chrome自动关闭');
+      console.debug('[debug][content-script] Popup已打开，将由Chrome自动关闭');
       return;
     }
-    
+
     // 防抖检查
     if (lastPopupCloseTime > 0) {
       const timeSinceClose = Date.now() - lastPopupCloseTime;
       if (timeSinceClose < 300) {
-        console.log('[content-script] 刚刚关闭popup，不执行打开操作');
+        console.debug('[debug][content-script] 刚刚关闭popup，不执行打开操作');
         return;
       }
     }
-    
+
     const openResponse = await chrome.runtime.sendMessage({
       type: 'openPopup',
       data: { source: 'settings-button' },
       timestamp: Date.now()
     });
-    
+
     if (openResponse && openResponse.success) {
-      console.log('[content-script] ✓ openPopup: 成功');
+      console.debug('[debug][content-script] ✓ openPopup: 成功');
       if (uiRenderer) {
         uiRenderer.update({ popupOpen: true });
       }
@@ -463,11 +468,11 @@ function setupMessageHandlers(): void {
 
     // 处理REQUEST_SUBTITLE_CAPTURE消息（旧路径，保留兼容）
     if (messageType === 'REQUEST_SUBTITLE_CAPTURE') {
-      console.log(`[content-script] 收到Chrome消息: ${messageType}`);
+      console.debug(`[debug][content-script] 收到Chrome消息: ${messageType}`);
       // 保存源语言信息
       if (message.data?.sourceLang) {
         capturedSourceLang = message.data.sourceLang;
-        console.log(`[content-script] 保存源语言: ${capturedSourceLang}, kind: ${message.data.sourceKind || '未指定'}`);
+        console.debug(`[debug][content-script] 保存源语言: ${capturedSourceLang}, kind: ${message.data.sourceKind || '未指定'}`);
       }
 
       // 优先使用传递的状态，没有则读取当前状态（兼容旧代码）
@@ -475,9 +480,9 @@ function setupMessageHandlers(): void {
       if (originalSubtitleState === undefined) {
         const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
         originalSubtitleState = subtitleBtn?.getAttribute('aria-pressed') === 'true';
-        console.log(`[content-script] (兼容模式)读取字幕按钮当前状态: ${originalSubtitleState ? '开启' : '关闭'}`);
+        console.debug(`[debug][content-script] (兼容模式)读取字幕按钮当前状态: ${originalSubtitleState ? '开启' : '关闭'}`);
       } else {
-        console.log(`[content-script] 使用传递的字幕按钮原始状态: ${originalSubtitleState ? '开启' : '关闭'}`);
+        console.debug(`[debug][content-script] 使用传递的字幕按钮原始状态: ${originalSubtitleState ? '开启' : '关闭'}`);
       }
 
       window.postMessage({
@@ -518,8 +523,16 @@ function setupMessageHandlers(): void {
 
     // 处理CLEAR_ERROR_MESSAGE消息
     if (messageType === 'CLEAR_ERROR_MESSAGE') {
-      console.log('[content-script] 清除错误消息');
+      console.debug('[debug][content-script] 清除错误消息');
       clearErrorMessage();
+      sendResponse({ success: true });
+      return false;
+    }
+
+    // 处理CLEAR_SUBTITLE_OVERLAY消息（错误发生时清除字幕）
+    if (messageType === 'CLEAR_SUBTITLE_OVERLAY') {
+      console.debug('[debug][content-script] 清除字幕显示');
+      subtitleOverlay.hide();
       sendResponse({ success: true });
       return false;
     }
@@ -563,7 +576,7 @@ function setupMessageHandlers(): void {
     if (messageType === 'TRANSLATION_COMPLETE') {
       console.log('[content-script] 翻译全部完成');
       if (message.data) {
-        console.log(`[content-script] 总计翻译: ${message.data.totalSubtitles} 条字幕`);
+        console.debug(`[debug][content-script] 总计翻译: ${message.data.totalSubtitles} 条字幕`);
       }
       sendResponse({ success: true });
       return false;
@@ -588,16 +601,16 @@ function setupMessageHandlers(): void {
 
       // 提取sourceLang、sourceKind和originalSubtitleState参数
       const { sourceLang, sourceKind, originalSubtitleState } = message;
-      console.log(`[content-script] 收到源语言: ${sourceLang}, 字幕类型: ${sourceKind}`);
+      console.debug(`[debug][content-script] 收到源语言: ${sourceLang}, 字幕类型: ${sourceKind}`);
 
       // 使用传递过来的原始状态，而不是重新读取
       if (originalSubtitleState !== undefined) {
-        console.log(`[content-script] 使用传递的字幕按钮原始状态: ${originalSubtitleState ? '开启' : '关闭'}`);
+        console.debug(`[debug][content-script] 使用传递的字幕按钮原始状态: ${originalSubtitleState ? '开启' : '关闭'}`);
       } else {
         // 兜底：如果没有传递状态，才读取当前状态
         const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
         const currentState = subtitleBtn?.getAttribute('aria-pressed') === 'true';
-        console.log(`[content-script] 未传递原始状态，读取当前状态: ${currentState ? '开启' : '关闭'}`);
+        console.debug(`[debug][content-script] 未传递原始状态，读取当前状态: ${currentState ? '开启' : '关闭'}`);
       }
 
       // 通知main-world开始捕获字幕，传递参数
@@ -609,28 +622,28 @@ function setupMessageHandlers(): void {
         originalSubtitleState: originalSubtitleState  // 传递原始状态
       }, '*');
 
-      console.log('[content-script] 已发送字幕捕获请求到main-world（包含源语言参数）');
+      console.debug('[debug][content-script] 已发送字幕捕获请求到main-world（包含源语言参数）');
       sendResponse({ success: true });
       return false;
     }
     
     // 处理getVideoTrackData消息
     if (messageType === 'getVideoTrackData') {
-      console.log(`[content-script] 收到Chrome消息: ${messageType}`);
+      console.debug(`[debug][content-script] 收到Chrome消息: ${messageType}`);
       handleGetVideoTrackData(message.videoId, sendResponse);
       return true; // 异步响应
     }
-    
+
     // 处理通过Player API获取字幕轨道
     if (messageType === 'getSubtitleTracksAPI') {
-      console.log(`[content-script] 收到Chrome消息: ${messageType}`);
+      console.debug(`[debug][content-script] 收到Chrome消息: ${messageType}`);
       handleGetSubtitleTracksAPI(sendResponse);
       return true; // 异步响应
     }
-    
+
     // 处理通过Player API设置字幕语言（ISO 639-1）
     if (messageType === 'setSubtitleTrackAPI') {
-      console.log(`[content-script] 收到Chrome消息: ${messageType}, langCode: ${message.langCode}` +
+      console.debug(`[debug][content-script] 收到Chrome消息: ${messageType}, langCode: ${message.langCode}` +
                   (message.kind ? `, kind: ${message.kind}` : ''));
       handleSetSubtitleTrackAPI(message.langCode, message.kind, sendResponse);
       return true; // 异步响应
@@ -719,8 +732,8 @@ function setupMessageHandlers(): void {
  * 处理通过Player API获取字幕轨道
  */
 function handleGetSubtitleTracksAPI(sendResponse: (response: any) => void): void {
-  console.log('[content-script] 开始通过API获取字幕轨道');
-  
+  console.debug('[debug][content-script] 开始通过API获取字幕轨道');
+
   const requestId = `api_tracks_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   
   const timeout = setTimeout(() => {
@@ -749,7 +762,7 @@ function handleGetSubtitleTracksAPI(sendResponse: (response: any) => void): void
  * 处理通过Player API设置字幕语言（使用ISO 639-1标准）
  */
 function handleSetSubtitleTrackAPI(langCode: string, kind: string | undefined, sendResponse: (response: any) => void): void {
-  console.log(`[content-script] 通过API设置字幕语言: ${langCode}` + (kind ? ` (${kind})` : ''));
+  console.debug(`[debug][content-script] 通过API设置字幕语言: ${langCode}` + (kind ? ` (${kind})` : ''));
 
   const requestId = `api_set_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
@@ -781,8 +794,8 @@ function handleSetSubtitleTrackAPI(langCode: string, kind: string | undefined, s
  * 处理获取视频轨道数据
  */
 function handleGetVideoTrackData(videoId: string, sendResponse: (response: any) => void): void {
-  console.log(`[content-script] 开始获取视频轨道数据，videoId: ${videoId}`);
-  
+  console.debug(`[debug][content-script] 开始获取视频轨道数据，videoId: ${videoId}`);
+
   const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   
   const timeout = setTimeout(() => {
@@ -806,10 +819,10 @@ function handleGetVideoTrackData(videoId: string, sendResponse: (response: any) 
       
       clearTimeout(timeout);
       window.removeEventListener('message', responseHandler);
-      
+
       if (payload && payload.captionTracks) {
-        console.log(`[content-script] 收到轨道数据，共 ${payload.captionTracks.length} 条`);
-        
+        console.debug(`[debug][content-script] 收到轨道数据，共 ${payload.captionTracks.length} 条`);
+
         // 转换YouTube原始格式为简化格式
         const simplifiedTracks = payload.captionTracks.map((track: any) => {
           const rawKind = track.kind;
@@ -1001,19 +1014,29 @@ async function refreshStates(): Promise<void> {
  */
 function showErrorMessage(data: { message: string; duration?: number; level?: string }): void {
   try {
-    // Clear any pending subtitle overlay message before showing the error
-    subtitleOverlay.hide();
-    const { message, duration = 5000, level = 'warning' } = data;
-    
+    // 🔥 清除之前的两个定时器，防止提前隐藏新消息
+    if (errorMessageTimer !== null) {
+      clearTimeout(errorMessageTimer);
+      errorMessageTimer = null;
+    }
+    if (errorMessageHideTimer !== null) {
+      clearTimeout(errorMessageHideTimer);
+      errorMessageHideTimer = null;
+    }
+
+    // 🔥 字幕已在错误处理流程中通过 CLEAR_SUBTITLE_OVERLAY 消息清除
+    // 这里不需要再清除，避免冗余操作
+    const { message, duration = ERROR_MESSAGE_DURATION, level = 'warning' } = data;
+
     // 查找视频容器
     const videoElement = document.querySelector('video');
     const videoContainer = videoElement?.closest('#movie_player, .html5-video-player');
-    
+
     if (!videoContainer) {
       console.error('[content-script] 未找到视频容器，无法显示错误消息');
       return;
     }
-    
+
     // 查找或创建错误消息容器（使用字幕样式）
     let errorContainer = document.getElementById('youtube-translator-error-message');
     if (!errorContainer) {
@@ -1024,14 +1047,14 @@ function showErrorMessage(data: { message: string; duration?: number; level?: st
         bottom: 140px;
         left: 50%;
         transform: translateX(-50%);
-        z-index: 2100;
+        z-index: 2147483647;
         pointer-events: none;
         width: 90%;
         max-width: 800px;
         text-align: center;
         transition: opacity 0.3s ease;
       `;
-      
+
       // 创建内部消息容器（类似字幕容器）
       const messageBox = document.createElement('div');
       messageBox.id = 'error-message-box';
@@ -1042,38 +1065,55 @@ function showErrorMessage(data: { message: string; duration?: number; level?: st
         backdrop-filter: blur(2px);
         display: inline-block;
       `;
-      
+
       errorContainer.appendChild(messageBox);
       videoContainer.appendChild(errorContainer);
     }
-    
+
     const messageBox = errorContainer.querySelector('#error-message-box') as HTMLElement;
     if (!messageBox) return;
-    
-    // 设置消息文本样式（类似字幕样式）
+
+    // 🎯 获取字幕覆盖层的字体大小（与字幕保持一致）
+    const subtitleOverlayEl = document.querySelector('.subtitle-overlay-responsive');
+    let fontSize = '18px'; // 默认值
+    if (subtitleOverlayEl) {
+      const computedFontSize = getComputedStyle(subtitleOverlayEl).getPropertyValue('--calculated-font-size').trim();
+      if (computedFontSize) {
+        fontSize = computedFontSize;
+      }
+    }
+
+    // 设置消息文本样式（使用与字幕相同的响应式字体大小）
     const textStyles = {
-      info: 'color: #4CAF50; font-size: 22px; line-height: 1.4; font-weight: 500;',
-      warning: 'color: #ffeb3b; font-size: 22px; line-height: 1.4; font-weight: 500;',
-      error: 'color: #ff5252; font-size: 22px; line-height: 1.4; font-weight: 500;'
+      info: `color: #4CAF50; font-size: ${fontSize}; line-height: 1.4; font-weight: 500;`,
+      warning: `color: #ffeb3b; font-size: ${fontSize}; line-height: 1.4; font-weight: 500;`,
+      error: `color: #ff5252; font-size: ${fontSize}; line-height: 1.4; font-weight: 500;`
     };
-    
+
     messageBox.innerHTML = `<div style="${textStyles[level as keyof typeof textStyles] || textStyles.warning}">${message}</div>`;
     errorContainer.style.opacity = '1';
     errorContainer.style.display = 'block';
-    
-    // 自动隐藏
-    setTimeout(() => {
-      if (errorContainer) {
-        errorContainer.style.opacity = '0';
-        setTimeout(() => {
-          if (errorContainer) {
-            errorContainer.style.display = 'none';
+
+    // 自动隐藏 - 保存两个定时器引用
+    errorMessageTimer = window.setTimeout(() => {
+      const container = document.getElementById('youtube-translator-error-message');
+
+      if (container) {
+        container.style.opacity = '0';
+
+        // 🔥 保存内层定时器引用，确保可以被清除
+        errorMessageHideTimer = window.setTimeout(() => {
+          const c = document.getElementById('youtube-translator-error-message');
+          if (c) {
+            c.style.display = 'none';
           }
+          errorMessageTimer = null;
+          errorMessageHideTimer = null;
         }, 300);
+      } else {
+        errorMessageTimer = null;
       }
     }, duration);
-    
-    console.log('[content-script] 显示错误消息:', message);
   } catch (error) {
     console.error('[content-script] 显示错误消息失败:', error);
   }
@@ -1084,6 +1124,16 @@ function showErrorMessage(data: { message: string; duration?: number; level?: st
  */
 function clearErrorMessage(): void {
   try {
+    // 清除两个定时器
+    if (errorMessageTimer !== null) {
+      clearTimeout(errorMessageTimer);
+      errorMessageTimer = null;
+    }
+    if (errorMessageHideTimer !== null) {
+      clearTimeout(errorMessageHideTimer);
+      errorMessageHideTimer = null;
+    }
+
     const errorContainer = document.getElementById('youtube-translator-error-message');
     if (errorContainer) {
       errorContainer.style.opacity = '0';
@@ -1093,7 +1143,6 @@ function clearErrorMessage(): void {
         }
       }, 300);
     }
-    console.log('[content-script] 清除错误消息');
   } catch (error) {
     console.error('[content-script] 清除错误消息失败:', error);
   }
@@ -1205,7 +1254,7 @@ if (document.readyState === 'loading') {
  * 复用现有的StorageManager监听机制
  */
 function setupSourceLanguageChangeListener(): void {
-  console.log('[content-script] 设置源语言变更监听器');
+  console.log('[content-script] 注册源语言变更处理器（通过StorageManager统一分发）');
 
   // 复用现有的StorageManager监听机制
   StorageManager.getInstance().addChangeListener(
@@ -1215,7 +1264,7 @@ function setupSourceLanguageChangeListener(): void {
 }
 
 function setupTargetLanguageChangeListener(): void {
-  console.log('[content-script] 设置目标语言变更监听器');
+  console.log('[content-script] 注册目标语言变更处理器（通过UserPreferencesManager统一分发）');
 
   const prefsManager = UserPreferencesManager.getInstance();
   prefsManager.addChangeListener(
@@ -1230,7 +1279,7 @@ function setupTargetLanguageChangeListener(): void {
         const isActive = translateState === TranslateActiveState.ACTIVE || translateState === 'active';
 
         if (!isActive) {
-          console.log('[content-script] 目标语言变更但翻译未激活，忽略实时更新');
+          console.debug('[debug][content-script] 目标语言变更但翻译未激活，忽略实时更新');
           return;
         }
 
@@ -1243,7 +1292,7 @@ function setupTargetLanguageChangeListener(): void {
 }
 
 function setupTranslationServiceChangeListener(): void {
-  console.log('[content-script] 设置翻译服务变更监听器');
+  console.log('[content-script] 注册翻译服务变更处理器（通过UserPreferencesManager统一分发）');
 
   const prefsManager = UserPreferencesManager.getInstance();
   prefsManager.addChangeListener(
@@ -1261,7 +1310,7 @@ function setupTranslationServiceChangeListener(): void {
         const isActive = translateState === TranslateActiveState.ACTIVE || translateState === 'active';
 
         if (!isActive) {
-          console.log('[content-script] 翻译服务变更但翻译未激活，忽略实时更新');
+          console.debug('[debug][content-script] 翻译服务变更但翻译未激活，忽略实时更新');
           return;
         }
 
@@ -1320,13 +1369,13 @@ function setupTranslationServiceChangeListener(): void {
         if (!response) {
           console.error('[content-script] 无响应');
           subtitleOverlay.hide();
-          showErrorMessage({ message: '翻译服务无响应，请重试', duration: 5000 });
+          showErrorMessage({ message: '翻译服务无响应，请重试', duration: ERROR_MESSAGE_DURATION });
         } else if (!response.success) {
           console.error('[content-script] 翻译失败:', response.error);
           subtitleOverlay.hide();
           showErrorMessage({
             message: response.error || '翻译失败，请重试',
-            duration: 5000
+            duration: ERROR_MESSAGE_DURATION
           });
         } else if (response.action === 'translated' || response.action === 'cached') {
           displayTranslatedSubtitles(response.data);
@@ -1336,7 +1385,7 @@ function setupTranslationServiceChangeListener(): void {
         } else {
           console.warn('[content-script] 未知响应格式:', response);
           subtitleOverlay.hide();
-          showErrorMessage({ message: '翻译响应格式异常', duration: 5000 });
+          showErrorMessage({ message: '翻译响应格式异常', duration: ERROR_MESSAGE_DURATION });
         }
       } catch (error) {
         console.error('[content-script] 处理翻译服务变更监听失败:', error);
@@ -1389,17 +1438,9 @@ async function handleSourceLanguageCacheChange(
         newVideoData.selectedSourceTrack.languageCode !== oldVideoData?.selectedSourceTrack?.languageCode ||
         newVideoData.selectedSourceTrack.kind !== oldVideoData?.selectedSourceTrack?.kind;
 
-      console.log('[content-script] 检测到源语言选择:', {
-        changed: sourceChanged,
-        old: {
-          languageCode: oldVideoData?.selectedSourceTrack?.languageCode,
-          kind: oldVideoData?.selectedSourceTrack?.kind
-        },
-        new: {
-          languageCode: newVideoData.selectedSourceTrack.languageCode,
-          kind: newVideoData.selectedSourceTrack.kind
-        }
-      });
+      console.log(`[content-script] 检测到源语言选择: ${newVideoData.selectedSourceTrack.languageCode}` +
+        (newVideoData.selectedSourceTrack.kind ? ` (${newVideoData.selectedSourceTrack.kind})` : '') +
+        (sourceChanged ? ' [已变更]' : ' [强制刷新]'));
 
       // 处理源语言变更（即使未变化也执行，允许强制刷新）
       await handleSourceLanguageChange(newVideoData.selectedSourceTrack.languageCode);
@@ -1463,13 +1504,13 @@ async function handleSourceLanguageChange(newSourceLang: string): Promise<void> 
       if (!response) {
         console.error('[content-script] 无响应');
         subtitleOverlay.hide();
-        showErrorMessage({ message: '翻译服务无响应，请重试', duration: 5000 });
+        showErrorMessage({ message: '翻译服务无响应，请重试', duration: ERROR_MESSAGE_DURATION });
       } else if (!response.success) {
         console.error('[content-script] 翻译失败:', response.error);
         subtitleOverlay.hide();
         showErrorMessage({
           message: response.error || '翻译失败，请重试',
-          duration: 5000
+          duration: ERROR_MESSAGE_DURATION
         });
       } else if (response.action === 'translated' || response.action === 'cached') {
         displayTranslatedSubtitles(response.data);
@@ -1479,7 +1520,7 @@ async function handleSourceLanguageChange(newSourceLang: string): Promise<void> 
       } else {
         console.warn('[content-script] 未知响应格式:', response);
         subtitleOverlay.hide();
-        showErrorMessage({ message: '翻译响应格式异常', duration: 5000 });
+        showErrorMessage({ message: '翻译响应格式异常', duration: ERROR_MESSAGE_DURATION });
       }
     }
   } catch (error) {
@@ -1554,7 +1595,7 @@ async function handleTargetLanguageChangeRealtime(newTargetLang: string, oldTarg
       // 无响应
       console.error('[content-script] 无响应');
       subtitleOverlay.hide();
-      showErrorMessage({ message: '翻译服务无响应，请重试', duration: 5000 });
+      showErrorMessage({ message: '翻译服务无响应，请重试', duration: ERROR_MESSAGE_DURATION });
       stateManager?.updateState('translateActive', 'inactive');
     } else if (!response.success) {
       // 失败响应
@@ -1562,7 +1603,7 @@ async function handleTargetLanguageChangeRealtime(newTargetLang: string, oldTarg
       subtitleOverlay.hide();
       showErrorMessage({
         message: response.error || '翻译失败，请重试',
-        duration: 5000
+        duration: ERROR_MESSAGE_DURATION
       });
       stateManager?.updateState('translateActive', 'inactive');
     } else if (response.action === 'translated' || response.action === 'cached') {
@@ -1576,14 +1617,14 @@ async function handleTargetLanguageChangeRealtime(newTargetLang: string, oldTarg
       // 未知响应
       console.warn('[content-script] 未知响应格式:', response);
       subtitleOverlay.hide();
-      showErrorMessage({ message: '翻译响应格式异常', duration: 5000 });
+      showErrorMessage({ message: '翻译响应格式异常', duration: ERROR_MESSAGE_DURATION });
       stateManager?.updateState('translateActive', 'inactive');
     }
   } catch (error) {
     console.error('[content-script] 处理目标语言变更失败:', error);
     stateManager?.updateState('translateActive', 'inactive');
     subtitleOverlay.hide();
-    showErrorMessage({ message: '处理目标语言变更失败', duration: 5000 });
+    showErrorMessage({ message: '处理目标语言变更失败', duration: ERROR_MESSAGE_DURATION });
   }
 }
 

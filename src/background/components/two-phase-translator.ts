@@ -53,7 +53,7 @@ export class TwoPhaseTranslator {
     targetLang: string,
     onProgress?: (phase: string, progress: number, data?: any) => void
   ): Promise<Map<number, string>> {
-    console.log(`[TwoPhaseTranslator] 开始两阶段翻译（并行执行版本）:`, {
+    console.debug(`[debug][TwoPhaseTranslator] 开始两阶段翻译（并行执行版本）:`, {
       总字幕数: allSubtitles.length,
       当前位置: currentIndex,
       语言对: `${sourceLang} → ${targetLang}`
@@ -71,7 +71,7 @@ export class TwoPhaseTranslator {
     const urgentEnd = Math.min(allSubtitles.length, currentIndex + 31);
     if (urgentEnd - urgentStart >= allSubtitles.length) {
       this.urgentCoverageComplete = true;
-      console.log(`[TwoPhaseTranslator] 紧急翻译将覆盖全部${allSubtitles.length}条字幕`);
+      console.debug(`[debug][TwoPhaseTranslator] 紧急翻译将覆盖全部${allSubtitles.length}条字幕`);
     }
     
     const startTime = Date.now();
@@ -105,7 +105,7 @@ export class TwoPhaseTranslator {
       urgentResult.value.forEach((value, key) => {
         allTranslations.set(key, value);
       });
-      console.log(`[TwoPhaseTranslator] 紧急翻译完成: ${urgentResult.value.size}条`);
+      console.debug(`[debug][TwoPhaseTranslator] 紧急翻译完成: ${urgentResult.value.size}条`);
     } else if (urgentResult.status === 'rejected') {
       console.warn('[TwoPhaseTranslator] 紧急翻译失败:', urgentResult.reason);
     }
@@ -115,7 +115,7 @@ export class TwoPhaseTranslator {
       batchResult.value.forEach((value, key) => {
         allTranslations.set(key, value);
       });
-      console.log(`[TwoPhaseTranslator] 批量翻译完成: ${batchResult.value.size}条，覆盖显示`);
+      console.debug(`[debug][TwoPhaseTranslator] 批量翻译完成: ${batchResult.value.size}条，覆盖显示`);
     } else if (batchResult.status === 'rejected') {
       console.warn('[TwoPhaseTranslator] 批量翻译失败:', batchResult.reason);
     }
@@ -124,7 +124,7 @@ export class TwoPhaseTranslator {
     const totalTime = Date.now() - startTime;
     
     console.log(`[TwoPhaseTranslator] ✅ 翻译完成，总耗时: ${(totalTime / 1000).toFixed(1)}s`);
-    console.log(`[TwoPhaseTranslator] 翻译统计:`, {
+    console.debug(`[debug][TwoPhaseTranslator] 翻译统计:`, {
       最终结果: allTranslations.size,
       覆盖率: `${((allTranslations.size / allSubtitles.length) * 100).toFixed(1)}%`
     });
@@ -161,7 +161,7 @@ export class TwoPhaseTranslator {
     const urgentTexts = urgentBatch.map(sub => sub.text.replace(/\n/g, ' ').trim());
     const urgentCombined = urgentTexts.join('\n');
     
-    console.log(`[TwoPhaseTranslator] 开始紧急翻译: ${urgentBatch.length}条字幕`);
+    console.debug(`[debug][TwoPhaseTranslator] 开始紧急翻译: ${urgentBatch.length}条字幕`);
     
     // 使用超时控制器执行（无重试）
     const urgentResults = await TimeoutController.executeWithTimeout(
@@ -172,7 +172,7 @@ export class TwoPhaseTranslator {
     
     // 检查执行ID是否匹配
     if (executionId !== this.currentExecutionId) {
-      console.log('[TwoPhaseTranslator] 紧急翻译执行ID不匹配，忽略过期结果');
+      console.debug('[debug][TwoPhaseTranslator] 紧急翻译执行ID不匹配，忽略过期结果');
       return urgentTranslations;
     }
     
@@ -186,12 +186,12 @@ export class TwoPhaseTranslator {
     });
     
     const urgentTime = Date.now() - startTime;
-    console.log(`[TwoPhaseTranslator] 🚀 紧急翻译完成，耗时: ${urgentTime}ms`);
+    console.debug(`[debug][TwoPhaseTranslator] 🚀 紧急翻译完成，耗时: ${urgentTime}ms`);
     
     // 显示逻辑：检查批量翻译是否已完成
     if (!this.isComplete) {
       // 批量未完成，显示紧急翻译结果
-      console.log('[TwoPhaseTranslator] 批量未完成，显示紧急翻译结果');
+      console.debug('[debug][TwoPhaseTranslator] 批量未完成，显示紧急翻译结果');
       
       // 通知紧急翻译完成并显示
       onProgress?.('urgent', 100, {
@@ -204,7 +204,7 @@ export class TwoPhaseTranslator {
         }
       });
     } else {
-      console.log('[TwoPhaseTranslator] 批量已完成，忽略紧急翻译结果');
+      console.debug('[debug][TwoPhaseTranslator] 批量已完成，忽略紧急翻译结果');
     }
     
     return urgentTranslations;
@@ -223,7 +223,7 @@ export class TwoPhaseTranslator {
   ): Promise<Map<number, string> | null> {
     // 前置判断：是否需要执行批量翻译
     if (this.urgentCoverageComplete) {
-      console.log('[TwoPhaseTranslator] 跳过批量翻译：紧急翻译已覆盖全部');
+      console.debug('[debug][TwoPhaseTranslator] 跳过批量翻译：紧急翻译已覆盖全部');
       this.isComplete = true;
       return null;
     }
@@ -232,15 +232,15 @@ export class TwoPhaseTranslator {
     
     // 检查执行ID是否仍然有效
     if (executionId !== this.currentExecutionId) {
-      console.log('[TwoPhaseTranslator] 批量翻译执行ID不匹配，取消执行');
+      console.debug('[debug][TwoPhaseTranslator] 批量翻译执行ID不匹配，取消执行');
       return batchTranslations;
     }
     
-    console.log('[TwoPhaseTranslator] 开始批量翻译（并行执行，每批延迟200ms）');
+    console.debug('[debug][TwoPhaseTranslator] 开始批量翻译（并行执行，每批延迟200ms）');
     
     // 创建智能批次
     const fullBatches = this.segmenter.createSmartBatches(allSubtitles);
-    console.log(`[TwoPhaseTranslator] 创建了${fullBatches.length}个批次`);
+    console.debug(`[debug][TwoPhaseTranslator] 创建了${fullBatches.length}个批次`);
     
     // 顺序执行批次，每批延迟200ms
     for (let i = 0; i < fullBatches.length; i++) {
@@ -251,7 +251,7 @@ export class TwoPhaseTranslator {
       
       // 再次检查执行ID
       if (executionId !== this.currentExecutionId) {
-        console.log(`[TwoPhaseTranslator] 批次${i+1}执行ID不匹配，停止批量翻译`);
+        console.debug(`[debug][TwoPhaseTranslator] 批次${i+1}执行ID不匹配，停止批量翻译`);
         break;
       }
       
@@ -289,7 +289,7 @@ export class TwoPhaseTranslator {
           });
         }
         
-        console.log(`[TwoPhaseTranslator] ✓ 批次${i+1}/${fullBatches.length}翻译成功`);
+        console.debug(`[debug][TwoPhaseTranslator] ✓ 批次${i+1}/${fullBatches.length}翻译成功`);
         
         // 通知批次进度
         onProgress?.('batch', ((i + 1) / fullBatches.length) * 100, {
@@ -313,7 +313,7 @@ export class TwoPhaseTranslator {
     this.isComplete = true;
     
     const batchTime = Date.now() - startTime;
-    console.log(`[TwoPhaseTranslator] 📦 批量翻译完成，耗时: ${(batchTime / 1000).toFixed(1)}s`);
+    console.debug(`[debug][TwoPhaseTranslator] 📦 批量翻译完成，耗时: ${(batchTime / 1000).toFixed(1)}s`);
     
     return batchTranslations;
   }

@@ -714,21 +714,6 @@ class SubtitleInterceptor {
       console.warn('[SubtitleInterceptor] 获取当前轨道失败:', trackError);
     }
 
-    if (subtitleAPIController && subtitleAPIController.getAvailableTracks) {
-      subtitleAPIController.getAvailableTracks().then((tracks: any[]) => {
-        if (tracks) {
-          const snapshot = tracks.slice(0, 6).map(track => ({
-            languageCode: track.languageCode,
-            vssId: track.vssId ?? track.vss_id ?? null,
-            kind: track.kind ?? null
-          }));
-          console.debug('[debug][SubtitleInterceptor] 初始化时可用轨道快照', snapshot);
-        }
-      }).catch(err => {
-        console.warn('[SubtitleInterceptor] 获取可用轨道失败:', err);
-      });
-    }
-
     try {
       console.log('[SubtitleInterceptor] 🚀 按需初始化拦截器...');
 

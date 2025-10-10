@@ -37,7 +37,7 @@ export class BatchProcessor {
       batches.push(subtitles.slice(i, i + optimalBatchSize));
     }
     
-    console.log(`[BatchProcessor] 创建了 ${batches.length} 个批次，每批最多 ${optimalBatchSize} 条字幕`);
+    console.debug(`[debug][BatchProcessor] 创建了 ${batches.length} 个批次，每批最多 ${optimalBatchSize} 条字幕`);
     return batches;
   }
   
@@ -70,7 +70,7 @@ export class BatchProcessor {
     // 添加一些buffer，并四舍五入
     avgTokens = Math.ceil(avgTokens * 1.2);
     
-    console.log(`[BatchProcessor] 估算平均每条字幕约 ${avgTokens} tokens (中文比例: ${(chineseCharRatio * 100).toFixed(1)}%)`);
+    console.debug(`[debug][BatchProcessor] 估算平均每条字幕约 ${avgTokens} tokens (中文比例: ${(chineseCharRatio * 100).toFixed(1)}%)`);
     return avgTokens;
   }
   
@@ -131,7 +131,7 @@ export class BatchProcessor {
       groups.push(currentGroup);
     }
     
-    console.log(`[BatchProcessor] 优化后创建了 ${groups.length} 个文本组，平均每组 ${Math.round(subtitles.length / groups.length)} 条字幕`);
+    console.debug(`[debug][BatchProcessor] 优化后创建了 ${groups.length} 个文本组，平均每组 ${Math.round(subtitles.length / groups.length)} 条字幕`);
     return groups;
   }
 } 

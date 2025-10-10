@@ -27,7 +27,7 @@ export class SimpleWatchdogManager {
     }, SimpleWatchdogManager.TIMEOUT);
     
     this.watchers.set(stage, timeout);
-    console.log(`[SimpleWatchdog] 启动监控: ${stage}`);
+    console.debug(`[debug][SimpleWatchdog] 启动监控: ${stage}`);
   }
   
   /**
@@ -39,17 +39,17 @@ export class SimpleWatchdogManager {
     if (timeout) {
       clearTimeout(timeout);
       this.watchers.delete(stage);
-      console.log(`[SimpleWatchdog] 清除监控: ${stage}`);
+      console.debug(`[debug][SimpleWatchdog] 清除监控: ${stage}`);
     }
   }
-  
+
   /**
    * 清除所有看门狗
    */
   clearAll(): void {
     for (const [stage, timeout] of this.watchers.entries()) {
       clearTimeout(timeout);
-      console.log(`[SimpleWatchdog] 清除监控: ${stage}`);
+      console.debug(`[debug][SimpleWatchdog] 清除监控: ${stage}`);
     }
     this.watchers.clear();
   }

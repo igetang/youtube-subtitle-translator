@@ -8,10 +8,18 @@ export class IntelligentSegmenter {
   private static readonly DEBUG_SUBTITLE_TIMING = false;  // 设为false关闭调试日志
 
   // 核心参数（基于07文档）
-  private static readonly MAX_BATCH_SIZE = 160;  // 搜索窗口大小（OpenAI可支持更大批次）
+  private readonly maxBatchSize: number;  // 单批最大字幕数（可配置：DeepSeek用20，Google/Microsoft用40，OpenAI用160）
   private static readonly URGENT_BEFORE = 9;    // 紧急翻译前向范围
   private static readonly URGENT_AFTER = 10;    // 紧急翻译后向范围（调试：改为10）
-  
+
+  /**
+   * 构造函数
+   * @param maxBatchSize 单批最大字幕数（DeepSeek用20，Google/Microsoft用40，OpenAI用160）
+   */
+  constructor(maxBatchSize: number = 40) {
+    this.maxBatchSize = maxBatchSize;
+  }
+
   /**
    * 创建智能批次
    * @param subtitles 所有字幕
@@ -33,8 +41,8 @@ export class IntelligentSegmenter {
     }
     
     // 如果字幕总数不超过MAX_BATCH_SIZE，直接一批发送，无需分析时间间隔
-    if (subtitles.length <= IntelligentSegmenter.MAX_BATCH_SIZE) {
-      console.log(`[IntelligentSegmenter] 字幕总数${subtitles.length}条 ≤ ${IntelligentSegmenter.MAX_BATCH_SIZE}条，一次性发送`);
+    if (subtitles.length <= this.maxBatchSize) {
+      console.debug(`[debug][IntelligentSegmenter] 字幕总数${subtitles.length}条 ≤ ${this.maxBatchSize}条，一次性发送`);
       return [{
         startIdx: 0,
         endIdx: subtitles.length,
@@ -57,10 +65,10 @@ export class IntelligentSegmenter {
       console.log('[IntelligentSegmenter] ================================================');
     }
 
-    // 超过40条需要智能断句
+    // 超过阈值需要智能断句
     console.log(`[IntelligentSegmenter] 开始智能分批:`, {
       总字幕数: subtitles.length,
-      批次大小: IntelligentSegmenter.MAX_BATCH_SIZE
+      批次大小: this.maxBatchSize
     });
     
     const batches: Array<{
@@ -86,12 +94,7 @@ export class IntelligentSegmenter {
       const batchEndTime = lastSubtitle?.end ||
                           (lastSubtitle?.start + (lastSubtitle?.duration || 0)) || 0;
 
-      console.log(`[IntelligentSegmenter] 批次${batches.length}:`, {
-        索引范围: `[${currentIdx}-${cutPoint})`,
-        时间范围: `${batchStartTime.toFixed(3)}s - ${batchEndTime.toFixed(3)}s`,
-        数量: batch.subtitles.length,
-        首句: batch.subtitles[0]?.text.substring(0, 30)
-      });
+      console.debug(`[debug][IntelligentSegmenter] 批次${batches.length}: [${currentIdx}-${cutPoint}), ${batch.subtitles.length}条, ${batchStartTime.toFixed(1)}-${batchEndTime.toFixed(1)}s`);
       
       currentIdx = cutPoint;
     }
@@ -120,16 +123,16 @@ export class IntelligentSegmenter {
     }>,
     startIdx: number
   ): number {
-    const BATCH_SIZE = 120;  // 修改为120以适应12000字符限制
+    const BATCH_SIZE = this.maxBatchSize;  // 使用实例配置的批次大小
     const MIN_BATCH_SIZE = 10;  // 最小批次大小
     const STRONG_GAP = 2.0;     // 强断点：2秒
     const WEAK_GAP_DIFF = 0.4;  // 弱断点：差值400ms
 
     const endIdx = Math.min(startIdx + BATCH_SIZE, subtitles.length);
 
-    // 剩余不足40条，全部发送
+    // 剩余不足BATCH_SIZE条，全部发送
     if (endIdx - startIdx < BATCH_SIZE) {
-      console.log(`[IntelligentSegmenter] 剩余${endIdx - startIdx}条，全部发送`);
+      console.debug(`[debug][IntelligentSegmenter] 剩余${endIdx - startIdx}条，全部发送`);
       return endIdx;
     }
 
@@ -151,7 +154,7 @@ export class IntelligentSegmenter {
 
         if (batchSize >= MIN_BATCH_SIZE) {
           // 找到满足条件的强断点，立即返回
-          console.log(`[IntelligentSegmenter] ✓ 找到强断点: 索引${i}, 间隔${(gap * 1000).toFixed(1)}ms, 批次${batchSize}条`);
+          console.debug(`[debug][IntelligentSegmenter] ✓ 找到强断点: 索引${i}, 间隔${(gap * 1000).toFixed(1)}ms, 批次${batchSize}条`);
 
           if (IntelligentSegmenter.DEBUG_SUBTITLE_TIMING) {
             console.log(`[IntelligentSegmenter] 断句时间点: ${currentEnd.toFixed(3)}s | 间隔${(gap * 1000).toFixed(1)}ms | ${nextSubtitle.start.toFixed(3)}s`);
@@ -161,7 +164,7 @@ export class IntelligentSegmenter {
         } else {
           // 批次太小，加入候选列表
           strongBreakCandidates.push(i);
-          console.log(`[IntelligentSegmenter] 强断点批次过小(${batchSize}条<10条)，记录为候选#${strongBreakCandidates.length}`);
+          console.debug(`[debug][IntelligentSegmenter] 强断点批次过小(${batchSize}条<10条)，记录为候选#${strongBreakCandidates.length}`);
 
           // 如果已找到3个候选，停止查找
           if (strongBreakCandidates.length >= MAX_RETRIES) {
@@ -199,7 +202,7 @@ export class IntelligentSegmenter {
 
           if (batchSize >= MIN_BATCH_SIZE) {
             // 找到满足条件的弱断点，立即返回
-            console.log(`[IntelligentSegmenter] ✓ 找到弱断点: 索引${i}, 间隔差${((gap - minGap) * 1000).toFixed(1)}ms, 批次${batchSize}条`);
+            console.debug(`[debug][IntelligentSegmenter] ✓ 找到弱断点: 索引${i}, 间隔差${((gap - minGap) * 1000).toFixed(1)}ms, 批次${batchSize}条`);
 
             if (IntelligentSegmenter.DEBUG_SUBTITLE_TIMING) {
               console.log(`[IntelligentSegmenter] 断句时间点: ${currentEnd.toFixed(3)}s | 间隔${(gap * 1000).toFixed(1)}ms | ${nextSubtitle.start.toFixed(3)}s`);
@@ -209,7 +212,7 @@ export class IntelligentSegmenter {
           } else {
             // 批次太小，加入候选列表
             weakBreakCandidates.push(i);
-            console.log(`[IntelligentSegmenter] 弱断点批次过小(${batchSize}条<10条)，记录为候选#${weakBreakCandidates.length}`);
+            console.debug(`[debug][IntelligentSegmenter] 弱断点批次过小(${batchSize}条<10条)，记录为候选#${weakBreakCandidates.length}`);
 
             // 如果已找到3个候选，停止查找
             if (weakBreakCandidates.length >= MAX_RETRIES) {
@@ -234,7 +237,7 @@ export class IntelligentSegmenter {
       return firstStrongBreak;
     }
 
-    // 没找到任何断点，40条全部发送
+    // 没找到任何断点，BATCH_SIZE条全部发送
     const batchStartTime = subtitles[startIdx].start;
     const batchEndTime = subtitles[Math.min(endIdx - 1, subtitles.length - 1)].end ||
                         (subtitles[Math.min(endIdx - 1, subtitles.length - 1)].start +

@@ -129,14 +129,14 @@ export class TranslationSession {
     const startTime = Date.now();
     
     try {
-      console.log(`[TranslationSession] → 开始执行: ${stage}，超时: ${timeoutMs}ms`);
+      console.debug(`[debug][TranslationSession] → 开始执行: ${stage}，超时: ${timeoutMs}ms`);
       
       // 执行操作
       const result = await operation(signal);
       
       // 记录成功
       const elapsed = Date.now() - startTime;
-      console.log(`[TranslationSession] ✓ ${stage} 成功，耗时: ${elapsed}ms`);
+      console.debug(`[debug][TranslationSession] ✓ ${stage} 成功，耗时: ${elapsed}ms`);
       
       return result;
       

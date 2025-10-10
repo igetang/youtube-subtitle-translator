@@ -106,8 +106,8 @@ export class DeepSeekTranslator {
       const batch = texts.slice(i, i + DeepSeekTranslator.BATCH_SIZE);
       const batchNumber = Math.floor(i / DeepSeekTranslator.BATCH_SIZE) + 1;
 
-      console.log(
-        `[DeepSeekTranslator] 翻译批次 ${batchNumber}/${totalBatches}: ` +
+      console.debug(
+        `[debug][DeepSeekTranslator] 翻译批次 ${batchNumber}/${totalBatches}: ` +
         `${batch.length} 条字幕 (${stage}阶段)`
       );
 
@@ -202,22 +202,20 @@ Return ONLY the translation without any explanation.`
         signal  // 使用外部 AbortSignal
       });
 
-      // 错误处理细化
+      // 错误处理细化（简化错误消息）
       if (!response.ok) {
-        const errorText = await response.text();
-
         switch (response.status) {
           case 401:
           case 403:
-            throw new Error('DeepSeek API密钥无效，请检查设置');
+            throw new Error('DeepSeek API密钥无效');
           case 429:
-            throw new Error('DeepSeek API速率限制，请稍后重试');
+            throw new Error('DeepSeek API速率限制');
           case 500:
           case 502:
           case 503:
             throw new Error('DeepSeek服务暂时不可用');
           default:
-            throw new Error(`DeepSeek API错误 (${response.status}): ${errorText}`);
+            throw new Error(`DeepSeek API错误 (${response.status})`);
         }
       }
 
@@ -228,8 +226,8 @@ Return ONLY the translation without any explanation.`
       }
 
       // 记录 token 使用情况
-      console.log(
-        `[DeepSeekTranslator] Token使用: ` +
+      console.debug(
+        `[debug][DeepSeekTranslator] Token使用: ` +
         `输入=${data.usage.prompt_tokens}, ` +
         `输出=${data.usage.completion_tokens}, ` +
         `总计=${data.usage.total_tokens}`

@@ -48,7 +48,7 @@ export class MicrosoftTextOptimizer {
     }
 
     const startTime = Date.now();
-    console.log(`[MicrosoftTextOptimizer] 开始优化 ${subtitles.length} 条字幕`);
+    console.debug(`[debug][MicrosoftTextOptimizer] 开始优化 ${subtitles.length} 条字幕`);
 
     // 第一步：预处理字幕（清理内部换行符）
     const processedSubtitles = this.preprocessSubtitles(subtitles);
@@ -114,13 +114,13 @@ export class MicrosoftTextOptimizer {
     // 打印每组的统计信息
     if (groups.length <= 10) {  // 只在组数较少时打印详细信息
       groups.forEach((group, idx) => {
-        console.log(
-          `[MicrosoftTextOptimizer] Text组${idx + 1}: ` +
+        console.debug(
+          `[debug][MicrosoftTextOptimizer] Text组${idx + 1}: ` +
           `${group.indices.length}条字幕, ${group.text.length}字符`
         );
       });
     } else {
-      console.log(`[MicrosoftTextOptimizer] 创建了 ${groups.length} 个Text组`);
+      console.debug(`[debug][MicrosoftTextOptimizer] 创建了 ${groups.length} 个Text组`);
     }
 
     return groups;
@@ -226,7 +226,7 @@ export class MicrosoftTextOptimizer {
     const results = new Array(originalCount).fill('');
     const SEPARATOR = MicrosoftTextOptimizer.SEPARATOR;
 
-    console.log(`[MicrosoftTextOptimizer] 开始映射翻译结果到 ${originalCount} 条原始字幕`);
+    console.debug(`[debug][MicrosoftTextOptimizer] 开始映射翻译结果到 ${originalCount} 条原始字幕`);
 
     // 遍历每个翻译后的文本
     for (let i = 0; i < translatedTexts.length; i++) {
@@ -381,8 +381,8 @@ export class MicrosoftTextOptimizer {
       ((originalRequests - optimizedRequests) / originalRequests) * 100
     );
 
-    console.log(
-      `[MicrosoftTextOptimizer] 预估优化效果:\n` +
+    console.debug(
+      `[debug][MicrosoftTextOptimizer] 预估优化效果:\n` +
       `  - ${subtitleCount}条字幕（平均${avgLength}字符/条）\n` +
       `  - 原始方案: ${originalRequests}个请求\n` +
       `  - 优化方案: ${optimizedRequests}个请求\n` +
