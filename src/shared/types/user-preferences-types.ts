@@ -50,6 +50,10 @@ export interface TranslationServiceComplete {
   // === 限流参数 ===
   rpm?: number | null;                          // 每分钟请求限制
   tpm?: number | null;                          // 每分钟令牌限制
+
+  // === Gemini专用参数（Phase 1） ===
+  tier?: 'free' | 'paid';                       // Gemini账户类型（手动选择）
+  batchDelay?: number;                          // Gemini批量翻译延迟（ms）
 }
 
 /**
@@ -102,12 +106,14 @@ export const TRANSLATION_SERVICE_TEMPLATES: Record<TranslationServiceType, Omit<
   [TranslationServiceType.GEMINI]: {
     type: TranslationServiceType.GEMINI,
     name: 'Google Gemini',
-    model: 'gemini-pro',
-    availableModels: ['gemini-pro', 'gemini-1.5-pro'],
-    temperature: 0.7,
-    maxTokens: 8000,
-    rpm: 60,
-    tpm: 120000
+    model: 'gemini-2.5-flash-lite',               // Gemini 2.5 Flash-Lite（快速·推荐用于字幕翻译）
+    availableModels: ['gemini-2.5-flash', 'gemini-2.5-flash-lite'],  // 可用模型列表
+    temperature: 0,                               // 翻译任务需要确定性（0 = 无随机性）
+    maxTokens: 65536,                             // Gemini 2.5的最大输出tokens
+    rpm: 60,                                      // 默认RPM（实际会根据tier调整）
+    tpm: 120000,                                  // 默认TPM（实际会根据tier调整）
+    tier: 'free',                                 // Phase 1: 手动选择账户类型（默认免费层）
+    batchDelay: 6000                              // Phase 1: 批量翻译延迟（免费层flash: 6秒）
   },
   [TranslationServiceType.DEEPSEEK]: {
     type: TranslationServiceType.DEEPSEEK,

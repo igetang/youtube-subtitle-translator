@@ -11,6 +11,7 @@ import { OpenAITranslator } from './openai-translator';
 import { MicrosoftTranslator } from './microsoft-translator';
 import { MicrosoftTextOptimizer } from './microsoft-text-optimizer';
 import { DeepSeekTranslator } from './deepseek-translator';
+import { GeminiTranslator } from './gemini-translator';
 
 /**
  * 两阶段翻译器 - 支持AbortSignal版本
@@ -289,6 +290,8 @@ export class TwoPhaseTranslatorV4 {
         perBatchTimeout = 30000; // DeepSeek需要30秒
       } else if (serviceType === 'openai') {
         perBatchTimeout = 15000; // OpenAI单批15秒（适配GPT-5响应时间）
+      } else if (serviceType === 'gemini') {
+        perBatchTimeout = 15000; // Gemini单批15秒（批次大小200）
       } else if (serviceType === 'google-free' || serviceType === 'google' ||
                  serviceType === 'microsoft-free' || serviceType === 'microsoft') {
         perBatchTimeout = 5000; // 免费服务5秒
@@ -868,6 +871,31 @@ export class TwoPhaseTranslatorV4 {
           const stage = options?.stage ?? 'batch';
 
           // 调用翻译（传递 signal）
+          translatedTexts = await translator.translate(
+            texts,
+            sourceLang,
+            targetLang,
+            stage,
+            signal
+          );
+
+        } else if (service.type === 'gemini') {
+          // 使用 Gemini 翻译（Phase 1: 手动tier选择）
+          if (!service.apiKey) {
+            throw new Error('Gemini API密钥未配置');
+          }
+
+          const translator = new GeminiTranslator(
+            service.apiKey,
+            service.model || 'gemini-2.5-flash-lite',
+            service.temperature ?? 0,
+            service.maxTokens || 65536,
+            service.batchDelay || 6000  // Phase 1: 从配置读取延迟
+          );
+
+          const stage = options?.stage ?? 'batch';
+
+          // 调用翻译（传递 stage 和 signal）
           translatedTexts = await translator.translate(
             texts,
             sourceLang,

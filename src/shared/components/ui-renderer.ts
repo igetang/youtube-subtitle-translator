@@ -235,6 +235,8 @@ export class UIRenderer {
     button.style.cssText = `
       position: relative;
       display: inline-block;
+      vertical-align: top;
+      align-self: center;
       width: 48px;
       height: 48px;
       border: none;

@@ -3725,10 +3725,7 @@ async function testPaidApiService(apiType: string, apiKey: string, model?: strin
         message: 'DeepL API测试功能尚未实现'
       };
     } else if (apiType === 'gemini') {
-      return {
-        success: false,
-        message: 'Gemini API测试功能尚未实现'
-      };
+      return await testGeminiService(apiKey, model || 'gemini-2.5-flash-lite');
     } else {
       return {
         success: false,
@@ -4205,6 +4202,80 @@ async function testDeepSeekService(apiKey: string): Promise<{success: boolean, m
     return {
       success: false,
       message: error instanceof Error ? error.message : 'DeepSeek测试失败'
+    };
+  }
+}
+
+/**
+ * 测试Gemini API服务
+ */
+async function testGeminiService(apiKey: string, model: string): Promise<{success: boolean, message: string}> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+  const options = {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      contents: [{
+        parts: [{
+          text: 'Say "test successful" in Chinese.'
+        }]
+      }],
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 100  // 增大到100，确保有足够空间输出
+      }
+    })
+  };
+
+  try {
+    console.log('[service-worker] 测试Gemini API:', { url, model });
+    const response = await fetch(url, options);
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      console.error('[service-worker] Gemini API错误响应:', errorData);
+      const errorMsg = errorData?.error?.message || `HTTP ${response.status}: ${response.statusText}`;
+      throw new Error(errorMsg);
+    }
+
+    const data = await response.json();
+    console.log('[service-worker] Gemini API响应:', JSON.stringify(data, null, 2));
+
+    // 检查响应结构
+    if (!data.candidates) {
+      console.error('[service-worker] 缺少candidates字段');
+      throw new Error('Gemini返回格式异常: 缺少candidates字段');
+    }
+
+    if (data.candidates.length === 0) {
+      console.error('[service-worker] candidates数组为空');
+      throw new Error('Gemini返回格式异常: candidates数组为空');
+    }
+
+    if (!data.candidates[0].content) {
+      console.error('[service-worker] 缺少content字段');
+      throw new Error('Gemini返回格式异常: 缺少content字段');
+    }
+
+    if (!data.candidates[0].content.parts || data.candidates[0].content.parts.length === 0) {
+      console.error('[service-worker] parts字段为空');
+      throw new Error('Gemini返回格式异常: parts字段为空');
+    }
+
+    const result = data.candidates[0].content.parts[0].text || '测试成功';
+    console.log('[service-worker] ✓ Gemini测试成功:', result);
+    return {
+      success: true,
+      message: `Gemini API测试成功: ${result}`
+    };
+  } catch (error) {
+    console.error(`[service-worker] ✗ Gemini测试失败:`, error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : 'Gemini测试失败'
     };
   }
 }

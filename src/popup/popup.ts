@@ -1039,6 +1039,11 @@ let membershipPanel: HTMLDivElement | null = null;
 let openaiBasicPanel: HTMLDivElement | null = null;
 let togglePasswordButton: HTMLButtonElement | null = null;
 
+// === Gemini相关元素引用 (Phase 1) ===
+let geminiBasicPanel: HTMLDivElement | null = null;
+let geminiModelSelect: HTMLSelectElement | null = null;
+let geminiTierSwitch: HTMLInputElement | null = null;  // 改为开关（checkbox）
+
 /**
  * 初始化DOM元素引用（仅在YouTube页面调用）
  */
@@ -1081,6 +1086,11 @@ function initializeDOMElements(): void {
   membershipPanel = document.getElementById('membership-panel') as HTMLDivElement;
   openaiBasicPanel = document.getElementById('openai-basic-panel') as HTMLDivElement;
   togglePasswordButton = document.getElementById('toggle-password') as HTMLButtonElement;
+
+  // === Gemini面板元素引用 (Phase 1) ===
+  geminiBasicPanel = document.getElementById('gemini-basic-panel') as HTMLDivElement;
+  geminiModelSelect = document.getElementById('gemini-model') as HTMLSelectElement;
+  geminiTierSwitch = document.getElementById('gemini-tier-switch') as HTMLInputElement;  // 开关
 }
 
 /**
@@ -1108,7 +1118,8 @@ function updateApiPanels(apiType: string): void {
     customApiPanel.classList.remove('visible');
   }
   if (openaiBasicPanel) openaiBasicPanel.style.display = 'none';
-  
+  if (geminiBasicPanel) geminiBasicPanel.style.display = 'none';
+
   // 根据API类型显示相应面板
   const apiInfo = apiInfoMap[apiType];
   
@@ -1170,6 +1181,16 @@ function updateApiPanels(apiType: string): void {
   else if (apiType === 'deepseek') {
     // DeepSeek 只显示 API Key 输入框
     // Model 和 Temperature 固定值，不暴露给用户
+    if (apiKeyPanel) {
+      apiKeyPanel.style.display = 'block';
+      apiKeyPanel.classList.add('visible');
+    }
+  }
+  // 处理Gemini相关面板 (Phase 1)
+  else if (apiType === 'gemini') {
+    // 显示Gemini设置面板（模型、tier）
+    if (geminiBasicPanel) geminiBasicPanel.style.display = 'block';
+    // 确保API密钥面板也显示
     if (apiKeyPanel) {
       apiKeyPanel.style.display = 'block';
       apiKeyPanel.classList.add('visible');
@@ -1536,18 +1557,32 @@ async function updateUserPreferencesUI(userPreferences: UserPreferences): Promis
       }
       
       // 设置API密钥
-      if (apiKeyInput && service.apiKey) {
-        apiKeyInput.value = service.apiKey;
-        console.log('[popup] API密钥已设置');
+      if (apiKeyInput) {
+        apiKeyInput.value = service.apiKey || '';
+        if (service.apiKey) {
+          console.log('[popup] API密钥已设置');
+        }
       }
       
       // 设置模型选择
-      if (modelSelect && service.model) {
+      if (modelSelect && service.model && service.type !== 'gemini') {
         modelSelect.value = service.model;
         console.log('[popup] 模型选择已设置:', service.model);
       }
+
+      // 设置Gemini设置 (Phase 1)
+      if (service.type === 'gemini') {
+        if (geminiModelSelect && service.model) {
+          geminiModelSelect.value = service.model;
+          console.log('[popup] Gemini模型选择已设置:', service.model);
+        }
+        if (geminiTierSwitch && service.tier) {
+          geminiTierSwitch.checked = (service.tier === 'paid');  // paid=true, free=false
+          console.log('[popup] Gemini tier已设置:', service.tier);
+        }
+      }
     }
-    
+
     // 填充目标语言列表
     populateTargetLanguages();
     
@@ -1961,6 +1996,8 @@ function setupUnifiedSettingsListener(): void {
       case 'translation-api':
       case 'api-key':
       case 'openai-model':
+      case 'gemini-model':
+      case 'gemini-tier-switch':  // 改为开关ID
         await handleTranslationServiceChange();
         break;
 
@@ -2059,9 +2096,17 @@ async function handleTranslationServiceChange(): Promise<void> {
     const apiKeyInput = document.getElementById('api-key') as HTMLInputElement;
     const modelSelect = document.getElementById('openai-model') as HTMLSelectElement;
 
+    // Gemini相关字段 (Phase 1)
+    const geminiModelSelect = document.getElementById('gemini-model') as HTMLSelectElement;
+    const geminiTierSwitch = document.getElementById('gemini-tier-switch') as HTMLInputElement;
+
     const newType = (translationApiSelect?.value as TranslationServiceType);
     const newApiKey = apiKeyInput?.value;
     const newModel = modelSelect?.value;
+
+    // Gemini相关值
+    const newGeminiModel = geminiModelSelect?.value;
+    const newGeminiTier = geminiTierSwitch ? (geminiTierSwitch.checked ? 'paid' : 'free') : undefined;
 
     // 获取当前用户设置
     const userPreferences = await userPreferencesManager.getUserPreferences();
@@ -2069,7 +2114,9 @@ async function handleTranslationServiceChange(): Promise<void> {
 
     // 🎯 智能判断：服务类型或模型是否变更？
     const serviceTypeChanged = newType !== oldConfig.type;
-    const modelChanged = newModel && newModel !== oldConfig.model;
+    const modelChanged = (newType === 'openai' && newModel && newModel !== oldConfig.model) ||
+                         (newType === 'gemini' && newGeminiModel && newGeminiModel !== oldConfig.model);
+    const geminiTierChanged = newType === 'gemini' && newGeminiTier && newGeminiTier !== oldConfig.tier;
 
     let updatedService: TranslationServiceComplete;
 
@@ -2080,14 +2127,22 @@ async function handleTranslationServiceChange(): Promise<void> {
         ...TRANSLATION_SERVICE_TEMPLATES[newType],  // ✅ 完整使用新模板
         apiKey: newApiKey || undefined  // 只取当前输入的apiKey
       };
-    } else if (modelChanged) {
-      // 场景2：只改模型 → 使用新模型的模板，保留apiKey
-      console.log('[popup] 检测到模型变更，更新配置');
+    } else if (modelChanged || geminiTierChanged) {
+      // 场景2：只改模型或Gemini tier → 使用新模型/tier，优先使用新API key
+      console.log('[popup] 检测到模型/Gemini tier变更，更新配置');
       updatedService = {
         ...TRANSLATION_SERVICE_TEMPLATES[newType],
-        apiKey: oldConfig.apiKey,  // 保留原apiKey
-        model: newModel  // 使用新模型
+        apiKey: newApiKey || oldConfig.apiKey,  // 优先使用新输入的，否则保留旧的
+        model: newModel || newGeminiModel || oldConfig.model  // 使用新模型
       };
+
+      // Gemini特殊处理：更新tier和batchDelay
+      if (newType === 'gemini' && newGeminiModel && newGeminiTier) {
+        const batchDelay = calculateGeminiBatchDelay(newGeminiModel, newGeminiTier);
+        updatedService.tier = newGeminiTier;
+        updatedService.batchDelay = batchDelay;
+        updatedService.model = newGeminiModel;
+      }
     } else {
       // 场景3：只修改apiKey → 保留原配置
       console.log('[popup] 只修改apiKey，保留原配置');
@@ -2106,9 +2161,24 @@ async function handleTranslationServiceChange(): Promise<void> {
     }
 
     // 更新model下拉框的值（如果有默认值）
-    if (modelSelect && updatedService.model) {
+    if (modelSelect && updatedService.model && newType !== 'gemini') {
       modelSelect.value = updatedService.model;
       console.log('[popup] 模型选择已更新为:', updatedService.model);
+    }
+
+    // 更新Gemini UI (Phase 1)
+    if (newType === 'gemini') {
+      if (geminiModelSelect && updatedService.model) {
+        geminiModelSelect.value = updatedService.model;
+      }
+      if (geminiTierSwitch && updatedService.tier) {
+        geminiTierSwitch.checked = (updatedService.tier === 'paid');  // paid=true, free=false
+      }
+      console.log('[popup] Gemini设置已更新:', {
+        model: updatedService.model,
+        tier: updatedService.tier,
+        batchDelay: updatedService.batchDelay
+      });
     }
 
     console.log('[popup] 翻译服务配置已更新:', updatedService);
@@ -2116,6 +2186,29 @@ async function handleTranslationServiceChange(): Promise<void> {
   } catch (error) {
     console.error('[popup] 翻译服务变更失败:', error);
   }
+}
+
+// === Gemini辅助函数 (Phase 1) ===
+
+/**
+ * 计算Gemini批次延迟（内部使用，不显示给用户）
+ * @param model 模型名称
+ * @param tier 账户类型 ('free' | 'paid')
+ * @returns 批次延迟（毫秒）
+ */
+function calculateGeminiBatchDelay(model: string, tier: 'free' | 'paid'): number {
+  const delayMap: Record<string, Record<'free' | 'paid', number>> = {
+    'gemini-2.5-flash': {
+      free: 6000,   // 10 RPM → 6秒/次
+      paid: 60      // 假设1000 RPM → 60ms/次
+    },
+    'gemini-2.5-flash-lite': {
+      free: 4000,   // 15 RPM → 4秒/次
+      paid: 15      // 假设4000 RPM → 15ms/次
+    }
+  };
+
+  return delayMap[model]?.[tier] ?? 6000;  // 默认6秒
 }
 
 // === 步骤2：源语言缓存管理函数 ===
@@ -2328,19 +2421,29 @@ async function initializePopupUI(): Promise<void> {
 async function handleTestApiConnection(): Promise<void> {
   const testResult = document.getElementById('test-result') as HTMLSpanElement;
   if (!testResult) return;
-  
+
   // 重置测试结果
   testResult.textContent = '';
   testResult.className = 'test-result';
-  
+
   // 获取当前API配置
   const apiType = translationApiSelect?.value || 'google-free';
   const apiKey = apiKeyInput?.value || '';
-  
+
+  // 获取model参数（针对不同服务）
+  let model: string | undefined = undefined;
+  if (apiType === 'openai' && modelSelect) {
+    model = modelSelect.value;
+  } else if (apiType === 'gemini' && geminiModelSelect) {
+    model = geminiModelSelect.value;
+  }
+
   // 显示测试中状态
   testResult.textContent = '正在测试API连接...';
   testResult.className = 'test-result in-progress';
-  
+
+  console.log('[popup] 测试API连接:', { apiType, model, hasApiKey: !!apiKey });
+
   try {
     // 发送测试消息（使用新的消息格式）
     const response = await chrome.runtime.sendMessage({
@@ -2348,10 +2451,11 @@ async function handleTestApiConnection(): Promise<void> {
       data: {
         apiType: apiType,
         apiKey: apiKey,
+        model: model,  // 传递model参数
         forceTest: !apiType.includes('-free') // 免费API强制测试
       }
     });
-    
+
     if (response?.success) {
       testResult.textContent = '连接测试成功！';
       testResult.className = 'test-result success';

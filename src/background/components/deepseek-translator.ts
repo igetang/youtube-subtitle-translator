@@ -50,9 +50,9 @@ interface DeepSeekResponse {
  */
 export class DeepSeekTranslator {
   // ========== 常量配置 ==========
-  private static readonly ENDPOINT = 'https://api.deepseek.com/v1/chat/completions';
+  private static readonly ENDPOINT = 'https://api.deepseek.com/chat/completions';
   private static readonly MODEL = 'deepseek-chat';
-  private static readonly TEMPERATURE = 1.3;          // 官方推荐值
+  private static readonly TEMPERATURE = 1.3;          // 官方推荐值（翻译场景）
   private static readonly MAX_TOKENS = 8000;          // 支持更长输出
   private static readonly BATCH_SIZE = 20;            // 统一批次大小
   private static readonly BATCH_DELAY_MS = 200;       // batch 阶段延迟

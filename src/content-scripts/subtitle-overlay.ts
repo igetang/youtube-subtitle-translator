@@ -200,6 +200,9 @@ export class SubtitleOverlay {
       else if (translationData.translatedSubtitles && Array.isArray(translationData.translatedSubtitles)) {
         console.debug('[debug][SubtitleOverlay] 输入格式: V4架构数组格式');
         this.currentSubtitles = translationData.translatedSubtitles;
+
+        // 🔍 打印数量（V4架构格式）
+        console.log(`[SubtitleOverlay] 🔍 接收到的字幕数量: ${this.currentSubtitles.length}条`);
       }
       // 情况3: 缓存格式（VTT字符串）
       else if (translationData.translatedSubtitles && typeof translationData.translatedSubtitles === 'string') {
@@ -214,6 +217,12 @@ export class SubtitleOverlay {
         const originalSubtitles = parseVttString(translationData.originalSubtitles);
         const translatedSubtitles = parseVttString(translationData.translatedSubtitles, true);
 
+        // 🔍 打印原字幕和翻译字幕的数量（调试用）
+        console.log(`[SubtitleOverlay] 🔍 原字幕数量: ${originalSubtitles.length}, 翻译字幕数量: ${translatedSubtitles.length}`);
+        if (originalSubtitles.length !== translatedSubtitles.length) {
+          console.warn(`[SubtitleOverlay] ⚠️ 数量不匹配！原字幕${originalSubtitles.length}条，翻译${translatedSubtitles.length}条`);
+        }
+
         // 合并原文和译文
         this.currentSubtitles = mergeSubtitles(originalSubtitles, translatedSubtitles);
       }
@@ -224,6 +233,18 @@ export class SubtitleOverlay {
       }
 
       console.debug(`[debug][SubtitleOverlay] 解析后的字幕条数: ${this.currentSubtitles.length}`);
+
+      // 📋 打印所有字幕详情（用于调试）
+      console.log(`[SubtitleOverlay] 📋 所有字幕详情（共${this.currentSubtitles.length}条）:`);
+      this.currentSubtitles.forEach((subtitle, index) => {
+        const startTime = subtitle.start.toFixed(3);
+        const endTime = (subtitle.start + subtitle.duration).toFixed(3);
+        const origText = subtitle.text || '';
+        const transText = subtitle.translation || '';
+        console.log(
+          `  [${index}] ${startTime}s-${endTime}s | 原: "${origText}" | 译: "${transText}"`
+        );
+      });
 
       // 从用户偏好读取显示模式
       const userPrefs = await this.userPreferencesManager.getUserPreferences();
