@@ -636,7 +636,7 @@ const SUPPORTED_MODELS = [
   <div class="setting-item">
     <label>模型:</label>
     <select id="openai-model">
-      <option value="gpt-5-mini" selected>GPT-5 mini (默认 $0.25/$2)</option>
+j      <option value="gpt-5-mini" selected>GPT-5 mini (默认 $0.25/$2)</option>
       <option value="gpt-5">GPT-5 (旗舰 $1.25/$10)</option>
       <option value="gpt-5-nano">GPT-5 nano (极速 $0.05/$0.40)</option>
     </select>

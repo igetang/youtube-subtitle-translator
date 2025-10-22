@@ -32,7 +32,7 @@
 
 | 参数 | 值 | 说明 |
 |------|-----|------|
-| API 基础地址 | `https://api.deepseek.com/v1/chat/completions` | 单一端点，无备用端点 |
+| API 基础地址 | `https://api.deepseek.com/chat/completions` | 单一端点，无备用端点 |
 | 推荐模型 | `deepseek-chat` | 固定值，不暴露给用户 |
 | Temperature | `1.3` | 官方推荐值，固定不可配置 |
 | 输出上限 | `max_tokens: 8000` | 固定值 |
@@ -121,9 +121,9 @@ interface DeepSeekResponse {
 
 export class DeepSeekTranslator {
   // 常量配置
-  private static readonly ENDPOINT = 'https://api.deepseek.com/v1/chat/completions';
+  private static readonly ENDPOINT = 'https://api.deepseek.com/chat/completions';
   private static readonly MODEL = 'deepseek-chat';
-  private static readonly TEMPERATURE = 1.3;          // 官方推荐，固定值（优化8）
+  private static readonly TEMPERATURE = 1.3;          // 官方推荐（翻译场景），固定值（优化8）
   private static readonly MAX_TOKENS = 8000;
   private static readonly BATCH_SIZE = 20;            // 统一批次大小（优化13）
   private static readonly BATCH_DELAY_MS = 200;       // batch 阶段延迟
@@ -564,7 +564,7 @@ async function saveTranslationSettings() {
 
 ```bash
 # 测试 DeepSeek API
-curl -X POST https://api.deepseek.com/v1/chat/completions \
+curl -X POST https://api.deepseek.com/chat/completions \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
