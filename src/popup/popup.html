@@ -228,6 +228,43 @@
         </div>
     </div>
 
+    <!-- DeepL基础设置面板 (Phase 1) -->
+    <div id="deepl-basic-panel" class="setting-item" style="display: none;">
+        <div class="inline-setting-row">
+            <label for="deepl-model">模型:</label>
+            <select id="deepl-model" name="deepl-model">
+                <option value="latency_optimized" selected>latency_optimized (延迟优化·推荐)</option>
+                <option value="quality_optimized">quality_optimized (质量优化)</option>
+                <option value="prefer_quality_optimized">prefer_quality_optimized (偏好质量)</option>
+            </select>
+        </div>
+
+        <div class="inline-setting-row">
+            <label>API类型:</label>
+            <div class="switch-container">
+                <span>免费</span>
+                <label class="switch">
+                    <input type="checkbox" id="deepl-tier-switch">
+                    <span class="slider round"></span>
+                </label>
+                <span>付费</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Qwen基础设置面板 (Phase 1) -->
+    <div id="qwen-basic-panel" class="setting-item" style="display: none;">
+        <div class="info-box">
+            <p><strong>模型：</strong>qwen-mt-plus（旗舰翻译模型）</p>
+            <p><strong>免费额度：</strong>各100万tokens（90天有效期，用完后按量付费）</p>
+            <p><strong>申请地址：</strong>
+                <a href="https://bailian.console.aliyun.com/" target="_blank">
+                    阿里云百炼控制台
+                </a>
+            </p>
+        </div>
+    </div>
+
     <!-- 修改：API测试按钮，新布局 -->
     <div class="setting-item test-api-container">
         <div class="test-button-container">

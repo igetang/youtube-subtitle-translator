@@ -7,7 +7,9 @@
       "mcp__context7__resolve-library-id",
       "mcp__context7__get-library-docs",
       "WebFetch(domain:ai.google.dev)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:help.aliyun.com)",
+      "WebFetch(domain:bailian.console.aliyun.com)"
     ],
     "deny": [],
     "ask": []

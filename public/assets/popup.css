@@ -752,3 +752,41 @@ body::-webkit-scrollbar-thumb:hover,
 .custom-select-panel::-webkit-scrollbar-thumb:hover {
     background-color: #aaa;
 }
+
+/* 信息框样式 - 用于显示服务信息（如Qwen设置面板） */
+.info-box {
+    padding: 12px;
+    background-color: #2a2a2a;
+    border-radius: 6px;
+    border: 1px solid #444;
+    margin-top: 5px;
+}
+
+.info-box p {
+    margin: 6px 0;
+    font-size: 0.85em;
+    line-height: 1.5;
+    color: #ccc;
+}
+
+.info-box p:first-child {
+    margin-top: 0;
+}
+
+.info-box p:last-child {
+    margin-bottom: 0;
+}
+
+.info-box strong {
+    color: #fff;
+    font-weight: 600;
+}
+
+.info-box a {
+    color: #3ea6ff;
+    text-decoration: none;
+}
+
+.info-box a:hover {
+    text-decoration: underline;
+}

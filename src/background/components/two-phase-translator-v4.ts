@@ -12,6 +12,8 @@ import { MicrosoftTranslator } from './microsoft-translator';
 import { MicrosoftTextOptimizer } from './microsoft-text-optimizer';
 import { DeepSeekTranslator } from './deepseek-translator';
 import { GeminiTranslator } from './gemini-translator';
+import { DeepLTranslator } from './deepl-translator';
+import { QwenTranslator } from './qwen-translator';
 
 /**
  * 两阶段翻译器 - 支持AbortSignal版本
@@ -76,6 +78,14 @@ export class TwoPhaseTranslatorV4 {
       // DeepSeek使用20条/批（单批处理能力有限，避免二次分批）
       this.segmenter = new IntelligentSegmenter(20);
       console.debug('[debug][TwoPhaseTranslatorV4] 使用DeepSeek配置：20条/批');
+    } else if (serviceType === 'deepl') {
+      // DeepL使用50条/批（API原生支持最多50条）
+      this.segmenter = new IntelligentSegmenter(50);
+      console.debug('[debug][TwoPhaseTranslatorV4] 使用DeepL配置：50条/批');
+    } else if (serviceType === 'qwen') {
+      // Qwen使用30条/批（智能断句）
+      this.segmenter = new IntelligentSegmenter(30);
+      console.debug('[debug][TwoPhaseTranslatorV4] 使用Qwen配置：30条/批');
     } else {
       // Google/Microsoft等其他服务使用40条/批
       this.segmenter = new IntelligentSegmenter(40);
@@ -292,6 +302,10 @@ export class TwoPhaseTranslatorV4 {
         perBatchTimeout = 15000; // OpenAI单批15秒（适配GPT-5响应时间）
       } else if (serviceType === 'gemini') {
         perBatchTimeout = 15000; // Gemini单批15秒（批次大小200）
+      } else if (serviceType === 'deepl') {
+        perBatchTimeout = 10000; // DeepL单批10秒（REST API，批次大小50）
+      } else if (serviceType === 'qwen') {
+        perBatchTimeout = 10000; // Qwen单批10秒（批次大小30）
       } else if (serviceType === 'google-free' || serviceType === 'google' ||
                  serviceType === 'microsoft-free' || serviceType === 'microsoft') {
         perBatchTimeout = 5000; // 免费服务5秒
@@ -891,6 +905,55 @@ export class TwoPhaseTranslatorV4 {
             service.temperature ?? 0,
             service.maxTokens || 65536,
             service.batchDelay || 6000  // Phase 1: 从配置读取延迟
+          );
+
+          const stage = options?.stage ?? 'batch';
+
+          // 调用翻译（传递 stage 和 signal）
+          translatedTexts = await translator.translate(
+            texts,
+            sourceLang,
+            targetLang,
+            stage,
+            signal
+          );
+
+        } else if (service.type === 'deepl') {
+          // 使用 DeepL 翻译
+          if (!service.apiKey) {
+            throw new Error('DeepL API密钥未配置');
+          }
+
+          const translator = new DeepLTranslator(
+            service.apiKey,
+            service.tier || 'free',
+            service.formality || 'default',
+            service.splitSentences ?? "0",
+            service.preserveFormatting ?? false,
+            service.model || 'latency_optimized',
+            service.showBilledCharacters ?? true
+          );
+
+          const stage = options?.stage ?? 'batch';
+
+          // 调用翻译（传递 stage 和 signal）
+          translatedTexts = await translator.translate(
+            texts,
+            sourceLang,
+            targetLang,
+            stage,
+            signal
+          );
+
+        } else if (service.type === 'qwen') {
+          // 使用 Qwen-MT 翻译
+          if (!service.apiKey) {
+            throw new Error('Qwen API密钥未配置');
+          }
+
+          const translator = new QwenTranslator(
+            service.apiKey,
+            'beijing'  // 默认北京端点
           );
 
           const stage = options?.stage ?? 'batch';

@@ -19,10 +19,11 @@ export enum SubtitleMode {
  */
 export enum TranslationServiceType {
   GOOGLE_FREE = 'google-free',     // 免费Google翻译，不需要API key
-  MICROSOFT_FREE = 'microsoft-free', // 免费微软翻译，不需要API key  
+  MICROSOFT_FREE = 'microsoft-free', // 免费微软翻译，不需要API key
   OPENAI = 'openai',               // OpenAI，需要API key + model + temperature
   GEMINI = 'gemini',               // Google Gemini，需要API key + model
   DEEPSEEK = 'deepseek',           // DeepSeek，需要API key + model
+  DEEPL = 'deepl',                 // DeepL，需要API key + tier
   QWEN = 'qwen',                   // 通义千问，需要API key + model
   DUMMY = 'dummy'                  // 用于测试
 }
@@ -52,8 +53,14 @@ export interface TranslationServiceComplete {
   tpm?: number | null;                          // 每分钟令牌限制
 
   // === Gemini专用参数（Phase 1） ===
-  tier?: 'free' | 'paid';                       // Gemini账户类型（手动选择）
-  batchDelay?: number;                          // Gemini批量翻译延迟（ms）
+  tier?: 'free' | 'paid' | 'pro';               // 账户类型：Gemini(free/paid)、DeepL(free/pro)
+  batchDelay?: number;                          // 批量翻译延迟（ms）
+
+  // === DeepL专用参数 ===
+  formality?: string;                           // 正式度：'default' | 'more' | 'less' | 'prefer_more' | 'prefer_less'
+  splitSentences?: string;                      // 句子分割："0" | "1" | "nonewlines"（字符串类型）
+  preserveFormatting?: boolean;                 // 是否保留原始格式
+  showBilledCharacters?: boolean;               // 是否显示计费字符数
 }
 
 /**
@@ -125,15 +132,32 @@ export const TRANSLATION_SERVICE_TEMPLATES: Record<TranslationServiceType, Omit<
     rpm: 50,
     tpm: 50000
   },
+  [TranslationServiceType.DEEPL]: {
+    type: TranslationServiceType.DEEPL,
+    name: 'DeepL',
+    model: 'latency_optimized',                    // 模型类型（默认延迟优化）
+    availableModels: ['latency_optimized', 'quality_optimized', 'prefer_quality_optimized'],
+    temperature: null,                             // DeepL 不支持 temperature
+    maxTokens: null,                               // DeepL 按字符计费，无 token 概念
+    rpm: null,                                     // 官方未公布RPM限制
+    tpm: null,                                     // 按字符计费，无TPM概念
+    tier: 'free',                                  // 'free' | 'pro'（用户选择）
+    batchDelay: 1000,                              // 建议值：免费层 1000ms, 付费层 200ms
+    formality: 'default',                          // 'default' | 'more' | 'less' | 'prefer_more' | 'prefer_less'
+    splitSentences: "0",                           // ⚠️ 字符串类型，默认"0"禁止分句
+    preserveFormatting: false,                     // 格式保留
+    showBilledCharacters: true                     // 显示计费字符数（便于监控）
+  },
   [TranslationServiceType.QWEN]: {
     type: TranslationServiceType.QWEN,
-    name: '通义千问',
-    model: 'qwen-turbo',
-    availableModels: ['qwen-turbo', 'qwen-plus', 'qwen-max'],
-    temperature: 0.7,
-    maxTokens: 6000,
-    rpm: 50,
-    tpm: 60000
+    name: 'Qwen-MT',
+    model: 'qwen-mt-plus',                         // Qwen-MT旗舰翻译模型
+    availableModels: ['qwen-mt-plus'],            // 只有一个翻译模型
+    temperature: 0,                                // 翻译需要确定性
+    maxTokens: 8192,                               // 最大输出tokens（官方限制）
+    rpm: 60,                                       // 每分钟请求限制
+    tpm: 23797,                                    // 每分钟tokens限制
+    batchDelay: 200                                // 批次间延迟（仅batch阶段）
   },
   [TranslationServiceType.DUMMY]: {
     type: TranslationServiceType.DUMMY,

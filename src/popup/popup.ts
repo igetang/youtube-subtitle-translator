@@ -1044,6 +1044,14 @@ let geminiBasicPanel: HTMLDivElement | null = null;
 let geminiModelSelect: HTMLSelectElement | null = null;
 let geminiTierSwitch: HTMLInputElement | null = null;  // 改为开关（checkbox）
 
+// === DeepL相关元素引用 (Phase 1) ===
+let deeplBasicPanel: HTMLDivElement | null = null;
+let deeplModelSelect: HTMLSelectElement | null = null;
+let deeplTierSwitch: HTMLInputElement | null = null;  // 开关：免费/付费
+
+// === Qwen相关元素引用 (Phase 1) ===
+let qwenBasicPanel: HTMLDivElement | null = null;
+
 /**
  * 初始化DOM元素引用（仅在YouTube页面调用）
  */
@@ -1091,6 +1099,14 @@ function initializeDOMElements(): void {
   geminiBasicPanel = document.getElementById('gemini-basic-panel') as HTMLDivElement;
   geminiModelSelect = document.getElementById('gemini-model') as HTMLSelectElement;
   geminiTierSwitch = document.getElementById('gemini-tier-switch') as HTMLInputElement;  // 开关
+
+  // === DeepL面板元素引用 (Phase 1) ===
+  deeplBasicPanel = document.getElementById('deepl-basic-panel') as HTMLDivElement;
+  deeplModelSelect = document.getElementById('deepl-model') as HTMLSelectElement;
+  deeplTierSwitch = document.getElementById('deepl-tier-switch') as HTMLInputElement;  // 开关
+
+  // === Qwen面板元素引用 (Phase 1) ===
+  qwenBasicPanel = document.getElementById('qwen-basic-panel') as HTMLDivElement;
 }
 
 /**
@@ -1119,6 +1135,8 @@ function updateApiPanels(apiType: string): void {
   }
   if (openaiBasicPanel) openaiBasicPanel.style.display = 'none';
   if (geminiBasicPanel) geminiBasicPanel.style.display = 'none';
+  if (deeplBasicPanel) deeplBasicPanel.style.display = 'none';
+  if (qwenBasicPanel) qwenBasicPanel.style.display = 'none';
 
   // 根据API类型显示相应面板
   const apiInfo = apiInfoMap[apiType];
@@ -1160,12 +1178,15 @@ function updateApiPanels(apiType: string): void {
     customApiPanel.style.display = 'block';
     customApiPanel.classList.add('visible');
   }
-  
-  // 需要选择服务类型的API
+
+  // 处理DeepL相关面板 (Phase 1)
   if (apiType === 'deepl') {
-    if (serviceTypePanel) {
-      serviceTypePanel.style.display = 'block';
-      serviceTypePanel.classList.add('visible');
+    // 显示DeepL设置面板（模型、tier）
+    if (deeplBasicPanel) deeplBasicPanel.style.display = 'block';
+    // 确保API密钥面板也显示
+    if (apiKeyPanel) {
+      apiKeyPanel.style.display = 'block';
+      apiKeyPanel.classList.add('visible');
     }
   }
   // 处理OpenAI相关面板
@@ -1190,6 +1211,16 @@ function updateApiPanels(apiType: string): void {
   else if (apiType === 'gemini') {
     // 显示Gemini设置面板（模型、tier）
     if (geminiBasicPanel) geminiBasicPanel.style.display = 'block';
+    // 确保API密钥面板也显示
+    if (apiKeyPanel) {
+      apiKeyPanel.style.display = 'block';
+      apiKeyPanel.classList.add('visible');
+    }
+  }
+  // 处理Qwen相关面板 (Phase 1)
+  else if (apiType === 'qwen') {
+    // 显示Qwen信息面板（只读信息展示）
+    if (qwenBasicPanel) qwenBasicPanel.style.display = 'block';
     // 确保API密钥面板也显示
     if (apiKeyPanel) {
       apiKeyPanel.style.display = 'block';
@@ -1579,6 +1610,18 @@ async function updateUserPreferencesUI(userPreferences: UserPreferences): Promis
         if (geminiTierSwitch && service.tier) {
           geminiTierSwitch.checked = (service.tier === 'paid');  // paid=true, free=false
           console.log('[popup] Gemini tier已设置:', service.tier);
+        }
+      }
+
+      // 设置DeepL设置 (Phase 1)
+      if (service.type === 'deepl') {
+        if (deeplModelSelect && service.model) {
+          deeplModelSelect.value = service.model;
+          console.log('[popup] DeepL模型选择已设置:', service.model);
+        }
+        if (deeplTierSwitch && service.tier) {
+          deeplTierSwitch.checked = (service.tier === 'pro');  // pro=true, free=false
+          console.log('[popup] DeepL tier已设置:', service.tier);
         }
       }
     }
@@ -1997,7 +2040,9 @@ function setupUnifiedSettingsListener(): void {
       case 'api-key':
       case 'openai-model':
       case 'gemini-model':
-      case 'gemini-tier-switch':  // 改为开关ID
+      case 'gemini-tier-switch':  // Gemini开关ID
+      case 'deepl-model':
+      case 'deepl-tier-switch':  // DeepL开关ID
         await handleTranslationServiceChange();
         break;
 
@@ -2100,6 +2145,10 @@ async function handleTranslationServiceChange(): Promise<void> {
     const geminiModelSelect = document.getElementById('gemini-model') as HTMLSelectElement;
     const geminiTierSwitch = document.getElementById('gemini-tier-switch') as HTMLInputElement;
 
+    // DeepL相关字段 (Phase 1)
+    const deeplModelSelect = document.getElementById('deepl-model') as HTMLSelectElement;
+    const deeplTierSwitch = document.getElementById('deepl-tier-switch') as HTMLInputElement;
+
     const newType = (translationApiSelect?.value as TranslationServiceType);
     const newApiKey = apiKeyInput?.value;
     const newModel = modelSelect?.value;
@@ -2108,6 +2157,10 @@ async function handleTranslationServiceChange(): Promise<void> {
     const newGeminiModel = geminiModelSelect?.value;
     const newGeminiTier = geminiTierSwitch ? (geminiTierSwitch.checked ? 'paid' : 'free') : undefined;
 
+    // DeepL相关值
+    const newDeeplModel = deeplModelSelect?.value;
+    const newDeeplTier = deeplTierSwitch ? (deeplTierSwitch.checked ? 'pro' : 'free') : undefined;
+
     // 获取当前用户设置
     const userPreferences = await userPreferencesManager.getUserPreferences();
     const oldConfig = userPreferences.translationService;
@@ -2115,8 +2168,10 @@ async function handleTranslationServiceChange(): Promise<void> {
     // 🎯 智能判断：服务类型或模型是否变更？
     const serviceTypeChanged = newType !== oldConfig.type;
     const modelChanged = (newType === 'openai' && newModel && newModel !== oldConfig.model) ||
-                         (newType === 'gemini' && newGeminiModel && newGeminiModel !== oldConfig.model);
+                         (newType === 'gemini' && newGeminiModel && newGeminiModel !== oldConfig.model) ||
+                         (newType === 'deepl' && newDeeplModel && newDeeplModel !== oldConfig.model);
     const geminiTierChanged = newType === 'gemini' && newGeminiTier && newGeminiTier !== oldConfig.tier;
+    const deeplTierChanged = newType === 'deepl' && newDeeplTier && newDeeplTier !== oldConfig.tier;
 
     let updatedService: TranslationServiceComplete;
 
@@ -2127,13 +2182,13 @@ async function handleTranslationServiceChange(): Promise<void> {
         ...TRANSLATION_SERVICE_TEMPLATES[newType],  // ✅ 完整使用新模板
         apiKey: newApiKey || undefined  // 只取当前输入的apiKey
       };
-    } else if (modelChanged || geminiTierChanged) {
-      // 场景2：只改模型或Gemini tier → 使用新模型/tier，优先使用新API key
-      console.log('[popup] 检测到模型/Gemini tier变更，更新配置');
+    } else if (modelChanged || geminiTierChanged || deeplTierChanged) {
+      // 场景2：只改模型或tier → 使用新模型/tier，优先使用新API key
+      console.log('[popup] 检测到模型/tier变更，更新配置');
       updatedService = {
         ...TRANSLATION_SERVICE_TEMPLATES[newType],
         apiKey: newApiKey || oldConfig.apiKey,  // 优先使用新输入的，否则保留旧的
-        model: newModel || newGeminiModel || oldConfig.model  // 使用新模型
+        model: newModel || newGeminiModel || newDeeplModel || oldConfig.model  // 使用新模型
       };
 
       // Gemini特殊处理：更新tier和batchDelay
@@ -2142,6 +2197,14 @@ async function handleTranslationServiceChange(): Promise<void> {
         updatedService.tier = newGeminiTier;
         updatedService.batchDelay = batchDelay;
         updatedService.model = newGeminiModel;
+      }
+
+      // DeepL特殊处理：更新tier和batchDelay
+      if (newType === 'deepl' && newDeeplModel && newDeeplTier) {
+        const batchDelay = calculateDeepLBatchDelay(newDeeplTier);
+        updatedService.tier = newDeeplTier;
+        updatedService.batchDelay = batchDelay;
+        updatedService.model = newDeeplModel;
       }
     } else {
       // 场景3：只修改apiKey → 保留原配置
@@ -2181,6 +2244,21 @@ async function handleTranslationServiceChange(): Promise<void> {
       });
     }
 
+    // 更新DeepL UI (Phase 1)
+    if (newType === 'deepl') {
+      if (deeplModelSelect && updatedService.model) {
+        deeplModelSelect.value = updatedService.model;
+      }
+      if (deeplTierSwitch && updatedService.tier) {
+        deeplTierSwitch.checked = (updatedService.tier === 'pro');  // pro=true, free=false
+      }
+      console.log('[popup] DeepL设置已更新:', {
+        model: updatedService.model,
+        tier: updatedService.tier,
+        batchDelay: updatedService.batchDelay
+      });
+    }
+
     console.log('[popup] 翻译服务配置已更新:', updatedService);
 
   } catch (error) {
@@ -2209,6 +2287,20 @@ function calculateGeminiBatchDelay(model: string, tier: 'free' | 'paid'): number
   };
 
   return delayMap[model]?.[tier] ?? 6000;  // 默认6秒
+}
+
+/**
+ * 根据DeepL tier计算批次延迟
+ * @param tier 账户类型 ('free' | 'pro')
+ * @returns 批次延迟（毫秒）
+ */
+function calculateDeepLBatchDelay(tier: 'free' | 'pro'): number {
+  const delayMap: Record<'free' | 'pro', number> = {
+    free: 1000,   // 免费层建议1秒
+    pro: 200      // 付费层建议200ms
+  };
+
+  return delayMap[tier] ?? 1000;  // 默认1秒
 }
 
 // === 步骤2：源语言缓存管理函数 ===
@@ -2436,6 +2528,8 @@ async function handleTestApiConnection(): Promise<void> {
     model = modelSelect.value;
   } else if (apiType === 'gemini' && geminiModelSelect) {
     model = geminiModelSelect.value;
+  } else if (apiType === 'deepl' && deeplModelSelect) {
+    model = deeplModelSelect.value;
   }
 
   // 显示测试中状态
