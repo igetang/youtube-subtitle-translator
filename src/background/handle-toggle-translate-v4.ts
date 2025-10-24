@@ -506,8 +506,10 @@ export async function handleToggleTranslateV4(
       console.warn('[service-worker-v4] ⚠️ 紧急翻译失败:', error);
 
       // 判断是否为致命错误（API密钥问题）
+      const category = (error as { category?: string })?.category;
       const errorMsg = error.message || '';
       const isFatalError =
+        category === 'fatal' ||
         errorMsg.includes('API密钥') ||
         errorMsg.includes('密钥未配置') ||
         errorMsg.includes('密钥无效') ||
@@ -747,6 +749,10 @@ export async function handleToggleTranslateV4(
       userMessage = '翻译已取消';
       errorLevel = ErrorLevel.INFO;
       console.log('[service-worker-v4] 用户取消翻译');
+    } else if ((error as any).category) {
+      const category = (error as any).category;
+      userMessage = error.message || getUserFriendlyMessage(error);
+      errorLevel = category === 'fatal' ? ErrorLevel.ERROR : ErrorLevel.WARNING;
     } else {
       // 使用统一的错误消息映射（去掉技术细节）
       userMessage = getUserFriendlyMessage(error);

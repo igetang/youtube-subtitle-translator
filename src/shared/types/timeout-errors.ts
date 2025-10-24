@@ -110,6 +110,36 @@ export enum ErrorLevel {
 }
 
 /**
+ * 针对常见错误文案的友好提示映射
+ * 所有字符串匹配均使用includes（区分大小写），满足全部关键字才命中
+ */
+const USER_MESSAGE_HINTS: Array<{
+  keywords: string[];
+  message: string;
+}> = [
+  {
+    keywords: ['密钥', '未配置'],
+    message: 'API 密钥为空，请在设置中填写'
+  },
+  {
+    keywords: ['密钥', '无效'],
+    message: 'API 密钥验证失败，请检查设置'
+  },
+  {
+    keywords: ['速率限制'],
+    message: '请求过于频繁，请稍后重试'
+  },
+  {
+    keywords: ['暂时不支持当前设置的语种'],
+    message: '当前语种暂不支持，请更换翻译目标'
+  },
+  {
+    keywords: ['请求参数错误'],
+    message: '翻译配置异常，请检查设置'
+  }
+];
+
+/**
  * 获取错误级别
  */
 export function getErrorLevel(error: any): ErrorLevel {
@@ -147,6 +177,14 @@ export function getUserFriendlyMessage(error: any): string {
 
   const errorMsg = error.message || error.toString() || '';
 
+  // 3.1 服务专属提示映射（精确匹配）
+  for (const hint of USER_MESSAGE_HINTS) {
+    const hit = hint.keywords.every(keyword => errorMsg.includes(keyword));
+    if (hit) {
+      return hint.message;
+    }
+  }
+
   // 4. API密钥未配置
   if (errorMsg.includes('API密钥未配置') || errorMsg.includes('apiKey')) {
     if (errorMsg.includes('OpenAI')) {
@@ -170,6 +208,19 @@ export function getUserFriendlyMessage(error: any): string {
   // 6. API速率限制
   if (errorMsg.includes('速率限制') || errorMsg.includes('429')) {
     return '请求过于频繁，请稍后重试';
+  }
+
+  // 7.1 请求参数不受支持（语言等）
+  if (
+    errorMsg.includes('暂时不支持当前设置的语种') ||
+    errorMsg.includes('不支持当前设置的语种') ||
+    errorMsg.includes('当前设置的语种')
+  ) {
+    return '当前翻译服务暂不支持该语言';
+  }
+
+  if (errorMsg.includes('请求参数错误')) {
+    return '翻译配置异常，请检查设置';
   }
 
   // 7. 服务暂时不可用

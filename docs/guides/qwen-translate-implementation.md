@@ -190,26 +190,36 @@ Goodbye
 #### 请求体（批量翻译）
 
 ```javascript
-{
-  "model": "qwen-mt-plus",
-  "messages": [
-    {
-      "role": "user",
-      "content": "第一句字幕\n第二句字幕\n第三句字幕"  // 用 \n 分隔
-    }
-  ],
-  "translation_options": {
-    "source_lang": "auto",      // 自动检测或指定语言
-    "target_lang": "zh"         // 目标语言（必需）
+const instructions = [
+  'You are a professional translator. Each line is a separate subtitle that needs to be translated independently.',
+  'IMPORTANT: Keep the exact same number of lines. If the input has N lines separated by newlines, the output MUST also have exactly N lines.',
+  'Translate line by line and preserve all newline characters \\n in the exact same positions.',
+  'Do NOT merge multiple lines into one paragraph.',
+  'Return ONLY the translations, no explanations.',
+  '',
+  '--- SUBTITLES TO TRANSLATE ---',
+  texts.join('\n')  // texts 为待翻译字幕数组
+].join('\n');
+
+const requestBody = {
+  model: 'qwen-mt-plus',
+  messages: [{
+    role: 'user',
+    content: instructions
+  }],
+  translation_options: {
+    source_lang: sourceLang === 'auto' ? 'auto' : mapLanguage(sourceLang),
+    target_lang: mapLanguage(targetLang)
   }
-}
+};
 ```
 
 **关键说明**：
-- ✅ HTTP 请求：`translation_options` **直接放在顶层**（不需要 `extra_body` 包装）
-- ✅ Python SDK：需要 `extra_body={"translation_options": {...}}`
-- ✅ 批量翻译：用 `\n` 连接多条字幕
-- ✅ 消息数组：必须有且仅有 1 条消息，role 固定为 `"user"`
+- ✅ 单条 `"user"` 消息中先给出格式控制提示语，再拼接字幕正文，可显著降低行数错配；
+- ✅ `translation_options` **直接放在顶层**（不需要 `extra_body` 包装）；
+- ✅ 批量翻译仍通过 `texts.join('\n')` 发送多条字幕；
+- ✅ Python SDK 需要 `extra_body={"translation_options": {...}}`；
+- ✅ 消息数组：必须有且仅有 1 条消息，role 固定为 `"user"`。
 
 #### 高级参数（可选）
 
@@ -902,15 +912,464 @@ Qwen翻译器遵循 V4 架构的 Fail Fast 原则：
 - ❌ 用户体验差（不知道是在翻译还是在重试）
 - ❌ 大部分错误重试无效（API Key错误、参数错误、服务器错误）
 
+### 统一错误处理架构
+
+为了在所有翻译服务（OpenAI、Gemini、DeepL、Qwen）中保持一致的错误处理，我们使用统一的错误类和工具函数。
+
+#### 📦 translation-errors.ts
+
+**文件路径**: `src/shared/types/translation-errors.ts`
+
+```typescript
+/**
+ * 翻译错误分类
+ * - fatal: 致命错误，无法继续（如API密钥错误、参数错误）
+ * - retryable: 可重试错误，可能成功（如速率限制、服务器错误、网络波动）
+ */
+export type TranslationErrorCategory = 'fatal' | 'retryable';
+
+/**
+ * 翻译服务类型
+ */
+export type TranslationService = 'openai' | 'qwen' | 'gemini' | 'deepl';
+
+/**
+ * 统一的翻译错误类
+ *
+ * 用于封装所有翻译服务的错误，包含：
+ * - category: 错误分类（fatal/retryable）
+ * - service: 错误来源（哪个翻译服务）
+ * - status: HTTP状态码（如果是API错误）
+ * - errorCode: API错误码（如Qwen的'Arrearage'、'invalid_parameter_error'）
+ */
+export class TranslationError extends Error {
+  public readonly category: TranslationErrorCategory;
+  public readonly service: TranslationService;
+  public readonly status?: number;
+  public readonly errorCode?: string;
+
+  constructor(
+    message: string,
+    category: TranslationErrorCategory,
+    service: TranslationService,
+    status?: number,
+    errorCode?: string
+  ) {
+    super(message);
+    this.name = 'TranslationError';
+    this.category = category;
+    this.service = service;
+    this.status = status;
+    this.errorCode = errorCode;
+    Object.setPrototypeOf(this, TranslationError.prototype);
+  }
+}
+
+/**
+ * 统一处理 fetch 错误
+ *
+ * 功能：
+ * 1. 识别 AbortError（用户取消/超时）→ 直接抛出，不封装
+ * 2. 其他网络错误 → 封装成 TranslationError（retryable）
+ *
+ * 使用场景：所有翻译器的 fetch catch 块
+ *
+ * @param error - fetch 抛出的错误
+ * @param service - 翻译服务名称
+ * @param contextMessage - 可选的上下文消息（如 "Qwen API 网络请求失败"）
+ * @throws AbortError - 如果是取消操作
+ * @throws TranslationError - 如果是网络错误
+ */
+export function handleFetchError(
+  error: unknown,
+  service: TranslationService,
+  contextMessage?: string
+): never {
+  // 1. AbortError: 直接抛出（不封装）
+  // 这是用户取消或超时触发的，不是真正的错误
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    throw error;
+  }
+
+  // 2. 其他网络错误: 封装成 TranslationError (retryable)
+  // 包括：网络断开、DNS解析失败、代理配置问题、CORS错误等
+  const message = error instanceof Error ? error.message : String(error);
+  throw new TranslationError(
+    contextMessage || `网络连接失败: ${message}`,
+    'retryable',
+    service
+  );
+}
+```
+
+**使用示例**：
+
+```typescript
+// qwen-translator.ts
+import { TranslationError, handleFetchError } from '@/shared/types/translation-errors';
+
+// 在 translateBatch 方法中
+try {
+  response = await fetch(this.endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${this.apiKey}`
+    },
+    body: JSON.stringify(requestBody),
+    signal  // AbortSignal 支持
+  });
+} catch (error) {
+  // 统一处理网络错误（包括 AbortError）
+  handleFetchError(error, 'qwen', 'Qwen API 网络请求失败');
+}
+
+// 在 handleAPIError 方法中
+throw new TranslationError(
+  'Qwen 账号余额不足，请充值后重试',
+  'fatal',
+  'qwen',
+  400,
+  'Arrearage'
+);
+```
+
+---
+
 ### 常见错误类型
 
-| HTTP状态码 | 错误类型 | 处理策略 | 原因 |
-|-----------|---------|---------|------|
-| **401/403** | API Key无效 | 立即失败，提示用户重新配置 | 重试无意义 |
-| **429** | 速率限制 | 立即失败，提示用户稍后再试 | 重试会触发更严格限制 |
-| **400** | 请求参数错误 | 立即失败，记录详细错误信息 | 重试无意义 |
-| **500/502/503** | 服务器错误 | 立即失败，提示用户稍后重试 | 阿里云服务问题 |
-| **网络错误** | 连接失败 | AbortError，立即停止翻译流程 | 由 AbortSignal 处理 |
+| HTTP状态码 | 错误类型 | 分类 | TranslationError.message | 用户看到的提示 | 说明 |
+|-----------|---------|------|-------------------------|---------------|------|
+| **401/403** | API Key无效 | `fatal` | "Qwen API 密钥无效或已过期" | Qwen API 密钥无效或已过期 | 重试无意义，需要重新配置 |
+| **429** | 速率限制 | `retryable` | "Qwen API 速率限制（超出 RPM 或 TPM）" | Qwen API 速率限制（超出 RPM 或 TPM） | 暂时失败，稍后可能成功 |
+| **400** | 请求参数错误 | 见下方详细分类 | 根据具体子类型 | 见下方详细分类 | 需要细分不同子类型 |
+| **500/502/503** | 服务器错误 | `retryable` | "Qwen API 服务器错误，请稍后重试" | Qwen API 服务器错误，请稍后重试 | 阿里云服务问题，稍后可能恢复 |
+| **网络错误** | fetch 抛出 TypeError | `retryable` | "Qwen API 网络请求失败: ..." | Qwen API 网络请求失败: ... | 网络断开、DNS失败、代理问题等 |
+| **JSON解析错误** | 响应非JSON | `retryable` | "Qwen API 响应解析失败: ..." | Qwen API 响应解析失败: ... | API返回异常，可能临时问题 |
+| **返回内容为空** | content为空 | `fatal` | "Qwen API 返回内容为空" | Qwen API 返回内容为空 | API异常，不是临时问题 |
+| **翻译数量不匹配** | 结果条数错误 | `retryable` | "翻译数量不匹配: 期望X条，实际Y条" | Qwen API 翻译数量不匹配，期望X条，实际Y条 | 模型输出异常，重试可能成功 |
+| **AbortError** | 超时 | 不分类 | - | 翻译超时，请检查网络后重试 | 由 timeout-errors.ts 处理 |
+
+### 400错误详细分类
+
+HTTP 400 是一个大类，包含多种子类型错误。基于字幕翻译场景的实际需求，以下是需要特殊处理的400错误：
+
+#### 🔴 需要特殊处理的400错误
+
+| 错误码 (code) | 错误信息关键字 | 分类 | 触发条件 | 用户提示 | 发生概率 |
+|--------------|---------------|------|----------|----------|---------|
+| `Arrearage` | `欠费`<br>`account is in good standing` | **fatal** | 阿里云账号余额不足 | "Qwen 账号余额不足，请充值后重试" | ⭐⭐⭐⭐⭐ 很高 |
+| `invalid_parameter_error` | `暂时不支持当前设置的语种！` | **fatal** | source_lang 或 target_lang 格式错误或不支持<br>**注意**：API不区分是源语言还是目标语言有问题 | `Qwen-MT 不支持 ${sourceLang} → ${targetLang}，请更换翻译语言` | ⭐⭐ 较低 |
+| `APIConnectionError` | `Connection error` | **retryable** | 本地网络问题（代理、网络中断） | "Qwen API 网络连接失败" | ⭐⭐⭐ 中等 |
+
+**实际测试结果**（2025-01-24）：
+
+```json
+// 测试：错误的 source_lang 或 target_lang
+{
+  "error": {
+    "code": "invalid_parameter_error",
+    "param": null,
+    "message": "暂时不支持当前设置的语种！",
+    "type": "invalid_request_error"
+  }
+}
+```
+
+**关键发现**：
+- ✅ 错误响应结构：`response.error.code` 和 `response.error.message`
+- ✅ 有明确的错误码：`invalid_parameter_error`
+- ❌ **不区分源语言和目标语言**：source_lang 错误和 target_lang 错误返回完全相同的消息
+- ✅ Qwen-MT 语言支持很广：测试 ar→th（阿拉伯语→泰语）成功，实际触发此错误概率较低
+
+**处理优先级**：
+1. **账号欠费（最重要）**：用户最常遇到，必须明确提示充值
+2. **语言不支持**：虽然有 mapLanguage() 映射，但某些翻译方向 Qwen-MT 可能不支持（如小语种互译）
+3. **网络连接错误**：分类为 retryable，但 V4 架构不重试，用户可以手动重试
+
+#### ❌ 不需要特殊处理的400错误（在字幕翻译场景下）
+
+| 错误码 | 原因 | 为什么不需要处理 |
+|--------|------|-----------------|
+| `DataInspectionFailed` | 内容包含敏感信息 | 字幕内容审核概率极低，归入默认400即可 |
+| `Range of input length should be [1, xxx]` | 输入长度超限 | 代码已保证批次大小30条，不会超限 |
+| `InvalidFile`/`InvalidURL` 等 | 多模态文件错误 | 只传文本，不会触发 |
+| 其他参数格式错误 | Temperature、top_p 等参数范围错误 | 代码写死参数，不会触发 |
+
+#### 🔧 实现建议
+
+```typescript
+// handleAPIError 方法实现
+private async handleAPIError(
+  response: Response,
+  sourceLang: string,    // ← 新增：需要传入语言参数用于错误提示
+  targetLang: string
+): Promise<never> {
+  let errorMessage = '未知错误';
+  let errorCode: string | undefined;
+
+  try {
+    const errorData = await response.json();
+    errorCode = errorData.error?.code || errorData.code;  // ← 提取 code
+    errorMessage = errorData.error?.message || errorData.message || '未知错误';
+  } catch {
+    // JSON 解析失败
+  }
+
+  const status = response.status;
+
+  switch (status) {
+    case 400:
+      // 1. 账号欠费（⭐最重要）
+      if (errorCode === 'Arrearage' ||
+          errorMessage.includes('欠费') ||
+          errorMessage.includes('account is in good standing')) {
+        throw new TranslationError(
+          'Qwen 账号余额不足，请充值后重试',
+          'fatal',
+          'qwen',
+          status,
+          errorCode
+        );
+      }
+
+      // 2. 语言不支持（⭐ 使用 errorCode 精确匹配）
+      if (errorCode === 'invalid_parameter_error' &&
+          errorMessage.includes('暂时不支持当前设置的语种')) {
+        throw new TranslationError(
+          `Qwen-MT 不支持 ${sourceLang} → ${targetLang}，请更换翻译语言`,
+          'fatal',
+          'qwen',
+          status,
+          errorCode
+        );
+      }
+
+      // 3. 网络连接错误
+      if (errorCode === 'APIConnectionError' ||
+          errorMessage.includes('Connection error')) {
+        throw new TranslationError(
+          'Qwen API 网络连接失败',
+          'retryable',
+          'qwen',
+          status,
+          errorCode
+        );
+      }
+
+      // 4. 默认：其他400错误（兜底）
+      throw new TranslationError(
+        `Qwen API 请求错误: ${errorMessage}`,
+        'fatal',
+        'qwen',
+        status,
+        errorCode
+      );
+
+    case 401:
+    case 403:
+      throw new TranslationError(
+        'Qwen API 密钥无效或已过期',
+        'fatal',
+        'qwen',
+        status,
+        errorCode
+      );
+
+    case 429:
+      throw new TranslationError(
+        'Qwen API 速率限制（超出 RPM 或 TPM）',
+        'retryable',
+        'qwen',
+        status,
+        errorCode
+      );
+
+    case 500:
+    case 502:
+    case 503:
+      throw new TranslationError(
+        'Qwen API 服务器错误，请稍后重试',
+        'retryable',
+        'qwen',
+        status,
+        errorCode
+      );
+
+    default:
+      throw new TranslationError(
+        `Qwen API 错误 (${status}): ${errorMessage}`,
+        'fatal',
+        'qwen',
+        status,
+        errorCode
+      );
+  }
+}
+
+// translateBatch 方法的完整示例
+private async translateBatch(
+  texts: string[],
+  sourceLang: string,
+  targetLang: string,
+  signal: AbortSignal
+): Promise<string[]> {
+  // 构建请求体
+  const requestBody = {
+    model: this.model,
+    messages: [{
+      role: 'user',
+      content: texts.join('\n')
+    }],
+    translation_options: {
+      source_lang: sourceLang === 'auto' ? 'auto' : this.mapLanguage(sourceLang),
+      target_lang: this.mapLanguage(targetLang)
+    }
+  };
+
+  // 发送请求
+  let response: Response;
+  try {
+    response = await fetch(this.endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`
+      },
+      body: JSON.stringify(requestBody),
+      signal  // AbortSignal 支持
+    });
+  } catch (error) {
+    // ⭐ 使用 handleFetchError 统一处理网络错误
+    handleFetchError(error, 'qwen', 'Qwen API 网络请求失败');
+  }
+
+  // API 错误处理
+  if (!response.ok) {
+    await this.handleAPIError(response, sourceLang, targetLang);  // ← 传入语言参数
+  }
+
+  // 解析响应
+  let data: any;
+  try {
+    data = await response.json();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new TranslationError(
+      `Qwen API 响应解析失败: ${message}`,
+      'retryable',
+      'qwen'
+    );
+  }
+
+  const translatedText = data.choices[0]?.message?.content;
+
+  if (!translatedText) {
+    throw new TranslationError(
+      'Qwen API 返回内容为空',
+      'fatal',
+      'qwen'
+    );
+  }
+
+  // 分割翻译结果
+  const translations = translatedText.split('\n');
+
+  // 验证数量匹配
+  if (translations.length !== texts.length) {
+    console.error(
+      `[QwenTranslator] ❌ 翻译数量不匹配: ` +
+      `期望${texts.length}条，实际${translations.length}条`
+    );
+    throw new TranslationError(
+      `翻译数量不匹配: 期望${texts.length}条，实际${translations.length}条`,
+      'retryable',
+      'qwen'
+    );
+  }
+
+  return translations;
+}
+```
+
+**关键改进**：
+1. ✅ **统一错误类**：使用 `TranslationError` 替代 `QwenTranslationError`，所有翻译服务共用
+2. ✅ **网络错误统一处理**：使用 `handleFetchError()` 函数
+   - AbortError → 直接抛出，不封装（用户取消/超时，不是错误）
+   - 其他网络错误 → 封装为 TranslationError (retryable)
+3. ✅ **语言参数传递**：`handleAPIError` 新增 `sourceLang` 和 `targetLang` 参数
+4. ✅ **精确错误匹配**：使用 `errorCode === 'invalid_parameter_error'` 匹配语言错误
+5. ✅ **详细用户提示**：`Qwen-MT 不支持 ${sourceLang} → ${targetLang}，请更换翻译语言`
+6. ✅ **返回内容为空分类**：归类为 `fatal`（不是临时问题，可能是API异常）
+7. ✅ **错误码记录**：所有 TranslationError 都包含 `errorCode` 字段，便于调试
+
+#### 📌 设计原则
+
+1. **只处理真实场景可能发生的错误**
+   - 排除多模态相关错误（文件、图片、视频）
+   - 排除参数配置错误（代码已封装）
+   - 基于实际测试结果调整（如语言支持测试）
+
+2. **优先匹配 errorCode，其次匹配 errorMessage**
+   - errorCode 更精确，不受文案变化影响
+   - errorMessage 作为兜底，应对阿里云未返回 code 的情况
+   - 双重验证（如同时检查 errorCode 和 errorMessage）
+
+3. **错误消息格式统一**
+   - 所有 TranslationError.message 必须是用户友好的
+   - 格式：`服务名 + 模型 + 问题描述`
+   - 示例：`"Qwen API 密钥无效或已过期"` 而不是 `"401 Unauthorized"`
+
+4. **错误消息直接使用，不再二次转换**
+   - translator 抛出的 TranslationError.message 就是最终显示给用户的
+   - timeout-errors.ts 只处理特殊情况（超时、网络、AbortError）和旧代码兼容
+   - 避免信息丢失和重复维护
+
+5. **用户提示明确且可操作**
+   - 直接告诉用户问题：`"账号余额不足"`
+   - 给出解决方案：`"请充值后重试"`
+   - 包含当前状态：`"不支持 en → zh"`
+
+#### 🔄 错误处理流程
+
+```typescript
+// 1. translator 抛出 TranslationError（用户友好的消息）
+throw new TranslationError(
+  'Qwen 账号余额不足，请充值后重试',  // ← 已经是用户友好的
+  'fatal',
+  'qwen',
+  400,
+  'Arrearage'
+);
+
+// 2. service-worker catch 块捕获
+} catch (error) {
+  if (error instanceof TranslationError) {
+    // 直接使用 error.message
+    userMessage = error.message;  // "Qwen 账号余额不足，请充值后重试"
+  }
+}
+
+// 3. 显示给用户（不再转换）
+// 用户看到："Qwen 账号余额不足，请充值后重试"
+```
+
+#### 🎯 特殊错误处理
+
+**AbortError（超时）**：
+```typescript
+// handle-toggle-translate-v4.ts
+} else if (isAbortError(error)) {
+  userMessage = '翻译超时，请检查网络后重试';
+  errorLevel = ErrorLevel.WARNING;
+  console.log('[service-worker-v4] 翻译超时');
+}
+```
+
+**说明**：
+- AbortError 只在超时时抛出（按钮锁定，用户无法手动取消）
+- 其他错误（API错误、网络错误）直接抛出 TranslationError
+- catch 块里调用 `session.abort()` 只是清理资源，不会再抛出新错误
 
 ### 错误分类（Fatal vs Retryable）
 

@@ -15,6 +15,20 @@
  * - 批次间延迟：200ms（仅 batch 阶段）
  * - 速率限制：60 RPM, 23,797 TPM
  */
+export type QwenErrorCategory = 'fatal' | 'retryable';
+
+export class QwenTranslationError extends Error {
+  public readonly category: QwenErrorCategory;
+  public readonly status?: number;
+
+  constructor(message: string, category: QwenErrorCategory, status?: number) {
+    super(message);
+    this.name = 'QwenTranslationError';
+    this.category = category;
+    this.status = status;
+  }
+}
+
 export class QwenTranslator {
   private static readonly BEIJING_ENDPOINT =
     'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
@@ -157,15 +171,27 @@ export class QwenTranslator {
     // 发送请求
     const startTime = Date.now();
 
-    const response = await fetch(this.endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`
-      },
-      body: JSON.stringify(requestBody),
-      signal  // AbortSignal 支持
-    });
+    let response: Response;
+    try {
+      response = await fetch(this.endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`
+        },
+        body: JSON.stringify(requestBody),
+        signal  // AbortSignal 支持
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      throw new QwenTranslationError(
+        `Qwen API 请求失败: ${message}`,
+        'retryable'
+      );
+    }
 
     // 错误处理
     if (!response.ok) {
@@ -173,11 +199,23 @@ export class QwenTranslator {
     }
 
     // 解析响应
-    const data = await response.json();
+    let data: any;
+    try {
+      data = await response.json();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new QwenTranslationError(
+        `Qwen API 响应解析失败: ${message}`,
+        'retryable'
+      );
+    }
     const translatedText = data.choices[0]?.message?.content;
 
     if (!translatedText) {
-      throw new Error('Qwen API 返回内容为空');
+      throw new QwenTranslationError(
+        'Qwen API 返回内容为空',
+        'fatal'
+      );
     }
 
     const duration = Date.now() - startTime;
@@ -206,8 +244,9 @@ export class QwenTranslator {
         `[QwenTranslator] ❌ 翻译数量不匹配: ` +
         `期望${texts.length}条，实际${translations.length}条`
       );
-      throw new Error(
-        `翻译数量不匹配: 期望${texts.length}条，实际${translations.length}条`
+      throw new QwenTranslationError(
+        `翻译数量不匹配: 期望${texts.length}条，实际${translations.length}条`,
+        'retryable'
       );
     }
 
@@ -276,24 +315,30 @@ export class QwenTranslator {
       // JSON 解析失败
     }
 
-    switch (response.status) {
+    const status = response.status;
+
+    switch (status) {
       case 401:
       case 403:
-        throw new Error('Qwen API 密钥无效或已过期');
+        throw new QwenTranslationError('Qwen API 密钥无效或已过期', 'fatal', status);
 
       case 429:
-        throw new Error('Qwen API 速率限制（超出 RPM 或 TPM）');
+        throw new QwenTranslationError('Qwen API 速率限制（超出 RPM 或 TPM）', 'retryable', status);
 
       case 400:
-        throw new Error(`Qwen API 请求参数错误: ${errorMessage}`);
+        throw new QwenTranslationError(`Qwen API 请求参数错误: ${errorMessage}`, 'fatal', status);
 
       case 500:
       case 502:
       case 503:
-        throw new Error('Qwen API 服务器错误，请稍后重试');
+        throw new QwenTranslationError('Qwen API 服务器错误，请稍后重试', 'retryable', status);
 
       default:
-        throw new Error(`Qwen API 错误 (${response.status}): ${errorMessage}`);
+        throw new QwenTranslationError(
+          `Qwen API 错误 (${status}): ${errorMessage}`,
+          'fatal',
+          status
+        );
     }
   }
 
