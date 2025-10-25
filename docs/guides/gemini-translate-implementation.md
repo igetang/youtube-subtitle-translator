@@ -2400,44 +2400,614 @@ const response = await fetch(apiUrl, {
   - 缺点：比分隔符格式稍微多一些 token（可接受）
 - **失败策略**：直接抛出错误，不降级
 
-## 🚨 错误处理
+## 🚨 错误处理架构
 
-### 错误类型和处理策略
+### 错误分类哲学
 
-| 错误码 | 含义 | 自动处理 | 用户提示 |
-|--------|------|---------|---------|
-| 401 | API Key无效 | ❌ | "请检查Gemini API密钥" |
-| 403 | 权限不足 | ❌ | "Gemini API权限不足" |
-| 429 | 超出Rate Limit | ❌ | "超出速率限制（RPM/TPM）" |
-| 500 | 服务器错误 | ❌ | "Gemini服务暂时不可用" |
-
-### 错误处理代码
+Gemini错误处理遵循**两级分类系统**（与DeepSeek/OpenAI保持一致）：
 
 ```typescript
-// 详细的错误处理
-if (!response.ok) {
-  const errorText = await response.text();
+// translation-errors.ts 中已定义
+export type TranslationErrorCategory = 'fatal' | 'retryable';
+```
 
-  switch (response.status) {
-    case 401:
-    case 403:
-      throw new Error('Gemini API密钥无效，请检查设置');
-    case 429:
-      throw new Error('Gemini API速率限制（超出RPM/TPM配额）');
-    case 500:
-    case 502:
-    case 503:
-      throw new Error('Gemini服务暂时不可用');
-    default:
-      throw new Error(`Gemini API错误 (${response.status}): ${errorText}`);
+- **fatal（致命错误）**：需要用户干预才能解决，无法自动恢复
+  - API密钥问题（400, 403）
+  - 地区限制/需付费（400 FAILED_PRECONDITION）
+  - 资源未找到（404）
+  - 安全过滤拦截（SAFETY）
+  - 其他未知错误
+
+- **retryable（可重试错误）**：临时性问题，稍后可能成功
+  - 速率限制（429）
+  - 服务器错误（500, 503）
+  - 超时错误（504）
+  - 网络连接问题
+  - JSON解析失败
+  - 输出超限（MAX_TOKENS）
+  - 数据验证错误
+
+- **特殊处理：AbortError**：
+  - **不进行分类**，直接抛出到上层
+  - 区分超时（`message.includes('timeout')`）和用户取消
+  - 由 `timeout-errors.ts` 统一处理
+
+### 统一错误工具
+
+Gemini Translator 复用 `src/shared/types/translation-errors.ts` 中的通用工具：
+
+```typescript
+import {
+  TranslationError,
+  TranslationErrorCategory,
+  handleFetchError,
+} from '@/shared/types/translation-errors';
+```
+
+- `TranslationError`：统一封装错误信息，`service` 必须传入 `'gemini'`
+- `handleFetchError`：处理 `fetch` 抛出的网络错误，自动识别 `AbortError`
+- `TranslationError.category`：使用 `fatal` / `retryable` 两级分类
+
+### 完整错误分类表
+
+#### 1. API错误（8种）
+
+| HTTP状态码 | 官方错误名称 | 分类 | 用户提示 | 说明 |
+|-----------|------------|------|---------|------|
+| 400 | INVALID_ARGUMENT | `fatal` | Gemini 请求参数错误，请检查设置 | 请求体格式错误、缺少必需字段 |
+| 400 | FAILED_PRECONDITION | `fatal` | ⭐ Gemini 服务在您的地区不可用或需要付费计划 | 免费套餐地区限制/需付费 |
+| 403 | PERMISSION_DENIED | `fatal` | Gemini API密钥无效或无权限 | API密钥权限不足 |
+| 404 | NOT_FOUND | `fatal` | Gemini 请求的资源未找到，请检查模型名称 | 模型名称错误或API版本不匹配 |
+| 429 | RESOURCE_EXHAUSTED | `retryable` | ⭐ Gemini API 请求过于频繁，请稍后重试 | 超出速率限制（RPM/TPM/RPD） |
+| 500 | INTERNAL | `retryable` | Gemini 服务内部错误，请稍后重试 | 后端意外错误（通常与上下文相关） |
+| 503 | UNAVAILABLE | `retryable` | Gemini 服务暂时不可用，请稍后重试 | 服务过载或维护中 |
+| 504 | DEADLINE_EXCEEDED | `retryable` | Gemini 服务响应超时，请重试 | 处理未在deadline内完成 |
+
+> 数据来源：[Gemini API Troubleshooting Guide](https://ai.google.dev/gemini-api/docs/troubleshooting)
+
+**⭐ 最重要用户错误**：
+- **400 FAILED_PRECONDITION**（地区限制/需付费）
+- **429 RESOURCE_EXHAUSTED**（速率限制，最常见）
+- **403 PERMISSION_DENIED**（API密钥无效）
+
+> **注**：Gemini 没有 402 余额不足错误，使用 400 FAILED_PRECONDITION 表示需要付费计划。
+
+#### 2. 客户端错误（5种）
+
+| 错误类型 | 分类 | 检测位置 | 用户提示 | 说明 |
+|---------|------|---------|---------|------|
+| 网络连接失败 | `retryable` | `fetch()` catch块 | 网络连接失败，请检查网络设置 | DNS解析失败、连接超时等 |
+| JSON解析失败 | `retryable` | `response.json()` catch块 | Gemini 翻译服务响应异常，请重试 | 返回内容不是有效JSON |
+| 响应格式错误 | `retryable` | 格式验证阶段 | Gemini 翻译服务响应异常，请重试 | 缺少必要字段（candidates/content） |
+| YAML解析失败 | `retryable` | YAML解析阶段 | Gemini 翻译服务响应异常，请重试 | YAML格式不正确或无法解析 |
+| 翻译数量不匹配 | `retryable` | 数据验证阶段 | Gemini 翻译服务响应异常，请重试 | 返回译文数量 ≠ 输入数量 |
+| AbortError（超时） | 特殊 | 各阶段signal检查 | 网络超时，请检查网络连接后重试 | 15秒超时触发 |
+| AbortError（用户取消） | 特殊 | 各阶段signal检查 | （不显示） | 用户主动取消 |
+
+#### 3. finishReason错误（4种，Gemini特有）
+
+Gemini API 特有的 `finishReason` 字段，表示生成结束的原因：
+
+| finishReason | 分类 | 用户提示 | 说明 | 处理建议 |
+|-------------|------|---------|------|---------|
+| MAX_TOKENS | `retryable` | Gemini 输出超出长度限制，请重试 | maxOutputTokens设置过小 | 增大 maxOutputTokens |
+| SAFETY | `fatal` | Gemini 内容被安全过滤拦截，无法翻译 | 触发安全过滤器 | 检查输入内容 |
+| RECITATION | `retryable` | Gemini 检测到重复内容，请重试 | 检测到引用/重复 | 修改prompt |
+| OTHER | `fatal` | Gemini 翻译失败，原因未知 | 其他未知原因 | 重试或换模型 |
+
+> **STOP** 表示正常结束，不是错误。
+
+### 错误检测流程（5个关键点）
+
+```typescript
+/**
+ * callGeminiAPI方法中的5个错误检测点
+ */
+private async callGeminiAPI(
+  prompt: string,
+  signal: AbortSignal,
+  maxOutputTokens: number
+): Promise<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
+  let response: Response;
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 检测点1: fetch()网络请求（网络错误 + AbortError）
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+      signal  // 关键：使用AbortSignal
+    });
+  } catch (error) {
+    handleFetchError(error, 'gemini', 'Gemini API 网络请求失败');
   }
-}
 
-// AbortError处理
-if (error.name === 'AbortError') {
-  throw new DOMException('Gemini API请求被取消', 'AbortError');
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 检测点2: HTTP状态码检查（API错误）
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  if (!response.ok) {
+    await this.handleAPIError(response);  // 单独方法处理
+  }
+
+  let data: GeminiResponse;
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 检测点3: JSON解析（解析错误）
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  try {
+    data = await response.json();
+  } catch (error) {
+    throw new TranslationError(
+      'Gemini API 返回内容解析失败',
+      'retryable',
+      'gemini',
+      response.status
+    );
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 检测点4: 响应格式验证 + finishReason检查
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  if (!data.candidates?.[0]?.content) {
+    throw new TranslationError(
+      'Gemini API 返回格式错误：缺少必要字段',
+      'retryable',
+      'gemini',
+      response.status
+    );
+  }
+
+  const content = data.candidates[0].content.parts[0]?.text;
+  if (!content) {
+    throw new TranslationError(
+      'Gemini API 返回内容为空',
+      'retryable',
+      'gemini',
+      response.status
+    );
+  }
+
+  // ⚠️ Gemini特有：检查finishReason
+  const finishReason = data.candidates[0].finishReason;
+  if (finishReason !== 'STOP') {
+    switch (finishReason) {
+      case 'MAX_TOKENS':
+        throw new TranslationError(
+          'Gemini 输出超出长度限制，请重试',
+          'retryable',
+          'gemini'
+        );
+      case 'SAFETY':
+        throw new TranslationError(
+          'Gemini 内容被安全过滤拦截，无法翻译',
+          'fatal',
+          'gemini'
+        );
+      case 'RECITATION':
+        throw new TranslationError(
+          'Gemini 检测到重复内容，请重试',
+          'retryable',
+          'gemini'
+        );
+      default:
+        throw new TranslationError(
+          `Gemini 翻译失败: ${finishReason}`,
+          'fatal',
+          'gemini'
+        );
+    }
+  }
+
+  // Token使用统计（可选）
+  if (data.usageMetadata) {
+    const actualInput = data.usageMetadata.promptTokenCount;
+    const actualOutput = data.usageMetadata.candidatesTokenCount;
+    const actualTotal = data.usageMetadata.totalTokenCount;
+    console.debug(
+      `[debug][GeminiTranslator] 📊 Token实际用量: ` +
+      `输入=${actualInput}, 输出=${actualOutput}, 总计=${actualTotal}`
+    );
+  }
+
+  return content;
 }
 ```
+
+> **检测点5**：YAML解析 + 数量验证（在translate方法中）
+
+### handleAPIError方法设计
+
+```typescript
+/**
+ * 处理Gemini API错误
+ * 根据HTTP状态码和错误响应体进行分类
+ */
+private async handleAPIError(response: Response): Promise<never> {
+  let errorMessage = '未知错误';
+  let errorCode: string | undefined;
+
+  // 尝试解析错误响应体
+  try {
+    const errorData = await response.json();
+    errorMessage = errorData.error?.message || errorData.message || '未知错误';
+    errorCode = errorData.error?.status || errorData.status;  // Gemini使用status字段
+  } catch {
+    errorMessage = await response.text().catch(() => '未知错误');
+  }
+
+  const status = response.status;
+
+  // 根据HTTP状态码分类错误
+  switch (status) {
+    case 400:
+      // 区分 INVALID_ARGUMENT 和 FAILED_PRECONDITION
+      if (errorCode === 'FAILED_PRECONDITION' || errorMessage.includes('billing')) {
+        // ⭐最重要用户错误：地区限制/需付费
+        throw new TranslationError(
+          'Gemini 服务在您的地区不可用或需要付费计划',
+          'fatal',
+          'gemini',
+          status,
+          errorCode
+        );
+      }
+      // API key错误通常也是400
+      if (errorMessage.toLowerCase().includes('api key')) {
+        throw new TranslationError(
+          'Gemini API密钥无效',
+          'fatal',
+          'gemini',
+          status,
+          errorCode
+        );
+      }
+      throw new TranslationError(
+        'Gemini 请求参数错误，请检查设置',
+        'fatal',
+        'gemini',
+        status,
+        errorCode
+      );
+
+    case 403:
+      throw new TranslationError(
+        'Gemini API密钥无效或无权限',
+        'fatal',
+        'gemini',
+        status,
+        errorCode
+      );
+
+    case 404:
+      throw new TranslationError(
+        'Gemini 请求的资源未找到，请检查模型名称',
+        'fatal',
+        'gemini',
+        status,
+        errorCode
+      );
+
+    case 429:
+      // ⭐最重要用户错误：速率限制
+      throw new TranslationError(
+        'Gemini API 请求过于频繁，请稍后重试',
+        'retryable',
+        'gemini',
+        status,
+        errorCode
+      );
+
+    case 500:
+      throw new TranslationError(
+        'Gemini 服务内部错误，请稍后重试',
+        'retryable',
+        'gemini',
+        status,
+        errorCode
+      );
+
+    case 503:
+      throw new TranslationError(
+        'Gemini 服务暂时不可用，请稍后重试',
+        'retryable',
+        'gemini',
+        status,
+        errorCode
+      );
+
+    case 504:
+      throw new TranslationError(
+        'Gemini 服务响应超时，请重试',
+        'retryable',
+        'gemini',
+        status,
+        errorCode
+      );
+
+    default:
+      throw new TranslationError(
+        `Gemini API 错误 (${status}): ${errorMessage}`,
+        'fatal',
+        'gemini',
+        status,
+        errorCode
+      );
+  }
+}
+```
+
+### translate方法中的signal检查（3个位置）
+
+```typescript
+/**
+ * 批量翻译方法中的AbortSignal检查（3个位置）
+ */
+public async translate(
+  texts: string[],
+  sourceLang: string,
+  targetLang: string,
+  stage: 'urgent' | 'batch',
+  signal: AbortSignal
+): Promise<string[]> {
+  if (texts.length === 0) {
+    return [];
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 位置1: 方法入口检查
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  if (signal.aborted) {
+    throw new DOMException('Gemini翻译开始前已取消', 'AbortError');
+  }
+
+  const results: string[] = [];
+
+  // 分批处理
+  for (let i = 0; i < texts.length; i += this.modelConfig.batchSize) {
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 位置2: 循环入口检查（每批次前）
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if (signal.aborted) {
+      throw new DOMException('Gemini翻译已取消', 'AbortError');
+    }
+
+    const batch = texts.slice(i, i + this.modelConfig.batchSize);
+    const batchNumber = Math.floor(i / this.modelConfig.batchSize) + 1;
+
+    // 转换为YAML格式
+    const yamlInput = this.convertToYAML(batch);
+    const prompt = this.buildTranslationPrompt(yamlInput, batch.length, sourceLang, targetLang);
+
+    // 调用API（内部会传递signal到fetch）
+    const responseText = await this.callGeminiAPI(prompt, signal, estimatedOutputTokens);
+
+    // 解析YAML响应
+    const translations = this.parseYAMLResponse(responseText, batch.length);
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 检测点5: 翻译数量验证
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if (translations.length !== batch.length) {
+      throw new TranslationError(
+        `批次 ${batchNumber} 翻译数量不匹配: 期望${batch.length}条，实际${translations.length}条`,
+        'retryable',
+        'gemini'
+      );
+    }
+
+    results.push(...translations);
+
+    // 批次间延迟（仅batch阶段）
+    if (stage === 'batch' && i + this.modelConfig.batchSize < texts.length) {
+      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      // 位置3: 延迟期间可取消（delayWithSignal内部监听abort事件）
+      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      await this.delayWithSignal(this.batchDelay, signal);
+    }
+  }
+
+  return results;
+}
+```
+
+### delayWithSignal实现
+
+```typescript
+/**
+ * 支持取消的延迟工具
+ * 监听AbortSignal，一旦取消立即中断延迟
+ */
+private async delayWithSignal(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+
+    const abortHandler = () => {
+      clearTimeout(timer);
+      reject(new DOMException('延迟被取消', 'AbortError'));
+    };
+
+    signal.addEventListener('abort', abortHandler, { once: true });
+  });
+}
+```
+
+### 错误处理执行流程图
+
+```mermaid
+graph TB
+    Start[开始翻译] --> CheckSignal1{signal.aborted?}
+    CheckSignal1 -->|是| AbortStart[抛出AbortError: 开始前已取消]
+    CheckSignal1 -->|否| Loop[进入批次循环]
+
+    Loop --> CheckSignal2{signal.aborted?}
+    CheckSignal2 -->|是| AbortLoop[抛出AbortError: 翻译已取消]
+    CheckSignal2 -->|否| PrepareYAML[转换为YAML格式]
+
+    PrepareYAML --> CallAPI[调用callGeminiAPI]
+
+    CallAPI --> Fetch{fetch请求}
+    Fetch -->|网络错误| CatchFetch[catch块]
+    CatchFetch --> IsAbort1{error.name === 'AbortError'?}
+    IsAbort1 -->|是| ThrowAbort1[直接抛出AbortError]
+    IsAbort1 -->|否| ThrowNetwork[抛出TranslationError<br/>service='gemini'<br/>category: retryable<br/>网络连接失败]
+
+    Fetch -->|成功| CheckStatus{response.ok?}
+    CheckStatus -->|否| HandleAPIError[handleAPIError方法]
+
+    HandleAPIError --> ParseError{解析错误响应}
+    ParseError --> SwitchStatus{HTTP状态码}
+
+    SwitchStatus -->|400 FAILED_PRECONDITION| Throw400F[TranslationError<br/>service='gemini'<br/>fatal: 地区限制/需付费 ⭐]
+    SwitchStatus -->|400 INVALID_ARGUMENT| Throw400I[TranslationError<br/>service='gemini'<br/>fatal: 请求参数错误]
+    SwitchStatus -->|403| Throw403[TranslationError<br/>service='gemini'<br/>fatal: 密钥无效]
+    SwitchStatus -->|404| Throw404[TranslationError<br/>service='gemini'<br/>fatal: 资源未找到]
+    SwitchStatus -->|429| Throw429[TranslationError<br/>service='gemini'<br/>retryable: 速率限制 ⭐]
+    SwitchStatus -->|500| Throw500[TranslationError<br/>service='gemini'<br/>retryable: 服务器错误]
+    SwitchStatus -->|503| Throw503[TranslationError<br/>service='gemini'<br/>retryable: 服务不可用]
+    SwitchStatus -->|504| Throw504[TranslationError<br/>service='gemini'<br/>retryable: 超时]
+    SwitchStatus -->|其他| ThrowOther[TranslationError<br/>service='gemini'<br/>fatal: 未知错误]
+
+    CheckStatus -->|是| ParseJSON{response.json}
+    ParseJSON -->|解析失败| ThrowJSON[TranslationError<br/>service='gemini'<br/>retryable: JSON解析失败]
+    ParseJSON -->|成功| ValidateFormat{验证响应格式}
+
+    ValidateFormat -->|格式错误| ThrowFormat[TranslationError<br/>service='gemini'<br/>retryable: 缺少必要字段]
+    ValidateFormat -->|格式正确| CheckFinish{finishReason检查}
+
+    CheckFinish -->|STOP| ReturnContent[返回content]
+    CheckFinish -->|MAX_TOKENS| ThrowMaxTokens[TranslationError<br/>service='gemini'<br/>retryable: 输出超限]
+    CheckFinish -->|SAFETY| ThrowSafety[TranslationError<br/>service='gemini'<br/>fatal: 安全过滤]
+    CheckFinish -->|RECITATION| ThrowRecitation[TranslationError<br/>service='gemini'<br/>retryable: 重复内容]
+    CheckFinish -->|OTHER| ThrowFinishOther[TranslationError<br/>service='gemini'<br/>fatal: 未知原因]
+
+    ReturnContent --> ParseYAML{解析YAML}
+    ParseYAML -->|解析失败| ThrowYAML[TranslationError<br/>service='gemini'<br/>retryable: YAML解析失败]
+    ParseYAML -->|成功| ValidateCount{数量匹配?}
+
+    ValidateCount -->|不匹配| ThrowCount[TranslationError<br/>service='gemini'<br/>retryable: 数量不匹配]
+    ValidateCount -->|匹配| PushResults[添加到结果数组]
+
+    PushResults --> CheckMore{还有批次?}
+    CheckMore -->|否| Success[返回结果]
+    CheckMore -->|是| CheckStage{stage === 'batch'?}
+
+    CheckStage -->|是| Delay[delayWithSignal]
+    Delay --> DelayAbort{signal.abort事件?}
+    DelayAbort -->|触发| ThrowAbort2[抛出AbortError: 延迟被取消]
+    DelayAbort -->|未触发| Loop
+
+    CheckStage -->|否| Loop
+
+    style Throw400F fill:#ff6b6b,stroke:#c92a2a,color:#fff
+    style Throw429 fill:#ff6b6b,stroke:#c92a2a,color:#fff
+    style ThrowAbort1 fill:#ffd43b,stroke:#f59f00
+    style ThrowAbort2 fill:#ffd43b,stroke:#f59f00
+    style AbortStart fill:#ffd43b,stroke:#f59f00
+    style AbortLoop fill:#ffd43b,stroke:#f59f00
+    style ThrowSafety fill:#ff8787,stroke:#e03131
+    style Throw500 fill:#74c0fc,stroke:#1c7ed6
+    style Throw503 fill:#74c0fc,stroke:#1c7ed6
+    style Throw504 fill:#74c0fc,stroke:#1c7ed6
+    style ThrowNetwork fill:#74c0fc,stroke:#1c7ed6
+    style ThrowJSON fill:#74c0fc,stroke:#1c7ed6
+    style ThrowCount fill:#74c0fc,stroke:#1c7ed6
+    style ThrowMaxTokens fill:#74c0fc,stroke:#1c7ed6
+    style ThrowRecitation fill:#74c0fc,stroke:#1c7ed6
+    style ThrowYAML fill:#74c0fc,stroke:#1c7ed6
+```
+
+### 与timeout-errors.ts的集成
+
+Gemini错误最终会被上层（handle-toggle-translate-v4.ts）捕获并转换为用户友好的提示：
+
+```typescript
+/**
+ * 在 handle-toggle-translate-v4.ts 中的错误处理
+ */
+import { getUserFriendlyMessage, getErrorLevel, ErrorLevel } from '../shared/types/timeout-errors';
+
+try {
+  // ... 翻译逻辑
+} catch (error: any) {
+  let userMessage = '翻译失败，请稍后重试';
+  let errorLevel = ErrorLevel.ERROR;
+
+  // 1. AbortError（用户取消）
+  if (isAbortError(error)) {
+    userMessage = '';  // 不显示消息
+    errorLevel = ErrorLevel.INFO;
+    console.log('[service-worker-v4] 用户取消翻译');
+  }
+  // 2. AbortError（超时）
+  else if (isTimeoutError(error)) {
+    userMessage = '网络超时，请检查网络连接后重试';
+    errorLevel = ErrorLevel.WARNING;
+    console.log('[service-worker-v4] 超时错误');
+  }
+  // 3. TranslationError（来自 Gemini）
+  else if (error instanceof TranslationError && error.service === 'gemini') {
+    userMessage = error.message;
+    errorLevel = error.category === 'fatal' ? ErrorLevel.ERROR : ErrorLevel.WARNING;
+
+    // 特殊提示：速率限制
+    if (error.status === 429) {
+      console.error('[service-worker-v4] ⚠️ Gemini速率限制');
+    }
+    // 特殊提示：地区限制/需付费
+    if (error.errorCode === 'FAILED_PRECONDITION') {
+      console.error('[service-worker-v4] ⚠️ Gemini地区限制或需付费');
+    }
+  }
+  // 4. 其他未知错误
+  else {
+    userMessage = getUserFriendlyMessage(error);
+  }
+
+  // 更新状态并通知用户
+  await RuntimeStateManager.getInstance().updateTranslateActiveState(
+    tabId,
+    'inactive',
+    userMessage
+  );
+}
+```
+
+### 架构设计要点总结
+
+1. **错误分类明确**：fatal（6种）vs retryable（11种）vs AbortError（特殊）
+2. **errorCode字段特殊**：Gemini使用 `error.status` 而非 `error.code`
+3. **5个检测点 + finishReason检查**：网络 → HTTP状态 → JSON解析 → 格式验证 + finishReason → YAML解析 + 数量验证
+4. **3个signal检查**：方法入口 → 循环入口 → 延迟期间
+5. **finishReason特有检查**：处理4种非STOP的情况（MAX_TOKENS, SAFETY, RECITATION, OTHER）
+6. **AbortError直接抛出**：不包装，由上层统一处理
+7. **用户提示友好化**：翻译器抛出的 `TranslationError`（service=`'gemini'`）消息直接面向用户
+8. **与项目集成**：复用timeout-errors.ts工具函数
+
+### Gemini特有的错误特性
+
+1. **errorCode字段名称不同**：
+   - DeepSeek/OpenAI: `errorData.error?.code`
+   - **Gemini**: `errorData.error?.status`（注意是 `status` 不是 `code`）
+
+2. **finishReason检查**：
+   - Gemini 独有的 `finishReason` 字段需要额外检查
+   - 4种非STOP情况：MAX_TOKENS、SAFETY、RECITATION、OTHER
+
+3. **没有余额不足错误**：
+   - Gemini 使用 `400 FAILED_PRECONDITION` 表示需要付费计划
+   - 不像 DeepSeek/OpenAI 有专门的 402 状态码
+
+4. **地区限制错误**：
+   - `400 FAILED_PRECONDITION` 可能表示地区限制或需要付费
+   - 需要根据 errorMessage 或 errorCode 区分
+
+5. **8个HTTP错误**（比其他服务多1个）：
+   - 新增 504 DEADLINE_EXCEEDED（超时错误）
+
+> 说明：Gemini 翻译器在抛出 `TranslationError`（service=`'gemini'`）时应直接提供用户友好的消息，上层不会再做二次映射。
 
 ## 📊 Rate Limit管理
 
@@ -2744,6 +3314,17 @@ curl -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5
 
 ## 📅 更新历史
 
+- **2025-10-25**：添加完整的错误处理架构设计章节
+  - 统一使用 TranslationError + handleFetchError
+  - 17种错误完整分类表（8个API + 5个客户端 + 4个finishReason）
+  - errorCode字段特殊处理（Gemini使用 error.status）
+  - 5个错误检测点 + finishReason特有检查
+  - handleAPIError方法架构设计（8个HTTP状态码）
+  - 3个signal检查位置（方法入口 + 循环 + 延迟）
+  - finishReason检查逻辑（MAX_TOKENS, SAFETY, RECITATION, OTHER）
+  - 完整的Mermaid错误流程图
+  - 与timeout-errors.ts集成说明
+  - Gemini特有错误特性总结（无402错误、有504错误、errorCode用status字段）
 - **2025-10-20**：🎯 调整实施策略为分阶段实现
   - **Phase 1（当前实施）**：手动选择免费/付费层，简单直观
     - 添加完整的Popup UI实现（账户类型下拉菜单）
@@ -2792,4 +3373,4 @@ curl -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5
 
 ---
 
-*本文档已完成原生 API + Tier检测架构设计，可直接用于实现*
+*本文档已完成错误处理架构设计，符合项目统一规范，可直接用于实现*
