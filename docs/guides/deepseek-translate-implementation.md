@@ -85,7 +85,8 @@ graph LR
 DeepSeek错误处理遵循**两级分类系统**（与Qwen保持一致）：
 
 ```typescript
-export type DeepSeekErrorCategory = 'fatal' | 'retryable';
+// translation-errors.ts 中已定义
+export type TranslationErrorCategory = 'fatal' | 'retryable';
 ```
 
 - **fatal（致命错误）**：需要用户干预才能解决，无法自动恢复
@@ -106,35 +107,23 @@ export type DeepSeekErrorCategory = 'fatal' | 'retryable';
   - 区分超时（`message.includes('timeout')`）和用户取消
   - 由 `timeout-errors.ts` 统一处理
 
-### 错误类定义
+### 统一错误工具
+
+DeepSeek Translator 复用 `src/shared/types/translation-errors.ts` 中的通用工具：
 
 ```typescript
-/**
- * DeepSeek翻译错误类
- * @file src/background/components/deepseek-translator.ts
- */
-export type DeepSeekErrorCategory = 'fatal' | 'retryable';
-
-export class DeepSeekTranslationError extends Error {
-  public readonly name = 'DeepSeekTranslationError';
-  public readonly category: DeepSeekErrorCategory;
-  public readonly status?: number;        // HTTP状态码
-  public readonly errorCode?: string;     // DeepSeek返回的错误代码
-
-  constructor(
-    message: string,
-    category: DeepSeekErrorCategory,
-    status?: number,
-    errorCode?: string
-  ) {
-    super(message);
-    this.category = category;
-    this.status = status;
-    this.errorCode = errorCode;
-    Object.setPrototypeOf(this, DeepSeekTranslationError.prototype);
-  }
-}
+import {
+  TranslationError,
+  TranslationErrorCategory,
+  handleFetchError,
+} from '@/shared/types/translation-errors';
 ```
+
+- `TranslationError`：统一封装错误信息，`service` 必须传入 `'deepseek'`
+- `handleFetchError`：处理 `fetch` 抛出的网络错误，自动识别 `AbortError`
+- `TranslationError.category`：仍然使用 `fatal` / `retryable` 两级分类
+
+> 注意：如果未来扩展到更多服务，请继续沿用该工具集，不再单独定义 `DeepSeekTranslationError`。
 
 ### 完整错误分类表
 
@@ -195,17 +184,7 @@ private async callAPI(
       signal  // 关键：使用AbortSignal
     });
   } catch (error) {
-    // 模式1: AbortError - 直接抛出，不包装
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      throw error;
-    }
-
-    // 模式2: 其他网络错误 - 包装为retryable
-    const message = error instanceof Error ? error.message : String(error);
-    throw new DeepSeekTranslationError(
-      `DeepSeek API 请求失败: ${message}`,
-      'retryable'
-    );
+    handleFetchError(error, 'deepseek', 'DeepSeek API 网络请求失败');
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -223,9 +202,11 @@ private async callAPI(
   try {
     data = await response.json();
   } catch (error) {
-    throw new DeepSeekTranslationError(
+    throw new TranslationError(
       'DeepSeek API 返回内容解析失败',
-      'retryable'
+      'retryable',
+      'deepseek',
+      response.status
     );
   }
 
@@ -233,9 +214,11 @@ private async callAPI(
   // 检测点4: 响应格式验证（格式错误）
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   if (!data.choices?.[0]?.message?.content) {
-    throw new DeepSeekTranslationError(
+    throw new TranslationError(
       'DeepSeek API 返回格式错误：缺少必要字段',
-      'fatal'
+      'fatal',
+      'deepseek',
+      response.status
     );
   }
 
@@ -279,60 +262,67 @@ private async handleAPIError(response: Response): Promise<never> {
   // 根据HTTP状态码分类错误
   switch (status) {
     case 400:
-      throw new DeepSeekTranslationError(
+      throw new TranslationError(
         `DeepSeek API 请求格式错误: ${errorMessage}`,
         'fatal',
+        'deepseek',
         status,
         errorCode
       );
 
     case 401:
     case 403:
-      throw new DeepSeekTranslationError(
+      throw new TranslationError(
         'DeepSeek API 密钥无效或已过期',
         'fatal',
+        'deepseek',
         status,
         errorCode
       );
 
     case 402:
       // ⭐最重要的用户错误
-      throw new DeepSeekTranslationError(
+      throw new TranslationError(
         'DeepSeek 账户余额不足，请前往官网充值',
         'fatal',
+        'deepseek',
         status,
         errorCode
       );
 
     case 422:
-      throw new DeepSeekTranslationError(
+      throw new TranslationError(
         `DeepSeek API 请求参数错误: ${errorMessage}`,
         'fatal',
+        'deepseek',
         status,
         errorCode
       );
 
     case 429:
-      throw new DeepSeekTranslationError(
+      throw new TranslationError(
         'DeepSeek API 速率限制，请稍后重试',
         'retryable',
+        'deepseek',
         status,
         errorCode
       );
 
     case 500:
     case 503:
-      throw new DeepSeekTranslationError(
+      throw new TranslationError(
         'DeepSeek API 服务器错误，请稍后重试',
         'retryable',
+        'deepseek',
         status,
         errorCode
       );
 
     default:
-      throw new DeepSeekTranslationError(
+      throw new TranslationError(
         `DeepSeek API 错误 (${status}): ${errorMessage}`,
         'fatal',
+        'deepseek',
         status,
         errorCode
       );
@@ -394,9 +384,10 @@ public async translate(
         `[DeepSeekTranslator] 批次 ${Math.floor(i / DeepSeekTranslator.BATCH_SIZE) + 1} ` +
         `翻译数量不匹配: 期望 ${batch.length}，实际 ${translations.length}`
       );
-      throw new DeepSeekTranslationError(
+      throw new TranslationError(
         `批次 ${Math.floor(i / DeepSeekTranslator.BATCH_SIZE) + 1} 翻译数量不匹配`,
-        'retryable'
+        'retryable',
+        'deepseek'
       );
     }
 
@@ -452,7 +443,7 @@ graph TB
     Fetch -->|网络错误| CatchFetch[catch块]
     CatchFetch --> IsAbort1{error.name === 'AbortError'?}
     IsAbort1 -->|是| ThrowAbort1[直接抛出AbortError]
-    IsAbort1 -->|否| ThrowNetwork[抛出DeepSeekTranslationError<br/>category: retryable<br/>网络连接失败]
+    IsAbort1 -->|否| ThrowNetwork[抛出TranslationError(service='deepseek')<br/>category: retryable<br/>网络连接失败]
 
     Fetch -->|成功| CheckStatus{response.ok?}
     CheckStatus -->|否| HandleAPIError[handleAPIError方法]
@@ -460,23 +451,23 @@ graph TB
     HandleAPIError --> ParseError{解析错误响应}
     ParseError --> SwitchStatus{HTTP状态码}
 
-    SwitchStatus -->|400| Throw400[DeepSeekTranslationError<br/>fatal: 请求格式错误]
-    SwitchStatus -->|401/403| Throw401[DeepSeekTranslationError<br/>fatal: 密钥无效]
-    SwitchStatus -->|402| Throw402[DeepSeekTranslationError<br/>fatal: 余额不足 ⭐]
-    SwitchStatus -->|422| Throw422[DeepSeekTranslationError<br/>fatal: 参数错误]
-    SwitchStatus -->|429| Throw429[DeepSeekTranslationError<br/>retryable: 速率限制]
-    SwitchStatus -->|500/503| Throw500[DeepSeekTranslationError<br/>retryable: 服务器错误]
-    SwitchStatus -->|其他| ThrowOther[DeepSeekTranslationError<br/>fatal: 未知错误]
+    SwitchStatus -->|400| Throw400[TranslationError(service='deepseek')<br/>fatal: 请求格式错误]
+    SwitchStatus -->|401/403| Throw401[TranslationError(service='deepseek')<br/>fatal: 密钥无效]
+    SwitchStatus -->|402| Throw402[TranslationError(service='deepseek')<br/>fatal: 余额不足 ⭐]
+    SwitchStatus -->|422| Throw422[TranslationError(service='deepseek')<br/>fatal: 参数错误]
+    SwitchStatus -->|429| Throw429[TranslationError(service='deepseek')<br/>retryable: 速率限制]
+    SwitchStatus -->|500/503| Throw500[TranslationError(service='deepseek')<br/>retryable: 服务器错误]
+    SwitchStatus -->|其他| ThrowOther[TranslationError(service='deepseek')<br/>fatal: 未知错误]
 
     CheckStatus -->|是| ParseJSON{response.json}
-    ParseJSON -->|解析失败| ThrowJSON[DeepSeekTranslationError<br/>retryable: JSON解析失败]
+    ParseJSON -->|解析失败| ThrowJSON[TranslationError(service='deepseek')<br/>retryable: JSON解析失败]
     ParseJSON -->|成功| ValidateFormat{验证响应格式}
 
-    ValidateFormat -->|格式错误| ThrowFormat[DeepSeekTranslationError<br/>fatal: 缺少必要字段]
+    ValidateFormat -->|格式错误| ThrowFormat[TranslationError(service='deepseek')<br/>fatal: 缺少必要字段]
     ValidateFormat -->|格式正确| ParseTranslations[解析译文]
 
     ParseTranslations --> ValidateCount{数量匹配?}
-    ValidateCount -->|不匹配| ThrowCount[DeepSeekTranslationError<br/>retryable: 数量不匹配]
+    ValidateCount -->|不匹配| ThrowCount[TranslationError(service='deepseek')<br/>retryable: 数量不匹配]
     ValidateCount -->|匹配| PushResults[添加到结果数组]
 
     PushResults --> CheckMore{还有批次?}
@@ -530,9 +521,9 @@ try {
     errorLevel = ErrorLevel.WARNING;
     console.log('[service-worker-v4] 超时错误');
   }
-  // 3. DeepSeekTranslationError（分类错误）
-  else if (error.name === 'DeepSeekTranslationError') {
-    userMessage = getUserFriendlyMessage(error);
+  // 3. TranslationError（来自 DeepSeek）
+  else if (error instanceof TranslationError && error.service === 'deepseek') {
+    userMessage = error.message;
     errorLevel = error.category === 'fatal' ? ErrorLevel.ERROR : ErrorLevel.WARNING;
 
     // 特殊提示：余额不足
@@ -554,22 +545,6 @@ try {
 }
 ```
 
-### 用户提示映射表
-
-| 错误类型 | DeepSeekTranslationError.message | getUserFriendlyMessage输出 |
-|---------|----------------------------------|---------------------------|
-| 401/403 | DeepSeek API 密钥无效或已过期 | API密钥验证失败，请检查设置 |
-| 402 | DeepSeek 账户余额不足，请前往官网充值 | DeepSeek账户余额不足，请充值 |
-| 422 | DeepSeek API 请求参数错误: ... | 翻译参数设置错误，请检查语言配置 |
-| 429 | DeepSeek API 速率限制，请稍后重试 | 请求过于频繁，请稍后重试 |
-| 500/503 | DeepSeek API 服务器错误，请稍后重试 | 翻译服务暂时不可用，请稍后重试 |
-| 网络错误 | DeepSeek API 请求失败: ... | 网络连接失败，请检查网络设置 |
-| JSON解析 | DeepSeek API 返回内容解析失败 | 翻译服务响应异常，请重试 |
-| 格式错误 | DeepSeek API 返回格式错误：... | 翻译服务响应异常，请重试 |
-| 数量不匹配 | 批次 X 翻译数量不匹配 | 翻译服务响应异常，请重试 |
-| AbortError（超时） | （由timeout-errors.ts处理） | 网络超时，请检查网络连接后重试 |
-| AbortError（取消） | （由timeout-errors.ts处理） | （不显示） |
-
 ### 架构设计要点总结
 
 1. **错误分类明确**：fatal（5种）vs retryable（6种）vs AbortError（特殊）
@@ -577,8 +552,10 @@ try {
 3. **5个检测点**：网络 → HTTP状态 → JSON解析 → 格式验证 → 数量验证
 4. **3个signal检查**：方法入口 → 循环入口 → 延迟期间
 5. **AbortError直接抛出**：不包装，由上层统一处理
-6. **用户提示友好化**：技术细节转换为易懂提示
+6. **用户提示友好化**：翻译器抛出的 `TranslationError`（service=`'deepseek'`）消息直接面向用户，需保证文案明晰
 7. **与项目集成**：复用timeout-errors.ts工具函数
+
+> 说明：DeepSeek 翻译器在抛出 `TranslationError`（service=`'deepseek'`）时应直接提供用户友好的消息（例如“DeepSeek 账户余额不足，请前往官网充值”），上层不会再做二次映射。
 
 ## 📝 实现代码
 
@@ -1130,14 +1107,13 @@ curl -X POST https://api.deepseek.com/chat/completions \
 ## 📅 更新历史
 
 - **2025-10-25**：添加完整的错误处理架构设计章节（基于Qwen模式）
-  - DeepSeekTranslationError类定义（含errorCode字段）
+  - 统一使用 TranslationError + handleFetchError
   - 12种错误完整分类表（7个API + 5个客户端）
   - 5个错误检测点详细说明
   - handleAPIError方法架构设计
   - 3个signal检查位置
   - 错误处理执行流程图（Mermaid）
   - 与timeout-errors.ts集成说明
-  - 用户提示映射表
 - **2025-10-06**：架构优化，集成 V4 规范（AbortSignal、统一存储、错误处理细化）
 - **2025-09-29**：核实 DeepSeek-V3.2-Exp 规格，补充 20 条批量策略
 - **2025-09-26**：创建初始文档，完成 API 调研和实现设计
