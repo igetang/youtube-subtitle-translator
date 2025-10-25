@@ -16,6 +16,8 @@
 /**
  * DeepL API 请求接口（基于官方文档 2025-10-22）
  */
+import { handleFetchError, TranslationError } from '@shared/types/translation-errors';
+
 interface DeepLRequest {
   // 必需参数
   text: string[];                    // 待翻译文本数组，最多50条
@@ -141,6 +143,10 @@ export class DeepLTranslator {
 
     // 分批处理（50 条/批）
     for (let i = 0; i < texts.length; i += DeepLTranslator.BATCH_SIZE) {
+      if (signal.aborted) {
+        throw new DOMException('DeepL 翻译已取消', 'AbortError');
+      }
+
       const batch = texts.slice(i, i + DeepLTranslator.BATCH_SIZE);
 
       console.log(
@@ -178,7 +184,11 @@ export class DeepLTranslator {
         console.error(
           `[DeepLTranslator] ✗ 批次翻译数量不匹配: 期望${batch.length}, 实际${translations.length}`
         );
-        throw new Error('DeepL 翻译结果数量不匹配');
+        throw new TranslationError(
+          `DeepL 翻译数量不匹配：期望${batch.length}条，实际${translations.length}条`,
+          'retryable',
+          'deepl'
+        );
       }
 
       results.push(...translations);
@@ -205,65 +215,139 @@ export class DeepLTranslator {
     requestBody: DeepLRequest,
     signal: AbortSignal
   ): Promise<DeepLResponse> {
+    let response: Response;
+
     try {
-      const response = await fetch(this.endpoint, {
+      response = await fetch(this.endpoint, {
         method: 'POST',
         headers: {
           'Authorization': `DeepL-Auth-Key ${this.apiKey}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(requestBody),
-        signal  // 使用外部 AbortSignal
+        signal
       });
+    } catch (error) {
+      handleFetchError(error, 'deepl', 'DeepL API 网络请求失败');
+    }
 
-      // 错误处理细化
-      if (!response.ok) {
-        const errorData: DeepLErrorResponse = await response.json().catch(() => ({ message: '' }));
-        const errorText = errorData.message || await response.text();
+    if (!response.ok) {
+      await this.handleAPIError(response);
+    }
 
-        switch (response.status) {
-          case 400:
-            throw new Error(`DeepL 请求参数错误: ${errorText}`);
-          case 403:
-            throw new Error('DeepL API 密钥无效，请检查设置');
-          case 413:
-            throw new Error('DeepL 请求过大（超过128KiB），请减少批次大小');
-          case 429:
-          case 529:
-            throw new Error('DeepL API 速率限制，请稍后重试');
-          case 456:
-            throw new Error('DeepL 配额已用完，请检查账户额度');
-          default:
-            throw new Error(`DeepL API 错误 (${response.status}): ${errorText}`);
-        }
-      }
+    let data: DeepLResponse;
+    try {
+      data = await response.json();
+    } catch {
+      throw new TranslationError(
+        'DeepL API 返回内容解析失败',
+        'retryable',
+        'deepl',
+        response.status
+      );
+    }
 
-      const data: DeepLResponse = await response.json();
+    if (!data.translations || !Array.isArray(data.translations)) {
+      throw new TranslationError(
+        'DeepL API 返回格式错误：缺少translations数组',
+        'fatal',
+        'deepl',
+        response.status
+      );
+    }
 
-      if (!data.translations || !Array.isArray(data.translations)) {
-        throw new Error('DeepL API 返回格式错误');
-      }
+    // 记录字符使用情况（如果有）
+    if (data.billed_characters && data.billed_characters > 0) {
+      console.log(`[DeepLTranslator] 💰 计费字符数: ${data.billed_characters}`);
+    }
 
-      // 记录字符使用情况（如果有）
-      if (data.billed_characters && data.billed_characters > 0) {
-        console.log(`[DeepLTranslator] 💰 计费字符数: ${data.billed_characters}`);
-      }
+    // 记录检测到的源语言
+    if (data.translations[0]?.detected_source_language) {
+      console.debug(
+        `[debug][DeepLTranslator] 检测到源语言: ${data.translations[0].detected_source_language}`
+      );
+    }
 
-      // 记录检测到的源语言
-      if (data.translations[0]?.detected_source_language) {
-        console.debug(
-          `[debug][DeepLTranslator] 检测到源语言: ${data.translations[0].detected_source_language}`
+    return data;
+  }
+
+  private async handleAPIError(response: Response): Promise<never> {
+    let errorMessage = '未知错误';
+
+    try {
+      const errorData: DeepLErrorResponse = await response.json();
+      errorMessage = errorData.message || '未知错误';
+    } catch {
+      errorMessage = await response.text().catch(() => '未知错误');
+    }
+
+    const status = response.status;
+
+    switch (status) {
+      case 400:
+        throw new TranslationError(
+          `DeepL 请求参数错误: ${errorMessage}`,
+          'fatal',
+          'deepl',
+          status
         );
-      }
-
-      return data;
-
-    } catch (error: any) {
-      // AbortError 处理
-      if (error.name === 'AbortError') {
-        throw new DOMException('DeepL API 请求被取消', 'AbortError');
-      }
-      throw error;
+      case 403:
+        throw new TranslationError(
+          'DeepL API 密钥无效，请检查设置',
+          'fatal',
+          'deepl',
+          status
+        );
+      case 404:
+        throw new TranslationError(
+          'DeepL 资源未找到，请检查配置',
+          'fatal',
+          'deepl',
+          status
+        );
+      case 413:
+        throw new TranslationError(
+          'DeepL 请求过大（超过128KiB），请减少批次大小',
+          'fatal',
+          'deepl',
+          status
+        );
+      case 429:
+        throw new TranslationError(
+          'DeepL 请求过于频繁，请稍后重试',
+          'retryable',
+          'deepl',
+          status
+        );
+      case 456:
+        throw new TranslationError(
+          'DeepL 配额已用完，请检查账户额度或升级订阅',
+          'fatal',
+          'deepl',
+          status
+        );
+      case 500:
+        throw new TranslationError(
+          'DeepL 服务器错误，请稍后重试',
+          'retryable',
+          'deepl',
+          status
+        );
+      case 503:
+      case 529:
+        throw new TranslationError(
+          'DeepL 服务暂时不可用，请稍后重试',
+          'retryable',
+          'deepl',
+          status
+        );
+      default:
+        throw new TranslationError(
+          `DeepL API 错误 (${status}): ${errorMessage}`,
+          'fatal',
+          'deepl',
+          status
+        );
     }
   }
 
