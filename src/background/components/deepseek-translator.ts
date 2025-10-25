@@ -5,6 +5,11 @@
  * @date 2025-10-06
  */
 
+import {
+  handleFetchError,
+  TranslationError,
+} from '@shared/types/translation-errors';
+
 /**
  * DeepSeek API 消息接口
  */
@@ -103,6 +108,10 @@ export class DeepSeekTranslator {
     // 分批处理（统一 20 条/批）
     const totalBatches = Math.ceil(texts.length / DeepSeekTranslator.BATCH_SIZE);
     for (let i = 0; i < texts.length; i += DeepSeekTranslator.BATCH_SIZE) {
+      if (signal.aborted) {
+        throw new DOMException('DeepSeek翻译已取消', 'AbortError');
+      }
+
       const batch = texts.slice(i, i + DeepSeekTranslator.BATCH_SIZE);
       const batchNumber = Math.floor(i / DeepSeekTranslator.BATCH_SIZE) + 1;
 
@@ -128,8 +137,10 @@ export class DeepSeekTranslator {
         console.error(
           `[DeepSeekTranslator] 批次翻译数量不匹配: 期望${batch.length}, 实际${translations.length}`
         );
-        throw new Error(
-          `DeepSeek翻译结果数量不匹配: 期望${batch.length}条, 实际返回${translations.length}条`
+        throw new TranslationError(
+          `DeepSeek 翻译数量不匹配: 期望 ${batch.length} 条，实际返回 ${translations.length} 条`,
+          'retryable',
+          'deepseek'
         );
       }
 
@@ -185,11 +196,13 @@ Return ONLY the translation without any explanation.`
     messages: DeepSeekMessage[],
     signal: AbortSignal
   ): Promise<string> {
+    let response: Response | undefined;
+
     try {
-      const response = await fetch(DeepSeekTranslator.ENDPOINT, {
+      response = await fetch(DeepSeekTranslator.ENDPOINT, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
+          Authorization: `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -199,49 +212,48 @@ Return ONLY the translation without any explanation.`
           max_tokens: DeepSeekTranslator.MAX_TOKENS,
           stream: false
         } as DeepSeekRequest),
-        signal  // 使用外部 AbortSignal
+        signal
       });
-
-      // 错误处理细化（简化错误消息）
-      if (!response.ok) {
-        switch (response.status) {
-          case 401:
-          case 403:
-            throw new Error('DeepSeek API密钥无效');
-          case 429:
-            throw new Error('DeepSeek API速率限制');
-          case 500:
-          case 502:
-          case 503:
-            throw new Error('DeepSeek服务暂时不可用');
-          default:
-            throw new Error(`DeepSeek API错误 (${response.status})`);
-        }
-      }
-
-      const data: DeepSeekResponse = await response.json();
-
-      if (!data.choices || !data.choices[0] || !data.choices[0].message) {
-        throw new Error('DeepSeek API返回格式错误');
-      }
-
-      // 记录 token 使用情况
-      console.debug(
-        `[debug][DeepSeekTranslator] Token使用: ` +
-        `输入=${data.usage.prompt_tokens}, ` +
-        `输出=${data.usage.completion_tokens}, ` +
-        `总计=${data.usage.total_tokens}`
-      );
-
-      return data.choices[0].message.content;
-
-    } catch (error: any) {
-      // AbortError 处理
-      if (error.name === 'AbortError') {
-        throw new DOMException('DeepSeek API请求被取消', 'AbortError');
-      }
-      throw error;
+    } catch (error) {
+      handleFetchError(error, 'deepseek', 'DeepSeek API 网络请求失败');
     }
+
+    if (!response) {
+      throw new TranslationError(
+        'DeepSeek API 请求失败',
+        'retryable',
+        'deepseek'
+      );
+    }
+
+    if (!response.ok) {
+      await this.handleAPIError(response);
+    }
+
+    let data: DeepSeekResponse;
+    try {
+      data = await response.json();
+    } catch (error) {
+      throw new TranslationError(
+        'DeepSeek API 返回内容解析失败',
+        'retryable',
+        'deepseek',
+        response.status
+      );
+    }
+
+    if (!data.choices?.[0]?.message?.content) {
+      throw new TranslationError(
+        'DeepSeek API 返回格式错误：缺少必要字段',
+        'fatal',
+        'deepseek',
+        response.status
+      );
+    }
+
+    this.logTokenUsage(data);
+
+    return data.choices[0].message.content;
   }
 
   /**
@@ -251,14 +263,18 @@ Return ONLY the translation without any explanation.`
    */
   private async delayWithSignal(ms: number, signal: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(resolve, ms);
+      const timer = setTimeout(() => {
+        signal.removeEventListener('abort', abortHandler);
+        resolve();
+      }, ms);
 
       const abortHandler = () => {
         clearTimeout(timer);
+        signal.removeEventListener('abort', abortHandler);
         reject(new DOMException('延迟被取消', 'AbortError'));
       };
 
-      signal.addEventListener('abort', abortHandler, { once: true });
+      signal.addEventListener('abort', abortHandler);
     });
   }
 
@@ -295,5 +311,98 @@ Return ONLY the translation without any explanation.`
     };
 
     return mapping[code] || code;
+  }
+
+  private async handleAPIError(response: Response): Promise<never> {
+    let errorMessage = '未知错误';
+    let errorCode: string | undefined;
+
+    try {
+      const errorData = await response.json();
+      errorMessage = errorData.error?.message || errorData.message || errorMessage;
+      errorCode = errorData.error?.code || errorData.code;
+    } catch {
+      const fallback = await response.text().catch(() => '');
+      if (fallback) {
+        errorMessage = fallback;
+      }
+    }
+
+    const { status } = response;
+
+    switch (status) {
+      case 400:
+        throw new TranslationError(
+          `DeepSeek API 请求格式错误: ${errorMessage}`,
+          'fatal',
+          'deepseek',
+          status,
+          errorCode
+        );
+      case 401:
+      case 403:
+        throw new TranslationError(
+          'DeepSeek API 密钥无效或已过期',
+          'fatal',
+          'deepseek',
+          status,
+          errorCode
+        );
+      case 402:
+        throw new TranslationError(
+          'DeepSeek 账户余额不足，请前往官网充值',
+          'fatal',
+          'deepseek',
+          status,
+          errorCode
+        );
+      case 422:
+        throw new TranslationError(
+          `DeepSeek API 请求参数错误: ${errorMessage}`,
+          'fatal',
+          'deepseek',
+          status,
+          errorCode
+        );
+      case 429:
+        throw new TranslationError(
+          'DeepSeek API 速率限制，请稍后重试',
+          'retryable',
+          'deepseek',
+          status,
+          errorCode
+        );
+      case 500:
+      case 502:
+      case 503:
+        throw new TranslationError(
+          'DeepSeek API 服务器错误，请稍后重试',
+          'retryable',
+          'deepseek',
+          status,
+          errorCode
+        );
+      default:
+        throw new TranslationError(
+          `DeepSeek API 错误 (${status}): ${errorMessage}`,
+          'fatal',
+          'deepseek',
+          status,
+          errorCode
+        );
+    }
+  }
+
+  private logTokenUsage(data: DeepSeekResponse): void {
+    if (!data.usage) {
+      return;
+    }
+
+    console.debug(
+      `[debug][DeepSeekTranslator] Token使用: ` +
+      `输入=${data.usage.prompt_tokens}, ` +
+      `输出=${data.usage.completion_tokens}, ` +
+      `总计=${data.usage.total_tokens}`
+    );
   }
 }

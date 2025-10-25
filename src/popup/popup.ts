@@ -742,6 +742,8 @@ interface ApiInfo {
   infoUrl: string;
   requiresKey: boolean;
   customConfig: boolean;
+  description: string;
+  badgeType: 'free' | 'key';
 }
 
 /** API配置和信息映射 */
@@ -750,43 +752,49 @@ const apiInfoMap: Record<string, ApiInfo> = {
     name: 'Google翻译',
     infoUrl: 'https://cloud.google.com/translate/docs/getting-started',
     requiresKey: false,
-    customConfig: false
+    customConfig: false,
+    description: '无需额外配置，直接使用内置免费额度。',
+    badgeType: 'free'
   },
   'microsoft-free': {
     name: '微软翻译',
     infoUrl: 'https://www.microsoft.com/zh-cn/translator/',
     requiresKey: false,
-    customConfig: false
+    customConfig: false,
+    description: '无需配置，自动调用微软免费接口。',
+    badgeType: 'free'
   },
   'deepl': {
     name: 'DeepL API',
     infoUrl: 'https://www.deepl.com/pro-api',
     requiresKey: true,
-    customConfig: false
+    customConfig: false,
+    description: '',
+    badgeType: 'key'
   },
   'openai': {
     name: 'OpenAI API',
     infoUrl: 'https://platform.openai.com/docs/guides/text-generation',
     requiresKey: true,
-    customConfig: false
+    customConfig: false,
+    description: '',
+    badgeType: 'key'
   },
   'gemini': {
     name: 'Gemini API',
     infoUrl: 'https://ai.google.dev/docs',
     requiresKey: true,
-    customConfig: false
+    customConfig: false,
+    description: '',
+    badgeType: 'key'
   },
   'deepseek': {
     name: 'DeepSeek API',
     infoUrl: 'https://platform.deepseek.com/',
     requiresKey: true,
-    customConfig: false
-  },
-  'qwen': {
-    name: '阿里Qwen API',
-    infoUrl: 'https://help.aliyun.com/zh/dashscope/developer-reference/api-details',
-    requiresKey: true,
-    customConfig: false
+    customConfig: false,
+    description: '',
+    badgeType: 'key'
   }
 };
 
@@ -800,6 +808,8 @@ let currentSourceLang = '';
 let currentSourceTrackKind: 'asr' | 'forced' | undefined = undefined;
 let uiTrackData: Array<{ languageCode: string; languageName: string; kind?: 'asr' | 'forced' }> = [];
 let uiLangCode: string | null = null;
+let serviceCardTitle: HTMLSpanElement | null = null;
+let serviceCardBadge: HTMLSpanElement | null = null;
 
 // === Port连接管理 ===
 const port = chrome.runtime.connect({ name: 'popup-lifecycle' });
@@ -1049,9 +1059,6 @@ let deeplBasicPanel: HTMLDivElement | null = null;
 let deeplModelSelect: HTMLSelectElement | null = null;
 let deeplTierSwitch: HTMLInputElement | null = null;  // 开关：免费/付费
 
-// === Qwen相关元素引用 (Phase 1) ===
-let qwenBasicPanel: HTMLDivElement | null = null;
-
 /**
  * 初始化DOM元素引用（仅在YouTube页面调用）
  */
@@ -1094,6 +1101,8 @@ function initializeDOMElements(): void {
   membershipPanel = document.getElementById('membership-panel') as HTMLDivElement;
   openaiBasicPanel = document.getElementById('openai-basic-panel') as HTMLDivElement;
   togglePasswordButton = document.getElementById('toggle-password') as HTMLButtonElement;
+  serviceCardTitle = document.getElementById('service-card-title') as HTMLSpanElement;
+  serviceCardBadge = document.getElementById('service-card-badge') as HTMLSpanElement;
 
   // === Gemini面板元素引用 (Phase 1) ===
   geminiBasicPanel = document.getElementById('gemini-basic-panel') as HTMLDivElement;
@@ -1105,8 +1114,6 @@ function initializeDOMElements(): void {
   deeplModelSelect = document.getElementById('deepl-model') as HTMLSelectElement;
   deeplTierSwitch = document.getElementById('deepl-tier-switch') as HTMLInputElement;  // 开关
 
-  // === Qwen面板元素引用 (Phase 1) ===
-  qwenBasicPanel = document.getElementById('qwen-basic-panel') as HTMLDivElement;
 }
 
 /**
@@ -1136,11 +1143,17 @@ function updateApiPanels(apiType: string): void {
   if (openaiBasicPanel) openaiBasicPanel.style.display = 'none';
   if (geminiBasicPanel) geminiBasicPanel.style.display = 'none';
   if (deeplBasicPanel) deeplBasicPanel.style.display = 'none';
-  if (qwenBasicPanel) qwenBasicPanel.style.display = 'none';
 
   // 根据API类型显示相应面板
   const apiInfo = apiInfoMap[apiType];
-  
+  if (serviceCardTitle) {
+    serviceCardTitle.textContent = apiInfo ? apiInfo.name : '翻译服务';
+  }
+  if (serviceCardBadge) {
+    const isFree = apiInfo?.badgeType === 'free';
+    serviceCardBadge.textContent = isFree ? '免费' : '自有密钥';
+    serviceCardBadge.classList.toggle('is-free', isFree);
+  }
   // 测试按钮显示与否
   if (testApiKeyButton) {
     testApiKeyButton.style.display = apiInfo?.requiresKey || apiType.includes('-free') ? 'block' : 'none';
@@ -1217,16 +1230,18 @@ function updateApiPanels(apiType: string): void {
       apiKeyPanel.classList.add('visible');
     }
   }
-  // 处理Qwen相关面板 (Phase 1)
-  else if (apiType === 'qwen') {
-    // 显示Qwen信息面板（只读信息展示）
-    if (qwenBasicPanel) qwenBasicPanel.style.display = 'block';
-    // 确保API密钥面板也显示
-    if (apiKeyPanel) {
-      apiKeyPanel.style.display = 'block';
-      apiKeyPanel.classList.add('visible');
-    }
+}
+
+/**
+ * 清空测试结果显示
+ */
+function resetTestResult(): void {
+  const testResult = document.getElementById('test-result') as HTMLSpanElement | null;
+  if (!testResult) {
+    return;
   }
+  testResult.textContent = '';
+  testResult.className = 'test-result';
 }
     
 /**
@@ -1355,6 +1370,10 @@ function addEventListeners(): void {
         if (eyeClosed) eyeClosed.style.display = 'block';
       }
     });
+  }
+
+  if (apiKeyInput) {
+    apiKeyInput.addEventListener('input', () => resetTestResult());
   }
 
   // 源语言下拉菜单
@@ -2135,6 +2154,7 @@ async function handleSubtitleModeChange(switchElement: HTMLInputElement): Promis
 async function handleTranslationServiceChange(): Promise<void> {
   try {
     console.log('[popup] 统一监听器 - 翻译服务变更');
+    resetTestResult();
 
     // 从UI读取当前值
     const translationApiSelect = document.getElementById('translation-api') as HTMLSelectElement;
@@ -2515,8 +2535,7 @@ async function handleTestApiConnection(): Promise<void> {
   if (!testResult) return;
 
   // 重置测试结果
-  testResult.textContent = '';
-  testResult.className = 'test-result';
+  resetTestResult();
 
   // 获取当前API配置
   const apiType = translationApiSelect?.value || 'google-free';

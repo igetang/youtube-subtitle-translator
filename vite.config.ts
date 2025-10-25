@@ -19,6 +19,9 @@ const baseConfig = {
   build: {
     sourcemap: true,
   },
+  define: {
+    __CAPTION_TRANSLATION_DEBUG__: true,
+  },
 };
 
 // 为多个配置创建一个条件配置函数

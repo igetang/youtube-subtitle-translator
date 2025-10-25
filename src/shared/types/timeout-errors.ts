@@ -1,3 +1,5 @@
+import { TranslationError } from './translation-errors';
+
 /**
  * @file timeout-errors.ts
  * @description 超时相关的错误类型定义
@@ -143,6 +145,9 @@ const USER_MESSAGE_HINTS: Array<{
  * 获取错误级别
  */
 export function getErrorLevel(error: any): ErrorLevel {
+  if (error instanceof TranslationError) {
+    return error.category === 'fatal' ? ErrorLevel.ERROR : ErrorLevel.WARNING;
+  }
   if (isAbortError(error)) {
     return ErrorLevel.INFO;  // 用户取消，不算错误
   }
@@ -160,6 +165,9 @@ export function getErrorLevel(error: any): ErrorLevel {
  * 将所有技术性错误转换为用户易懂的提示
  */
 export function getUserFriendlyMessage(error: any): string {
+  if (error instanceof TranslationError) {
+    return error.message;
+  }
   // 1. 用户取消操作
   if (isAbortError(error)) {
     return ''; // 用户主动取消，不需要提示

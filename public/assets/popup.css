@@ -21,31 +21,62 @@ h1 {
 }
 
 .setting-item {
-    margin-bottom: 20px;
+    margin-bottom: 18px;
     display: flex;
-    align-items: center; /* 垂直居中标签和控件 */
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
 }
 
-.setting-item label:first-child { /* 第一个标签，例如"源语言:" */
-    flex-basis: 80px; /* 固定标签宽度 */
-    margin-right: 10px;
+.setting-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.setting-row > label {
+    flex-basis: 78px;
+    margin: 0;
     font-size: 0.9em;
-    color: #aaa;
+    color: #c8d1dc;
+    white-space: nowrap;
 }
 
-select {
-    flex-grow: 1; /* 让下拉菜单填充剩余空间 */
-    padding: 8px;
+.setting-control {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.setting-control select,
+.setting-control input,
+.setting-control textarea {
+    width: 100%;
+    padding: 8px 12px;
     background-color: #333;
     color: #fff;
     border: 1px solid #555;
-    border-radius: 4px;
+    border-radius: 6px;
     font-size: 0.9em;
 }
 
-select:focus {
+.setting-control select:focus,
+.setting-control input:focus,
+.setting-control textarea:focus {
     outline: none;
-    border: 1px solid #fff;
+    border-color: #fff;
+}
+
+.setting-link {
+    font-size: 0.78em;
+    color: #3ea6ff;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.setting-link:hover {
+    text-decoration: underline;
 }
 
 /* --- Custom Select Styles --- 
@@ -56,7 +87,7 @@ select:focus {
  */
 .custom-select-container {
     position: relative; /* Crucial for panel positioning */
-    flex-grow: 1;
+    flex: 1;
     max-width: 100%; /* 确保适合Popup宽度 */
 }
 
@@ -164,14 +195,57 @@ select:focus {
 .switch-container {
     display: flex;
     align-items: center;
-    justify-content: space-between; /* 让文字和开关分布两端 */
-    flex-grow: 1;
-    margin-left: 5px; /* 与标签的间距 */
+    gap: 12px;
 }
 
 .switch-container span {
     font-size: 0.9em;
     color: #aaa;
+}
+
+.service-card {
+    background: #101a2a;
+    border: 1px solid #27354a;
+    border-radius: 16px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.service-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.service-card-title {
+    font-size: 0.95em;
+    font-weight: 600;
+}
+
+.service-card-badge {
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 0.75em;
+    background: rgba(66, 133, 244, 0.18);
+    color: #76a8ff;
+}
+
+.service-card-badge.is-free {
+    background: rgba(16, 185, 129, 0.18);
+    color: #32d296;
+}
+
+.service-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.service-card .setting-item {
+    margin-bottom: 0;
 }
 
 .switch {
@@ -686,7 +760,7 @@ input[type="password"]:focus {
     width: 100%;
     display: flex;
     align-items: center; /* 垂直居中 */
-    margin-bottom: 10px; /* 容器的 margin，而不是 input 的 */
+    margin-bottom: 0;
 }
 
 .password-container input[type="password"],

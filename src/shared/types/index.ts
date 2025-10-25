@@ -10,8 +10,9 @@ export * from './runtime-state-types';
 export * from './storage-types';
 export * from './subtitle-types';
 export * from './user-preferences-types';
+export * from './translation-errors';
 // Note: youtube-types has SubtitleTrack conflict with core-types
 export type { 
   CaptionTrack
 } from './youtube-types';
-export * from './types'; 
+export * from './types';

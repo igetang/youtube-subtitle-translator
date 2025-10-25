@@ -15,6 +15,11 @@
  * - 批次间延迟：200ms（仅 batch 阶段）
  * - 速率限制：60 RPM, 23,797 TPM
  */
+declare const __CAPTION_TRANSLATION_DEBUG__: boolean;
+const CAPTION_TRANSLATION_DEBUG =
+  typeof __CAPTION_TRANSLATION_DEBUG__ === 'boolean' ? __CAPTION_TRANSLATION_DEBUG__ : false;
+const QWEN_DEBUG_DELIMITER = '\n\n';
+
 export type QwenErrorCategory = 'fatal' | 'retryable';
 
 export class QwenTranslationError extends Error {
@@ -36,6 +41,156 @@ export class QwenTranslator {
     'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions';
   private static readonly BATCH_SIZE = 30;        // 智能断句最大批次
   private static readonly BATCH_DELAY_MS = 200;   // batch 阶段延迟
+  private static readonly SUPPORTED_CODES = new Set<string>([
+    'auto',
+    'en', 'zh', 'zh_tw', 'ru', 'ja', 'ko', 'es', 'fr', 'pt', 'de', 'it',
+    'th', 'vi', 'id', 'ms', 'ar', 'hi', 'he', 'my', 'ta', 'ur', 'bn', 'pl',
+    'nl', 'ro', 'tr', 'km', 'lo', 'yue', 'cs', 'el', 'sv', 'hu', 'da', 'fi',
+    'uk', 'bg', 'sr', 'te', 'af', 'hy', 'as', 'ast', 'eu', 'be', 'bs', 'ca',
+    'ceb', 'hr', 'arz', 'et', 'gl', 'ka', 'gu', 'is', 'jv', 'kn', 'kk', 'lv',
+    'lt', 'lb', 'mk', 'mai', 'mt', 'mr', 'acm', 'ary', 'ars', 'ne', 'az',
+    'apc', 'uz', 'nb', 'nn', 'oc', 'or', 'pag', 'scn', 'sd', 'si', 'sk', 'sl',
+    'ajp', 'sw', 'tl', 'acq', 'sq', 'aeb', 'vec', 'war', 'cy', 'fa'
+  ]);
+  private static readonly LANGUAGE_OVERRIDES: Record<string, string> = {
+    auto: 'auto',
+    // 中文
+    'zh': 'zh',
+    'zh-cn': 'zh',
+    'zh-hans': 'zh',
+    'zh-sg': 'zh',
+    'zh-my': 'zh',
+    'zh-tw': 'zh_tw',
+    'zh-hk': 'zh_tw',
+    'zh-mo': 'zh_tw',
+    'zh-hant': 'zh_tw',
+    'zh-hant-hk': 'zh_tw',
+    'zh-hant-mo': 'zh_tw',
+    'zh-hant-tw': 'zh_tw',
+    'zh-yue': 'yue',
+    'cmn': 'zh',
+    'cmn-hans': 'zh',
+    'cmn-hant': 'zh_tw',
+    // 英文
+    'en': 'en',
+    'en-us': 'en',
+    'en-gb': 'en',
+    'en-au': 'en',
+    'en-ca': 'en',
+    'en-in': 'en',
+    'en-nz': 'en',
+    'en-sg': 'en',
+    'en-ph': 'en',
+    'en-jm': 'en',
+    // 西班牙语
+    'es': 'es',
+    'es-es': 'es',
+    'es-mx': 'es',
+    'es-419': 'es',
+    'es-ar': 'es',
+    'es-us': 'es',
+    'es-co': 'es',
+    'es-cl': 'es',
+    'es-pe': 'es',
+    'es-uy': 'es',
+    'es-ec': 'es',
+    // 葡萄牙语
+    'pt': 'pt',
+    'pt-pt': 'pt',
+    'pt-br': 'pt',
+    'pt-ao': 'pt',
+    'pt-mz': 'pt',
+    // 法语
+    'fr': 'fr',
+    'fr-fr': 'fr',
+    'fr-ca': 'fr',
+    'fr-be': 'fr',
+    'fr-ch': 'fr',
+    'fr-lu': 'fr',
+    'fr-ma': 'fr',
+    // 德语
+    'de': 'de',
+    'de-de': 'de',
+    'de-at': 'de',
+    'de-ch': 'de',
+    // 俄语
+    'ru': 'ru',
+    'ru-ru': 'ru',
+    'ru-by': 'ru',
+    'ru-kz': 'ru',
+    'ru-ua': 'ru',
+    'ru-md': 'ru',
+    // 阿拉伯语及变体
+    'ar': 'ar',
+    'ar-sa': 'ar',
+    'ar-eg': 'ar',
+    'ar-ae': 'ar',
+    'ar-qa': 'ar',
+    'ar-jo': 'ar',
+    'ar-ma': 'ar',
+    'ar-tn': 'ar',
+    'ar-ly': 'ar',
+    'ar-dz': 'ar',
+    'ar-iq': 'acm',
+    'ar-ye': 'acq',
+    'ar-lb': 'ajp',
+    'ar-sy': 'ajp',
+    'ar-bh': 'ars',
+    // 其他常见语言别名
+    'id-id': 'id',
+    'in': 'id',
+    'ms-my': 'ms',
+    'ms-sg': 'ms',
+    'fil': 'tl',
+    'tl-ph': 'tl',
+    'jw': 'jv',
+    'jv-id': 'jv',
+    'iw': 'he',
+    'he-il': 'he',
+    'fa-ir': 'fa',
+    'fa-af': 'fa',
+    'nb-no': 'nb',
+    'no': 'nb',
+    'nn-no': 'nn',
+    'uz-uz': 'uz',
+    'uz-cyrl': 'uz',
+    'uz-latn': 'uz',
+    'az-az': 'az',
+    'az-latn': 'az',
+    'az-cyrl': 'az',
+    'hy-am': 'hy',
+    'sr-rs': 'sr',
+    'sr-me': 'sr',
+    'sr-latn': 'sr',
+    'sr-cyrl': 'sr',
+    'bs-ba': 'bs',
+    'ca-es': 'ca',
+    'ceb-ph': 'ceb',
+    'gl-es': 'gl',
+    'ka-ge': 'ka',
+    'lo-la': 'lo',
+    'km-kh': 'km',
+    'sv-se': 'sv',
+    'sv-fi': 'sv',
+    'fi-fi': 'fi',
+    'da-dk': 'da',
+    'pl-pl': 'pl',
+    'tr-tr': 'tr',
+    'uk-ua': 'uk',
+    'cs-cz': 'cs',
+    'hu-hu': 'hu',
+    'ro-ro': 'ro',
+    'bg-bg': 'bg',
+    'vi-vn': 'vi',
+    'th-th': 'th',
+    'bn-bd': 'bn',
+    'bn-in': 'bn',
+    'ta-in': 'ta',
+    'ta-lk': 'ta',
+    'hi-in': 'hi',
+    'ur-pk': 'ur',
+    'ur-in': 'ur'
+  };
 
   private apiKey: string;
   private model: 'qwen-mt-plus';
@@ -130,31 +285,25 @@ export class QwenTranslator {
     //   console.log(`  [${idx}] "${text}" ${text === '' ? '← 空字符串' : `(${text.length}字符)`}`);
     // });
 
-    // 🔍 Step 2: 合并文本并打印
-    const combinedText = texts.join('\n');
-    // console.log(`[QwenTranslator] 📤 发送给API的合并文本:`);
-    // console.log(`  总字符数: ${combinedText.length}`);
-    // console.log(`  内容(JSON格式): ${JSON.stringify(combinedText)}`);
-    // console.log(`  显示连续换行符: ${combinedText.replace(/\n/g, '↵')}`);
+    // 🔍 Step 2: 使用双换行符拼接（描述层已清洗换行）
+    const sanitizedTexts = texts.map(text => text.trim());
+    const delimiter = QWEN_DEBUG_DELIMITER;
+    const combinedText = sanitizedTexts.join(delimiter);
+    if (CAPTION_TRANSLATION_DEBUG) {
+      console.log(`[QwenTranslator][debug] 📥 输入字幕 ${sanitizedTexts.length} 条`);
+      console.log('[QwenTranslator][debug] 📤 发送给API的合并文本:');
+      console.log(`  总字符数: ${combinedText.length}`);
+      console.log(`  内容(JSON格式): ${JSON.stringify(combinedText)}`);
+      console.log(`  使用分隔符: ${JSON.stringify(delimiter)}`);
+    }
 
     // 构建请求体（OpenAI 兼容格式 + system prompt控制格式）
-    const instructions = [
-      'You are a professional translator. Each line is a separate subtitle that needs to be translated independently.',
-      'IMPORTANT: Keep the exact same number of lines. If the input has N lines separated by newlines, the output MUST also have exactly N lines.',
-      'Translate line by line and preserve all newline characters \\n in the exact same positions.',
-      'Do NOT merge multiple lines into one paragraph.',
-      'Return ONLY the translations, no explanations.',
-      '',
-      '--- SUBTITLES TO TRANSLATE ---',
-      combinedText
-    ].join('\n');
-
     const requestBody = {
       model: this.model,
       messages: [
         {
           role: 'user',
-          content: instructions
+          content: combinedText
         }
       ],
       translation_options: {
@@ -223,20 +372,40 @@ export class QwenTranslator {
       `[QwenTranslator] ← API响应: ${duration}ms | ${texts.length}条`
     );
 
-    // 🔍 Step 3: 打印API返回的原始文本
-    // console.log(`[QwenTranslator] 📨 API返回的原始文本:`);
-    // console.log(`  总字符数: ${translatedText.length}`);
-    // console.log(`  内容(JSON格式): ${JSON.stringify(translatedText)}`);
-    // console.log(`  显示连续换行符: ${translatedText.replace(/\n/g, '↵')}`);
+    if (CAPTION_TRANSLATION_DEBUG) {
+      console.log('[QwenTranslator][debug] 📨 API返回的原始文本:');
+      console.log(`  总字符数: ${translatedText.length}`);
+      console.log(`  内容(JSON格式): ${JSON.stringify(translatedText)}`);
+      const previewSegments = translatedText.replace(/\r\n/g, '\n').split(/\n{2,}/);
+      console.log(`  使用分隔符预览: ${previewSegments.join(' | ')}`);
+    }
 
-    // 分割翻译结果
-    const translations = translatedText.split('\n');
+    // 分割翻译结果（兼容 \r\n 和连续换行符）
+    const normalizedTranslatedText = translatedText.replace(/\r\n/g, '\n').trim();
+    let translations = normalizedTranslatedText === ''
+      ? []
+      : normalizedTranslatedText.split(/\n{2,}/).map(text => text.trim());
 
-    // 🔍 Step 4: 打印分割后的结果
-    // console.log(`[QwenTranslator] 📦 split('\\n')后的结果数组: ${translations.length}条`);
-    // translations.forEach((text, idx) => {
-    //   console.log(`  [${idx}] "${text}" ${text === '' ? '← 空字符串' : `(${text.length}字符)`}`);
-    // });
+    // Qwen 可能降级为单换行，必要时回退
+    if (translations.length !== texts.length) {
+      const fallbackTranslations = normalizedTranslatedText.split('\n').map(text => text.trim());
+      if (fallbackTranslations.length === texts.length) {
+        translations = fallbackTranslations;
+      }
+    }
+
+    if (CAPTION_TRANSLATION_DEBUG) {
+      console.log(`[QwenTranslator][debug] 📦 Qwen 返回字幕 ${translations.length} 条`);
+      console.log('[QwenTranslator][debug] 译文全文:', JSON.stringify(translatedText));
+      console.log('[QwenTranslator][debug] 📝 原文 / 译文 对照:');
+      const maxLength = Math.max(sanitizedTexts.length, translations.length);
+      for (let i = 0; i < maxLength; i += 1) {
+        const original = sanitizedTexts[i] ?? '<缺少原文>';
+        const translated = translations[i] ?? '<缺少译文>';
+        console.log(`  [${i}] 原文: ${JSON.stringify(original)}`);
+        console.log(`      译文: ${JSON.stringify(translated)}`);
+      }
+    }
 
     // 验证数量匹配
     if (translations.length !== texts.length) {
@@ -245,7 +414,7 @@ export class QwenTranslator {
         `期望${texts.length}条，实际${translations.length}条`
       );
       throw new QwenTranslationError(
-        `翻译数量不匹配: 期望${texts.length}条，实际${translations.length}条`,
+        'Qwen 翻译失败，请稍后重试',
         'retryable'
       );
     }
@@ -260,46 +429,38 @@ export class QwenTranslator {
    * 语言代码映射（YouTube → Qwen）
    */
   private mapLanguage(ytCode: string): string {
-    const mapping: Record<string, string> = {
-      // 中文
-      'zh-CN': 'zh',
-      'zh-Hans': 'zh',
-      'zh-Hant': 'zh',
+    if (!ytCode) {
+      return ytCode;
+    }
 
-      // 英文
-      'en': 'en',
-      'en-US': 'en',
-      'en-GB': 'en',
+    const normalized = ytCode.replace(/_/g, '-').toLowerCase();
 
-      // 日文
-      'ja': 'ja',
+    const override = QwenTranslator.LANGUAGE_OVERRIDES[normalized];
+    if (override) {
+      return override;
+    }
 
-      // 韩文
-      'ko': 'ko',
+    const base = normalized.split('-')[0];
+    const baseOverride = QwenTranslator.LANGUAGE_OVERRIDES[base];
+    if (baseOverride) {
+      return baseOverride;
+    }
 
-      // 法文
-      'fr': 'fr',
+    const underscoreCode = normalized.replace(/-/g, '_');
+    if (QwenTranslator.SUPPORTED_CODES.has(underscoreCode)) {
+      return underscoreCode;
+    }
 
-      // 西班牙文
-      'es': 'es',
+    if (QwenTranslator.SUPPORTED_CODES.has(base)) {
+      return base;
+    }
 
-      // 德文
-      'de': 'de',
+    const underscoreBase = base.replace(/-/g, '_');
+    if (QwenTranslator.SUPPORTED_CODES.has(underscoreBase)) {
+      return underscoreBase;
+    }
 
-      // 泰文
-      'th': 'th',
-
-      // 印尼文
-      'id': 'id',
-
-      // 越南文
-      'vi': 'vi',
-
-      // 阿拉伯文
-      'ar': 'ar'
-    };
-
-    return mapping[ytCode] || ytCode;
+    return underscoreCode;
   }
 
   /**
