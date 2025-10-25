@@ -1154,16 +1154,530 @@ function computeBatchDelayMs(model: string, remainingHeaders?: RateLimitSnapshot
 }
 ```
 
-## 🚨 错误处理
+## 🚨 错误处理架构
 
-### 错误类型和处理策略
+### 错误分类哲学
 
-| 错误码 | 含义 | 自动处理 | 用户提示 |
-|--------|------|---------|---------|
-| 401 | API Key无效 | ❌ | "请检查API密钥" |
-| 429 | 超出Rate Limit | ✅ 自动等待重试 | 静默处理 |
-| 500 | 服务器错误 | ✅ 指数退避重试 | 静默处理 |
-| Token超限 | 输入过长 | ✅ 自动分割批次 | 静默处理 |
+OpenAI错误处理遵循**两级分类系统**（与DeepSeek/DeepL保持一致）：
+
+```typescript
+// translation-errors.ts 中已定义
+export type TranslationErrorCategory = 'fatal' | 'retryable';
+```
+
+- **fatal（致命错误）**：需要用户干预才能解决，无法自动恢复
+  - API密钥问题（401、403）
+  - 账户余额不足（402）
+  - 请求参数错误（400、422）
+  - 其他未知错误
+
+- **retryable（可重试错误）**：临时性问题，稍后可能成功
+  - 速率限制（429）
+  - 服务器错误（500、503）
+  - 网络连接问题
+  - JSON解析失败
+  - 数据验证错误
+
+- **特殊处理：AbortError**：
+  - **不进行分类**，直接抛出到上层
+  - 区分超时（`message.includes('timeout')`）和用户取消
+  - 由 `timeout-errors.ts` 统一处理
+
+### 统一错误工具
+
+OpenAI Translator 复用 `src/shared/types/translation-errors.ts` 中的通用工具：
+
+```typescript
+import {
+  TranslationError,
+  TranslationErrorCategory,
+  handleFetchError,
+} from '@/shared/types/translation-errors';
+```
+
+- `TranslationError`：统一封装错误信息，`service` 必须传入 `'openai'`
+- `handleFetchError`：处理 `fetch` 抛出的网络错误，自动识别 `AbortError`
+- `TranslationError.category`：使用 `fatal` / `retryable` 两级分类
+
+### 完整错误分类表
+
+#### 1. API错误（7种）
+
+| HTTP状态码 | 错误类型 | 分类 | 用户提示 | 说明 |
+|-----------|---------|------|---------|------|
+| 400 | Bad Request | `fatal` | OpenAI 请求参数错误，请检查设置 | 请求格式不正确 |
+| 401 | Invalid Authentication | `fatal` | OpenAI API密钥无效，请检查设置 | API Key错误或过期 |
+| 402 | Insufficient Balance | `fatal` | OpenAI 账户余额不足，请充值 | ⭐最重要的用户错误 |
+| 422 | Unprocessable Entity | `fatal` | OpenAI 暂时不支持当前设置的语种 | 不支持的语言对 |
+| 429 | Rate Limit Exceeded | `retryable` | OpenAI API 请求过于频繁，请稍后重试 | 超出速率限制 |
+| 500 | Internal Server Error | `retryable` | OpenAI 服务暂时不可用，请稍后重试 | 服务器内部错误 |
+| 503 | Service Unavailable | `retryable` | OpenAI 服务暂时不可用，请稍后重试 | 服务过载/维护中 |
+
+> 数据来源：OpenAI API官方文档 + OpenAI Python客户端异常类型
+
+#### 2. 客户端错误（5种）
+
+| 错误类型 | 分类 | 检测位置 | 用户提示 | 说明 |
+|---------|------|---------|---------|------|
+| 网络连接失败 | `retryable` | `fetch()` catch块 | 网络连接失败，请检查网络设置 | DNS解析失败、连接超时等 |
+| JSON解析失败 | `retryable` | `response.json()` catch块 | OpenAI 翻译服务响应异常，请重试 | 返回内容不是有效JSON |
+| 响应格式错误 | `retryable` | 格式验证阶段 | OpenAI 翻译服务响应异常，请重试 | 缺少必要字段（choices/content） |
+| 翻译数量不匹配 | `retryable` | 数据验证阶段 | OpenAI 翻译服务响应异常，请重试 | 返回译文数量 ≠ 输入数量 |
+| AbortError（超时） | 特殊 | 各阶段signal检查 | 网络超时，请检查网络连接后重试 | 15秒超时触发 |
+| AbortError（用户取消） | 特殊 | 各阶段signal检查 | （不显示） | 用户主动取消 |
+
+### 错误检测流程（5个关键点）
+
+```typescript
+/**
+ * callOpenAIAPI方法中的5个错误检测点
+ */
+private async callOpenAIAPI(
+  messages: any[],
+  signal: AbortSignal,
+  maxCompletionTokens: number
+): Promise<string> {
+  const url = 'https://api.openai.com/v1/chat/completions';
+  let response: Response;
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 检测点1: fetch()网络请求（网络错误 + AbortError）
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`
+      },
+      body: JSON.stringify({
+        model: this.model,
+        messages: messages,
+        max_completion_tokens: maxCompletionTokens,
+        stream: false,
+        ...(this.model.startsWith('gpt-5')
+          ? { reasoning_effort: 'minimal', verbosity: 'low' }
+          : { temperature: this.temperature })
+      }),
+      signal  // 关键：使用AbortSignal
+    });
+  } catch (error) {
+    handleFetchError(error, 'openai', 'OpenAI API 网络请求失败');
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 检测点2: HTTP状态码检查（API错误）
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  if (!response.ok) {
+    await this.handleAPIError(response);  // 单独方法处理
+  }
+
+  let data: any;
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 检测点3: JSON解析（解析错误）
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  try {
+    data = await response.json();
+  } catch (error) {
+    throw new TranslationError(
+      'OpenAI API 返回内容解析失败',
+      'retryable',
+      'openai',
+      response.status
+    );
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 检测点4: 响应格式验证（格式错误）
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new TranslationError(
+      'OpenAI API 返回内容为空',
+      'retryable',
+      'openai',
+      response.status
+    );
+  }
+
+  // Token使用统计（可选）
+  if (data.usage) {
+    const actualInput = data.usage.prompt_tokens;
+    const actualOutput = data.usage.completion_tokens;
+    const actualTotal = data.usage.total_tokens;
+    console.debug(
+      `[debug][OpenAITranslator] 📊 Token实际用量: ` +
+      `输入${actualInput}, 输出${actualOutput}, 总计${actualTotal}`
+    );
+  }
+
+  return content;
+}
+```
+
+### handleAPIError方法设计
+
+```typescript
+/**
+ * 处理OpenAI API错误
+ * 根据HTTP状态码和错误响应体进行分类
+ */
+private async handleAPIError(response: Response): Promise<never> {
+  let errorMessage = '未知错误';
+  let errorCode: string | undefined;
+
+  // 尝试解析错误响应体
+  try {
+    const errorData = await response.json();
+    errorMessage = errorData.error?.message || errorData.message || '未知错误';
+    errorCode = errorData.error?.code || errorData.code;
+  } catch {
+    // JSON解析失败，使用默认错误消息
+    errorMessage = await response.text().catch(() => '未知错误');
+  }
+
+  const status = response.status;
+
+  // 根据HTTP状态码分类错误
+  switch (status) {
+    case 400:
+      throw new TranslationError(
+        'OpenAI 请求参数错误，请检查设置',
+        'fatal',
+        'openai',
+        status,
+        errorCode
+      );
+
+    case 401:
+    case 403:
+      throw new TranslationError(
+        'OpenAI API密钥无效，请检查设置',
+        'fatal',
+        'openai',
+        status,
+        errorCode
+      );
+
+    case 402:
+      // ⭐最重要的用户错误
+      throw new TranslationError(
+        'OpenAI 账户余额不足，请前往官网充值',
+        'fatal',
+        'openai',
+        status,
+        errorCode
+      );
+
+    case 422:
+      throw new TranslationError(
+        'OpenAI 暂时不支持当前设置的语种',
+        'fatal',
+        'openai',
+        status,
+        errorCode
+      );
+
+    case 429:
+      throw new TranslationError(
+        'OpenAI API 请求过于频繁，请稍后重试',
+        'retryable',
+        'openai',
+        status,
+        errorCode
+      );
+
+    case 500:
+    case 503:
+      throw new TranslationError(
+        'OpenAI 服务暂时不可用，请稍后重试',
+        'retryable',
+        'openai',
+        status,
+        errorCode
+      );
+
+    default:
+      throw new TranslationError(
+        `OpenAI API 错误 (${status}): ${errorMessage}`,
+        'fatal',
+        'openai',
+        status,
+        errorCode
+      );
+  }
+}
+```
+
+### translate方法中的signal检查
+
+```typescript
+/**
+ * 翻译方法中的AbortSignal检查（3个位置）
+ */
+public async translate(
+  texts: string[],
+  sourceLang: string,
+  targetLang: string,
+  stage: 'urgent' | 'batch',
+  signal: AbortSignal
+): Promise<string[]> {
+  if (texts.length === 0) {
+    return [];
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 位置1: 方法入口检查
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  if (signal.aborted) {
+    throw new DOMException('OpenAI翻译开始前已取消', 'AbortError');
+  }
+
+  console.log(`[OpenAITranslator] → 开始翻译: ${texts.length}条字幕 (${stage}阶段)`);
+
+  try {
+    // 1. 清理每条字幕的内部换行符
+    const cleanedTexts = texts.map(text => text.replace(/\n/g, ' ').trim());
+
+    // 2. 添加编号标记（帮助AI保持一对一对应）
+    const numberedTexts = cleanedTexts.map((text, i) => `[${i}] ${text}`);
+
+    // 3. 转换为JSON数组格式
+    const jsonInput = JSON.stringify(numberedTexts);
+
+    // 4. 构建messages（JSON格式）
+    const messages = [
+      {
+        role: "system",
+        content: `You are a professional subtitle translator.
+Translate from ${sourceLang} to ${targetLang}.
+
+INPUT FORMAT: JSON array containing ${texts.length} numbered subtitle strings
+OUTPUT FORMAT: JSON array with EXACTLY ${texts.length} translated strings (keep the numbers!)
+
+CRITICAL RULES:
+1. Each subtitle has a number like [0], [1], [2]... Keep these numbers in your output!
+2. Input has ${texts.length} items, output MUST have ${texts.length} items
+3. Translate ONLY the text after the number, keep the number prefix
+4. NEVER skip or merge items - every input [n] must have a corresponding output [n]
+5. Return ONLY the JSON array, NO explanations`
+      },
+      {
+        role: "user",
+        content: jsonInput
+      }
+    ];
+
+    // 5. 调用API（动态计算max_completion_tokens，考虑JSON额外开销）
+    const jsonOverhead = texts.length * 4;
+    const estimatedOutputTokens = this.estimateOutputTokens(jsonInput, jsonOverhead);
+    const responseText = await this.callOpenAIAPI(messages, signal, estimatedOutputTokens);
+
+    // 6. 解析JSON结果
+    let numberedTranslations: string[];
+    try {
+      numberedTranslations = JSON.parse(responseText);
+    } catch (parseError) {
+      console.warn(`[OpenAITranslator] ⚠️  JSON解析失败，尝试提取JSON部分`, parseError);
+
+      // 容错：提取JSON数组部分
+      const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        try {
+          numberedTranslations = JSON.parse(jsonMatch[0]);
+        } catch (e) {
+          const errorMsg = e instanceof Error ? e.message : String(e);
+          throw new TranslationError(
+            `JSON提取失败: ${errorMsg}`,
+            'retryable',
+            'openai'
+          );
+        }
+      } else {
+        throw new TranslationError(
+          `无法从响应中找到JSON数组`,
+          'retryable',
+          'openai'
+        );
+      }
+    }
+
+    // 7. 验证返回类型和数量
+    if (!Array.isArray(numberedTranslations)) {
+      throw new TranslationError(
+        `OpenAI返回的不是数组: ${typeof numberedTranslations}`,
+        'retryable',
+        'openai'
+      );
+    }
+
+    // 8. 去除编号，提取纯翻译文本
+    const translations = numberedTranslations.map((item, index) => {
+      const cleaned = item.replace(/^\[\d+\]\s*/, '');
+      const expectedPrefix = `[${index}]`;
+      if (!item.startsWith(expectedPrefix)) {
+        console.warn(`[OpenAITranslator] ⚠️ 编号不匹配: 期望 ${expectedPrefix}`);
+      }
+      return cleaned;
+    });
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 检测点5: 翻译数量验证
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if (translations.length !== texts.length) {
+      console.error(
+        `[OpenAITranslator] ❌ 翻译数量不匹配: ` +
+        `期望${texts.length}条，实际${translations.length}条`
+      );
+      console.error(`[OpenAITranslator] 原始输入:`, cleanedTexts);
+      console.error(`[OpenAITranslator] 带编号结果:`, numberedTranslations);
+      console.error(`[OpenAITranslator] API原始响应:`, responseText);
+
+      throw new TranslationError(
+        `翻译数量不匹配: 期望${texts.length}条，实际${translations.length}条`,
+        'retryable',
+        'openai'
+      );
+    }
+
+    console.log(`[OpenAITranslator] ✓ 翻译完成: ${translations.length}条字幕`);
+    return translations;
+
+  } catch (error) {
+    console.error(`[OpenAITranslator] ✗ 翻译失败:`, error);
+    throw error;
+  }
+}
+```
+
+> 注：OpenAI翻译器使用JSON格式单次处理所有字幕，不像DeepSeek/DeepL分批，因此没有"位置2: 循环入口检查"和"位置3: 延迟期间检查"。
+
+### 错误处理执行流程图
+
+```mermaid
+graph TB
+    Start[开始翻译] --> CheckSignal1{signal.aborted?}
+    CheckSignal1 -->|是| AbortStart[抛出AbortError: 开始前已取消]
+    CheckSignal1 -->|否| Prepare[准备翻译: 清理文本 + 添加编号 + 构建JSON]
+
+    Prepare --> CallAPI[调用callOpenAIAPI]
+
+    CallAPI --> Fetch{fetch请求}
+    Fetch -->|网络错误| CatchFetch[catch块]
+    CatchFetch --> IsAbort1{error.name === 'AbortError'?}
+    IsAbort1 -->|是| ThrowAbort1[直接抛出AbortError]
+    IsAbort1 -->|否| ThrowNetwork[抛出TranslationError<br/>service='openai'<br/>category: retryable<br/>网络连接失败]
+
+    Fetch -->|成功| CheckStatus{response.ok?}
+    CheckStatus -->|否| HandleAPIError[handleAPIError方法]
+
+    HandleAPIError --> ParseError{解析错误响应}
+    ParseError --> SwitchStatus{HTTP状态码}
+
+    SwitchStatus -->|400| Throw400[TranslationError<br/>service='openai'<br/>fatal: 请求参数错误]
+    SwitchStatus -->|401/403| Throw401[TranslationError<br/>service='openai'<br/>fatal: 密钥无效]
+    SwitchStatus -->|402| Throw402[TranslationError<br/>service='openai'<br/>fatal: 余额不足 ⭐]
+    SwitchStatus -->|422| Throw422[TranslationError<br/>service='openai'<br/>fatal: 语种不支持]
+    SwitchStatus -->|429| Throw429[TranslationError<br/>service='openai'<br/>retryable: 速率限制]
+    SwitchStatus -->|500/503| Throw500[TranslationError<br/>service='openai'<br/>retryable: 服务器错误]
+    SwitchStatus -->|其他| ThrowOther[TranslationError<br/>service='openai'<br/>fatal: 未知错误]
+
+    CheckStatus -->|是| ParseJSON{response.json}
+    ParseJSON -->|解析失败| ThrowJSON[TranslationError<br/>service='openai'<br/>retryable: JSON解析失败]
+    ParseJSON -->|成功| ExtractContent{提取content字段}
+
+    ExtractContent -->|内容为空| ThrowEmpty[TranslationError<br/>service='openai'<br/>retryable: 返回内容为空]
+    ExtractContent -->|成功| ParseTranslations{解析JSON数组}
+
+    ParseTranslations -->|解析失败| TryExtract{尝试提取JSON}
+    TryExtract -->|提取失败| ThrowExtract[TranslationError<br/>service='openai'<br/>retryable: 无法提取JSON]
+    TryExtract -->|提取成功| ValidateArray
+
+    ParseTranslations -->|成功| ValidateArray{是否为数组?}
+    ValidateArray -->|否| ThrowNotArray[TranslationError<br/>service='openai'<br/>retryable: 返回不是数组]
+    ValidateArray -->|是| StripNumbers[去除编号标记]
+
+    StripNumbers --> ValidateCount{数量匹配?}
+    ValidateCount -->|不匹配| ThrowCount[TranslationError<br/>service='openai'<br/>retryable: 数量不匹配]
+    ValidateCount -->|匹配| Success[返回结果]
+
+    style Throw402 fill:#ff6b6b,stroke:#c92a2a,color:#fff
+    style ThrowAbort1 fill:#ffd43b,stroke:#f59f00
+    style AbortStart fill:#ffd43b,stroke:#f59f00
+    style Throw429 fill:#74c0fc,stroke:#1c7ed6
+    style Throw500 fill:#74c0fc,stroke:#1c7ed6
+    style ThrowNetwork fill:#74c0fc,stroke:#1c7ed6
+    style ThrowJSON fill:#74c0fc,stroke:#1c7ed6
+    style ThrowCount fill:#74c0fc,stroke:#1c7ed6
+    style ThrowEmpty fill:#74c0fc,stroke:#1c7ed6
+    style ThrowExtract fill:#74c0fc,stroke:#1c7ed6
+    style ThrowNotArray fill:#74c0fc,stroke:#1c7ed6
+```
+
+### 与timeout-errors.ts的集成
+
+OpenAI错误最终会被上层（handle-toggle-translate-v4.ts）捕获并转换为用户友好的提示：
+
+```typescript
+/**
+ * 在 handle-toggle-translate-v4.ts 中的错误处理
+ */
+import { getUserFriendlyMessage, getErrorLevel, ErrorLevel } from '../shared/types/timeout-errors';
+
+try {
+  // ... 翻译逻辑
+} catch (error: any) {
+  let userMessage = '翻译失败，请稍后重试';
+  let errorLevel = ErrorLevel.ERROR;
+
+  // 1. AbortError（用户取消）
+  if (isAbortError(error)) {
+    userMessage = '';  // 不显示消息
+    errorLevel = ErrorLevel.INFO;
+    console.log('[service-worker-v4] 用户取消翻译');
+  }
+  // 2. AbortError（超时）
+  else if (isTimeoutError(error)) {
+    userMessage = '网络超时，请检查网络连接后重试';
+    errorLevel = ErrorLevel.WARNING;
+    console.log('[service-worker-v4] 超时错误');
+  }
+  // 3. TranslationError（来自 OpenAI）
+  else if (error instanceof TranslationError && error.service === 'openai') {
+    userMessage = error.message;
+    errorLevel = error.category === 'fatal' ? ErrorLevel.ERROR : ErrorLevel.WARNING;
+
+    // 特殊提示：余额不足
+    if (error.status === 402) {
+      console.error('[service-worker-v4] ⚠️ OpenAI余额不足');
+    }
+  }
+  // 4. 其他未知错误
+  else {
+    userMessage = getUserFriendlyMessage(error);
+  }
+
+  // 更新状态并通知用户
+  await RuntimeStateManager.getInstance().updateTranslateActiveState(
+    tabId,
+    'inactive',
+    userMessage
+  );
+}
+```
+
+### 架构设计要点总结
+
+1. **错误分类明确**：fatal（5种）vs retryable（7种）vs AbortError（特殊）
+2. **errorCode提取**：为402等关键错误提供更精确的分类依据
+3. **5个检测点**：网络 → HTTP状态 → JSON解析 → 格式验证 → 数量验证
+4. **单次处理**：JSON格式一次性翻译所有字幕，无需循环中的signal检查
+5. **AbortError直接抛出**：不包装，由上层统一处理
+6. **用户提示友好化**：翻译器抛出的 `TranslationError`（service=`'openai'`）消息直接面向用户
+7. **与项目集成**：复用timeout-errors.ts工具函数
+
+> 说明：OpenAI 翻译器在抛出 `TranslationError`（service=`'openai'`）时应直接提供用户友好的消息（例如"OpenAI 账户余额不足，请前往官网充值"），上层不会再做二次映射。
 
 ## 📊 Rate Limit管理
 
@@ -1407,4 +1921,20 @@ if (model.startsWith('gpt-5')) {
 
 ---
 
-*本文档反映实际实施情况，最后更新：2025-10-07*
+## 📅 更新历史
+
+- **2025-10-25**：添加完整的错误处理架构设计章节
+  - 统一使用 TranslationError + handleFetchError
+  - 12种错误完整分类表（7个API + 5个客户端）
+  - 5个错误检测点详细说明
+  - handleAPIError方法架构设计
+  - signal检查位置说明（单次处理，无循环）
+  - 错误处理执行流程图（Mermaid）
+  - 与timeout-errors.ts集成说明
+- **2025-10-07**：架构优化，JSON格式方案，GPT-5参数优化
+- **2025-09-29**：核实 GPT-5 系列规格，补充160条批量策略
+- **2025-09-26**：创建初始文档，完成 API 调研和实现设计
+
+---
+
+*本文档已完成错误处理架构设计，符合项目统一规范，可直接用于实现*
