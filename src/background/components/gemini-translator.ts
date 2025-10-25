@@ -80,6 +80,8 @@ const MODEL_CONFIGS: Record<string, {
 /**
  * Gemini翻译器类 - V4架构
  */
+import { handleFetchError, TranslationError } from '@shared/types/translation-errors';
+
 export class GeminiTranslator {
   private apiKey: string;
   private model: string;
@@ -152,6 +154,10 @@ export class GeminiTranslator {
 
     // 分批处理
     for (let i = 0; i < texts.length; i += this.modelConfig.batchSize) {
+      if (signal.aborted) {
+        throw new DOMException('Gemini翻译已取消', 'AbortError');
+      }
+
       const batch = texts.slice(i, i + this.modelConfig.batchSize);
       const batchNumber = Math.floor(i / this.modelConfig.batchSize) + 1;
 
@@ -200,7 +206,11 @@ export class GeminiTranslator {
           console.error(
             `[GeminiTranslator] ❌ 翻译数量不匹配: 期望${batch.length}条，实际${translations.length}条`
           );
-          throw new Error(`翻译数量不匹配: 期望${batch.length}条，实际${translations.length}条`);
+          throw new TranslationError(
+            `Gemini 翻译数量不匹配：期望${batch.length}条，实际${translations.length}条`,
+            'retryable',
+            'gemini'
+          );
         }
 
         results.push(...translations);
@@ -326,98 +336,98 @@ ${yamlInput}`;
     // Gemini API endpoint（使用beta版支持最新模型）
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
 
-    try {
-      const requestBody: GeminiRequest = {
-        contents: [{
-          parts: [{ text: prompt }]
-        }],
-        generationConfig: {
-          temperature: this.temperature,
-          maxOutputTokens: maxOutputTokens,  // 使用动态计算的值
-          thinkingConfig: {                  // ⭐ 禁用thinking模式
-            thinkingBudget: 0                // 0 = 不使用thinking tokens
-          }
+    const requestBody: GeminiRequest = {
+      contents: [{
+        parts: [{ text: prompt }]
+      }],
+      generationConfig: {
+        temperature: this.temperature,
+        maxOutputTokens: maxOutputTokens,
+        thinkingConfig: {
+          thinkingBudget: 0
         }
-      };
+      }
+    };
 
-      // 🔍 日志1: 确认传给API的maxOutputTokens值
-      console.log(
-        `[GeminiTranslator] 🔍 调用API参数: maxOutputTokens=${maxOutputTokens}, ` +
-        `temperature=${this.temperature}, model=${this.model}, thinkingBudget=0 (禁用)`
-      );
+    console.log(
+      `[GeminiTranslator] 🔍 调用API参数: maxOutputTokens=${maxOutputTokens}, ` +
+      `temperature=${this.temperature}, model=${this.model}, thinkingBudget=0 (禁用)`
+    );
 
-      const response = await fetch(url, {
+    let response: Response;
+
+    try {
+      response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(requestBody),
-        signal  // AbortSignal支持
+        signal
       });
-
-      // 错误处理
-      if (!response.ok) {
-        await this.handleAPIError(response);
-      }
-
-      const data: GeminiResponse = await response.json();
-
-      // 验证响应结构
-      if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
-        throw new Error('Gemini API返回格式错误');
-      }
-
-      const content = data.candidates[0].content.parts[0]?.text;
-      if (!content) {
-        throw new Error('Gemini API返回内容为空');
-      }
-
-      // 🔍 日志2: 打印响应文本长度
-      console.debug(
-        `[debug][GeminiTranslator] 🔍 响应文本长度: ${content.length}字符`
-      );
-
-      // ⚠️ 检查finishReason（诊断输出被截断的原因）
-      const finishReason = data.candidates[0].finishReason;
-      if (finishReason !== 'STOP') {
-        console.warn(
-          `[GeminiTranslator] ⚠️ 异常结束原因: ${finishReason} ` +
-          `(STOP=正常, MAX_TOKENS=输出超限, SAFETY=安全过滤, RECITATION=重复内容)`
-        );
-
-        // 🔍 日志3: 打印完整响应结构以诊断问题
-        console.warn(
-          `[GeminiTranslator] 🔍 完整API响应:`,
-          JSON.stringify(data, null, 2)
-        );
-      }
-
-      // 📊 打印实际token使用情况并对比估算值（完全仿照OpenAI）
-      if (data.usageMetadata) {
-        const actualInput = data.usageMetadata.promptTokenCount;
-        const actualOutput = data.usageMetadata.candidatesTokenCount;
-        const actualTotal = data.usageMetadata.totalTokenCount;
-        const thoughtsTokens = data.usageMetadata.thoughtsTokenCount || 0;  // ⭐ thinking tokens（应该为0）
-        const estimatedOutput = maxOutputTokens;
-        const diff = estimatedOutput - actualOutput;
-        const diffPercent = ((diff / actualOutput) * 100).toFixed(1);
-
-        console.log(
-          `[GeminiTranslator] 📊 Token实际用量: ` +
-          `输入=${actualInput}, 输出=${actualOutput}, thinking=${thoughtsTokens}, 总计=${actualTotal} | ` +
-          `估算${estimatedOutput} vs 实际${actualOutput} (差距${diff}, ${diffPercent}%)`
-        );
-      }
-
-      return content;
-
     } catch (error) {
-      // AbortError特殊处理
-      if (error instanceof Error && error.name === 'AbortError') {
-        throw new DOMException('Gemini API请求被取消', 'AbortError');
-      }
-      throw error;
+      handleFetchError(error, 'gemini', 'Gemini API 网络请求失败');
     }
+
+    if (!response.ok) {
+      await this.handleAPIError(response);
+    }
+
+    let data: GeminiResponse;
+    try {
+      data = await response.json();
+    } catch {
+      throw new TranslationError(
+        'Gemini API 返回内容解析失败',
+        'retryable',
+        'gemini',
+        response.status
+      );
+    }
+
+    if (!data.candidates?.[0]?.content) {
+      throw new TranslationError(
+        'Gemini API 返回格式错误：缺少候选内容',
+        'retryable',
+        'gemini',
+        response.status
+      );
+    }
+
+    const content = data.candidates[0].content.parts[0]?.text;
+    if (!content) {
+      throw new TranslationError(
+        'Gemini API 返回内容为空',
+        'retryable',
+        'gemini',
+        response.status
+      );
+    }
+
+    const finishReason = data.candidates[0].finishReason;
+    this.handleFinishReason(finishReason);
+
+    console.debug(
+      `[debug][GeminiTranslator] 🔍 响应文本长度: ${content.length}字符`
+    );
+
+    if (data.usageMetadata) {
+      const actualInput = data.usageMetadata.promptTokenCount;
+      const actualOutput = data.usageMetadata.candidatesTokenCount;
+      const actualTotal = data.usageMetadata.totalTokenCount;
+      const thoughtsTokens = (data.usageMetadata as any).thoughtsTokenCount || 0;
+      const estimatedOutput = maxOutputTokens;
+      const diff = estimatedOutput - actualOutput;
+      const diffPercent = actualOutput === 0 ? '0.0' : ((diff / actualOutput) * 100).toFixed(1);
+
+      console.log(
+        `[GeminiTranslator] 📊 Token实际用量: ` +
+        `输入=${actualInput}, 输出=${actualOutput}, thinking=${thoughtsTokens}, 总计=${actualTotal} | ` +
+        `估算${estimatedOutput} vs 实际${actualOutput} (差距${diff}, ${diffPercent}%)`
+      );
+    }
+
+    return content;
   }
 
   /**
@@ -478,7 +488,11 @@ ${yamlInput}`;
     } catch (error) {
       console.error('[GeminiTranslator] ❌ YAML解析失败:', error);
       console.error('[GeminiTranslator] 原始响应:', responseText);
-      throw new Error(`YAML解析失败: ${error instanceof Error ? error.message : String(error)}`);
+      throw new TranslationError(
+        `Gemini YAML 解析失败: ${error instanceof Error ? error.message : String(error)}`,
+        'retryable',
+        'gemini'
+      );
     }
   }
 
@@ -488,37 +502,122 @@ ${yamlInput}`;
    */
   private async handleAPIError(response: Response): Promise<never> {
     let errorMessage = '未知错误';
+    let errorCode: string | undefined;
 
     try {
       const errorData = await response.json();
       errorMessage = errorData.error?.message || errorData.message || '未知错误';
+      errorCode = errorData.error?.status || errorData.status;
     } catch (parseError) {
-      errorMessage = await response.text().catch(() => `HTTP ${response.status}`);
+      errorMessage = await response.text().catch(() => '未知错误');
     }
 
-    // 细化错误处理
-    switch (response.status) {
-      case 400:
-        // API key错误通常是400
-        if (errorMessage.toLowerCase().includes('api key')) {
-          throw new Error('Gemini API密钥无效');
-        }
-        throw new Error('Gemini API请求参数错误');
+    const status = response.status;
 
+    switch (status) {
+      case 400:
+        if (errorCode === 'FAILED_PRECONDITION' || errorMessage.toLowerCase().includes('billing')) {
+          throw new TranslationError(
+            'Gemini 服务在您的地区不可用或需要付费计划',
+            'fatal',
+            'gemini',
+            status,
+            errorCode
+          );
+        }
+        if (errorMessage.toLowerCase().includes('api key')) {
+          throw new TranslationError(
+            'Gemini API密钥无效',
+            'fatal',
+            'gemini',
+            status,
+            errorCode
+          );
+        }
+        throw new TranslationError(
+          'Gemini 请求参数错误，请检查设置',
+          'fatal',
+          'gemini',
+          status,
+          errorCode
+        );
       case 401:
       case 403:
-        throw new Error('Gemini API密钥无效或无权限');
-
+        throw new TranslationError(
+          'Gemini API密钥无效或无权限',
+          'fatal',
+          'gemini',
+          status,
+          errorCode
+        );
+      case 404:
+        throw new TranslationError(
+          'Gemini 请求的资源未找到，请检查模型名称',
+          'fatal',
+          'gemini',
+          status,
+          errorCode
+        );
       case 429:
-        throw new Error('Gemini API速率限制（请检查账户类型设置）');
-
+        throw new TranslationError(
+          'Gemini API 请求过于频繁，请稍后重试',
+          'retryable',
+          'gemini',
+          status,
+          errorCode
+        );
       case 500:
       case 502:
       case 503:
-        throw new Error('Gemini服务暂时不可用');
-
+      case 504:
+        throw new TranslationError(
+          'Gemini 服务暂时不可用，请稍后重试',
+          'retryable',
+          'gemini',
+          status,
+          errorCode
+        );
       default:
-        throw new Error(`Gemini API错误 (${response.status}): ${errorMessage}`);
+        throw new TranslationError(
+          `Gemini API 错误 (${status}): ${errorMessage}`,
+          'fatal',
+          'gemini',
+          status,
+          errorCode
+        );
+    }
+  }
+
+  private handleFinishReason(finishReason: string): void {
+    if (!finishReason || finishReason === 'STOP') {
+      return;
+    }
+
+    switch (finishReason) {
+      case 'MAX_TOKENS':
+        throw new TranslationError(
+          'Gemini 输出超出长度限制，请重试',
+          'retryable',
+          'gemini'
+        );
+      case 'SAFETY':
+        throw new TranslationError(
+          'Gemini 内容被安全过滤拦截，无法翻译',
+          'fatal',
+          'gemini'
+        );
+      case 'RECITATION':
+        throw new TranslationError(
+          'Gemini 检测到重复内容，请重试',
+          'retryable',
+          'gemini'
+        );
+      default:
+        throw new TranslationError(
+          `Gemini 翻译失败: ${finishReason}`,
+          'fatal',
+          'gemini'
+        );
     }
   }
 
