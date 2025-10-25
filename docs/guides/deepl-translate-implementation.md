@@ -157,6 +157,506 @@ graph LR
     D -->|已取消| N[抛出 AbortError]
 ```
 
+## 🚨 错误处理架构
+
+### 错误分类哲学
+
+DeepL错误处理遵循**两级分类系统**（与DeepSeek保持一致）：
+
+```typescript
+// 复用 translation-errors.ts 中的统一类型
+export type TranslationErrorCategory = 'fatal' | 'retryable';
+```
+
+- **fatal（致命错误）**：需要用户干预才能解决，无法自动恢复
+  - API密钥问题（403）
+  - 配额用完（456）⭐最重要
+  - 请求参数错误（400）
+  - 请求过大（413）
+  - 资源不存在（404）
+  - 其他未知错误
+
+- **retryable（可重试错误）**：临时性问题，稍后可能成功
+  - 速率限制（429）
+  - 服务器错误（500）
+  - 服务不可用（503）
+  - 网络连接问题
+  - JSON解析失败
+  - 数据验证错误
+
+- **特殊处理：AbortError**：
+  - **不进行分类**，直接抛出到上层
+  - 区分超时（`message.includes('timeout')`）和用户取消
+  - 由 `timeout-errors.ts` 统一处理
+
+### 统一错误工具
+
+DeepL Translator 复用 `src/shared/types/translation-errors.ts` 中的通用工具：
+
+```typescript
+import {
+  TranslationError,
+  TranslationErrorCategory,
+  handleFetchError,
+} from '@/shared/types/translation-errors';
+```
+
+- `TranslationError`：统一封装错误信息，`service` 必须传入 `'deepl'`
+- `handleFetchError`：处理 `fetch` 抛出的网络错误，自动识别 `AbortError`
+- `TranslationError.category`：使用 `fatal` / `retryable` 两级分类
+
+> 注意：不单独定义 `DeepLTranslationError`，复用项目统一的 `TranslationError` 类。
+
+### 完整错误分类表
+
+#### 1. API错误（8种）
+
+| HTTP状态码 | 错误类型 | 分类 | 用户提示 | 说明 |
+|-----------|---------|------|---------|------|
+| 400 | Bad Request | `fatal` | DeepL请求参数错误，请检查设置 | 必需参数缺失或参数值错误 |
+| 403 | Forbidden | `fatal` | DeepL API密钥无效，请检查设置 | 认证失败或CORS策略拒绝 |
+| 404 | Not Found | `fatal` | DeepL资源未找到，请检查配置 | 请求的资源不存在 |
+| 413 | Request Too Large | `fatal` | DeepL请求过大（超过128KiB），请减少批次大小 | 请求体超过128KiB限制 |
+| 429 | Too Many Requests | `retryable` | DeepL请求过于频繁，请稍后重试 | 短时间内请求过多，建议指数退避 |
+| 456 | Quota Exceeded | `fatal` | DeepL配额已用完，请检查账户额度 | ⭐月度字符限额已达或Cost Control限制 |
+| 500 | Internal Server Error | `retryable` | DeepL服务器错误，请稍后重试 | DeepL服务临时故障，建议指数退避 |
+| 503 | Service Unavailable | `retryable` | DeepL服务暂时不可用，请稍后重试 | 资源暂时无法使用 |
+
+> 数据来源：[DeepL官方错误处理文档](https://developers.deepl.com/docs/best-practices/error-handling)
+
+#### 2. 客户端错误（5种）
+
+| 错误类型 | 分类 | 检测位置 | 用户提示 | 说明 |
+|---------|------|---------|---------|------|
+| 网络连接失败 | `retryable` | `fetch()` catch块 | 网络连接失败，请检查网络设置 | DNS解析失败、连接超时等 |
+| JSON解析失败 | `retryable` | `response.json()` catch块 | 翻译服务响应异常，请重试 | 返回内容不是有效JSON |
+| 响应格式错误 | `fatal` | 格式验证阶段 | 翻译服务响应异常，请重试 | 缺少必要字段（translations数组） |
+| 翻译数量不匹配 | `retryable` | 数据验证阶段 | 翻译服务响应异常，请重试 | 返回译文数量 ≠ 输入数量 |
+| AbortError（超时） | 特殊 | 各阶段signal检查 | 网络超时，请检查网络连接后重试 | 5秒超时触发 |
+| AbortError（用户取消） | 特殊 | 各阶段signal检查 | （不显示） | 用户主动取消 |
+
+### 错误检测流程（5个关键点）
+
+```typescript
+/**
+ * callAPI方法中的5个错误检测点
+ */
+private async callAPI(
+  requestBody: DeepLRequest,
+  signal: AbortSignal
+): Promise<DeepLResponse> {
+  let response: Response;
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 检测点1: fetch()网络请求（网络错误 + AbortError）
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  try {
+    response = await fetch(this.endpoint, {
+      method: 'POST',
+      headers: {
+        'Authorization': `DeepL-Auth-Key ${this.apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestBody),
+      signal  // 关键：使用AbortSignal
+    });
+  } catch (error) {
+    // 使用统一工具：自动识别AbortError并直接抛出
+    handleFetchError(error, 'deepl', 'DeepL API 网络请求失败');
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 检测点2: HTTP状态码检查（API错误）
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  if (!response.ok) {
+    await this.handleAPIError(response);  // 单独方法处理
+  }
+
+  let data: DeepLResponse;
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 检测点3: JSON解析（解析错误）
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  try {
+    data = await response.json();
+  } catch (error) {
+    throw new TranslationError(
+      'DeepL API 返回内容解析失败',
+      'retryable',
+      'deepl',
+      response.status
+    );
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 检测点4: 响应格式验证（格式错误）
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  if (!data.translations || !Array.isArray(data.translations)) {
+    throw new TranslationError(
+      'DeepL API 返回格式错误：缺少translations数组',
+      'fatal',
+      'deepl',
+      response.status
+    );
+  }
+
+  // 记录字符使用统计
+  const totalChars = data.translations.reduce((sum, t) => sum + (t.billed_characters || 0), 0);
+  if (totalChars > 0) {
+    console.log(`[DeepLTranslator] 计费字符数: ${totalChars}`);
+  }
+
+  // 记录检测到的源语言
+  if (data.translations[0]?.detected_source_language) {
+    console.log(`[DeepLTranslator] 检测到源语言: ${data.translations[0].detected_source_language}`);
+  }
+
+  return data;
+}
+```
+
+### handleAPIError方法设计
+
+```typescript
+/**
+ * 处理DeepL API错误
+ * 根据HTTP状态码和错误响应体进行分类
+ */
+private async handleAPIError(response: Response): Promise<never> {
+  let errorMessage = '未知错误';
+
+  // 尝试解析错误响应体
+  try {
+    const errorData = await response.json();
+    errorMessage = errorData.message || '未知错误';
+  } catch {
+    // JSON解析失败，尝试获取纯文本
+    errorMessage = await response.text().catch(() => '未知错误');
+  }
+
+  const status = response.status;
+
+  // 根据HTTP状态码分类错误
+  switch (status) {
+    case 400:
+      throw new TranslationError(
+        `DeepL 请求参数错误: ${errorMessage}`,
+        'fatal',
+        'deepl',
+        status
+      );
+
+    case 403:
+      throw new TranslationError(
+        'DeepL API 密钥无效，请检查设置',
+        'fatal',
+        'deepl',
+        status
+      );
+
+    case 404:
+      throw new TranslationError(
+        'DeepL 资源未找到，请检查配置',
+        'fatal',
+        'deepl',
+        status
+      );
+
+    case 413:
+      throw new TranslationError(
+        'DeepL 请求过大（超过128KiB），请减少批次大小',
+        'fatal',
+        'deepl',
+        status
+      );
+
+    case 429:
+      throw new TranslationError(
+        'DeepL 请求过于频繁，请稍后重试',
+        'retryable',
+        'deepl',
+        status
+      );
+
+    case 456:
+      // ⭐最重要的用户错误
+      throw new TranslationError(
+        'DeepL 配额已用完，请检查账户额度或升级订阅',
+        'fatal',
+        'deepl',
+        status
+      );
+
+    case 500:
+      throw new TranslationError(
+        'DeepL 服务器错误，请稍后重试',
+        'retryable',
+        'deepl',
+        status
+      );
+
+    case 503:
+      throw new TranslationError(
+        'DeepL 服务暂时不可用，请稍后重试',
+        'retryable',
+        'deepl',
+        status
+      );
+
+    default:
+      throw new TranslationError(
+        `DeepL API 错误 (${status}): ${errorMessage}`,
+        'fatal',
+        'deepl',
+        status
+      );
+  }
+}
+```
+
+### translate方法中的signal检查
+
+```typescript
+/**
+ * 批量翻译方法中的AbortSignal检查（3个位置）
+ */
+public async translate(
+  texts: string[],
+  sourceLang: string,
+  targetLang: string,
+  stage: 'urgent' | 'batch',
+  signal: AbortSignal
+): Promise<string[]> {
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 位置1: 方法入口检查
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  if (signal.aborted) {
+    throw new DOMException('DeepL翻译开始前已取消', 'AbortError');
+  }
+
+  const results: string[] = [];
+
+  // 分批处理（50条/批）
+  for (let i = 0; i < texts.length; i += DeepLTranslator.BATCH_SIZE) {
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 位置2: 循环入口检查（每批次前）
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if (signal.aborted) {
+      throw new DOMException('DeepL翻译已取消', 'AbortError');
+    }
+
+    const batch = texts.slice(i, i + DeepLTranslator.BATCH_SIZE);
+
+    // 构建请求体
+    const requestBody: DeepLRequest = {
+      text: batch,
+      target_lang: this.mapTargetLanguage(targetLang),
+      split_sentences: this.splitSentences,
+      preserve_formatting: this.preserveFormatting,
+      model_type: this.modelType as any,
+      show_billed_characters: this.showBilledCharacters
+    };
+
+    // 调用API（内部会传递signal到fetch）
+    const response = await this.callAPI(requestBody, signal);
+
+    // 提取翻译结果
+    const translations = response.translations.map(t => t.text);
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 检测点5: 翻译数量验证
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if (translations.length !== batch.length) {
+      console.error(
+        `[DeepLTranslator] 批次 ${Math.floor(i / DeepLTranslator.BATCH_SIZE) + 1} ` +
+        `翻译数量不匹配: 期望 ${batch.length}，实际 ${translations.length}`
+      );
+      throw new TranslationError(
+        `批次 ${Math.floor(i / DeepLTranslator.BATCH_SIZE) + 1} 翻译数量不匹配`,
+        'retryable',
+        'deepl'
+      );
+    }
+
+    results.push(...translations);
+
+    // 批次间延迟（仅batch阶段）
+    if (stage === 'batch' && i + DeepLTranslator.BATCH_SIZE < texts.length) {
+      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      // 位置3: 延迟期间可取消（delayWithSignal内部监听abort事件）
+      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      await this.delayWithSignal(this.batchDelay, signal);
+    }
+  }
+
+  return results;
+}
+```
+
+### delayWithSignal实现
+
+```typescript
+/**
+ * 支持取消的延迟工具
+ * 监听AbortSignal，一旦取消立即中断延迟
+ */
+private async delayWithSignal(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+
+    const abortHandler = () => {
+      clearTimeout(timer);
+      reject(new DOMException('延迟被取消', 'AbortError'));
+    };
+
+    signal.addEventListener('abort', abortHandler, { once: true });
+  });
+}
+```
+
+### 错误处理执行流程图
+
+```mermaid
+graph TB
+    Start[开始翻译] --> CheckSignal1{signal.aborted?}
+    CheckSignal1 -->|是| AbortStart[抛出AbortError: 开始前已取消]
+    CheckSignal1 -->|否| Loop[进入批次循环]
+
+    Loop --> CheckSignal2{signal.aborted?}
+    CheckSignal2 -->|是| AbortLoop[抛出AbortError: 翻译已取消]
+    CheckSignal2 -->|否| CallAPI[调用callAPI]
+
+    CallAPI --> Fetch{fetch请求}
+    Fetch -->|网络错误| HandleFetch[handleFetchError]
+    HandleFetch --> IsAbort1{AbortError?}
+    IsAbort1 -->|是| ThrowAbort1[直接抛出AbortError]
+    IsAbort1 -->|否| ThrowNetwork[抛出TranslationError service='deepl'<br/>category: retryable<br/>网络连接失败]
+
+    Fetch -->|成功| CheckStatus{response.ok?}
+    CheckStatus -->|否| HandleAPIError[handleAPIError方法]
+
+    HandleAPIError --> ParseError{解析错误响应}
+    ParseError --> SwitchStatus{HTTP状态码}
+
+    SwitchStatus -->|400| Throw400[TranslationError service='deepl'<br/>fatal: 请求参数错误]
+    SwitchStatus -->|403| Throw403[TranslationError service='deepl'<br/>fatal: 密钥无效]
+    SwitchStatus -->|404| Throw404[TranslationError service='deepl'<br/>fatal: 资源未找到]
+    SwitchStatus -->|413| Throw413[TranslationError service='deepl'<br/>fatal: 请求过大]
+    SwitchStatus -->|429| Throw429[TranslationError service='deepl'<br/>retryable: 速率限制]
+    SwitchStatus -->|456| Throw456[TranslationError service='deepl'<br/>fatal: 配额用完 ⭐]
+    SwitchStatus -->|500| Throw500[TranslationError service='deepl'<br/>retryable: 服务器错误]
+    SwitchStatus -->|503| Throw503[TranslationError service='deepl'<br/>retryable: 服务不可用]
+    SwitchStatus -->|其他| ThrowOther[TranslationError service='deepl'<br/>fatal: 未知错误]
+
+    CheckStatus -->|是| ParseJSON{response.json}
+    ParseJSON -->|解析失败| ThrowJSON[TranslationError service='deepl'<br/>retryable: JSON解析失败]
+    ParseJSON -->|成功| ValidateFormat{验证响应格式}
+
+    ValidateFormat -->|格式错误| ThrowFormat[TranslationError service='deepl'<br/>fatal: 缺少translations数组]
+    ValidateFormat -->|格式正确| ExtractTranslations[提取translations数组]
+
+    ExtractTranslations --> ValidateCount{数量匹配?}
+    ValidateCount -->|不匹配| ThrowCount[TranslationError service='deepl'<br/>retryable: 数量不匹配]
+    ValidateCount -->|匹配| PushResults[添加到结果数组]
+
+    PushResults --> CheckMore{还有批次?}
+    CheckMore -->|否| Success[返回结果]
+    CheckMore -->|是| CheckStage{stage === 'batch'?}
+
+    CheckStage -->|是| Delay[delayWithSignal]
+    Delay --> DelayAbort{signal.abort事件?}
+    DelayAbort -->|触发| ThrowAbort2[抛出AbortError: 延迟被取消]
+    DelayAbort -->|未触发| Loop
+
+    CheckStage -->|否| Loop
+
+    style Throw456 fill:#ff6b6b,stroke:#c92a2a,color:#fff
+    style ThrowAbort1 fill:#ffd43b,stroke:#f59f00
+    style ThrowAbort2 fill:#ffd43b,stroke:#f59f00
+    style AbortStart fill:#ffd43b,stroke:#f59f00
+    style AbortLoop fill:#ffd43b,stroke:#f59f00
+    style Throw429 fill:#74c0fc,stroke:#1c7ed6
+    style Throw500 fill:#74c0fc,stroke:#1c7ed6
+    style Throw503 fill:#74c0fc,stroke:#1c7ed6
+    style ThrowNetwork fill:#74c0fc,stroke:#1c7ed6
+    style ThrowJSON fill:#74c0fc,stroke:#1c7ed6
+    style ThrowCount fill:#74c0fc,stroke:#1c7ed6
+```
+
+### 与timeout-errors.ts的集成
+
+DeepL错误最终会被上层（handle-toggle-translate-v4.ts）捕获并转换为用户友好的提示：
+
+```typescript
+/**
+ * 在 handle-toggle-translate-v4.ts 中的错误处理
+ */
+import { getUserFriendlyMessage, getErrorLevel, ErrorLevel } from '../shared/types/timeout-errors';
+import { TranslationError } from '../shared/types/translation-errors';
+
+try {
+  // ... 翻译逻辑
+} catch (error: any) {
+  let userMessage = '翻译失败，请稍后重试';
+  let errorLevel = ErrorLevel.ERROR;
+
+  // 1. AbortError（用户取消）
+  if (isAbortError(error)) {
+    userMessage = '';  // 不显示消息
+    errorLevel = ErrorLevel.INFO;
+    console.log('[service-worker-v4] 用户取消翻译');
+  }
+  // 2. AbortError（超时）
+  else if (isTimeoutError(error)) {
+    userMessage = '网络超时，请检查网络连接后重试';
+    errorLevel = ErrorLevel.WARNING;
+    console.log('[service-worker-v4] 超时错误');
+  }
+  // 3. TranslationError（来自 DeepL）
+  else if (error instanceof TranslationError && error.service === 'deepl') {
+    userMessage = error.message;  // 直接使用message
+    errorLevel = error.category === 'fatal' ? ErrorLevel.ERROR : ErrorLevel.WARNING;
+
+    // 特殊提示：配额用完
+    if (error.status === 456) {
+      console.error('[service-worker-v4] ⚠️ DeepL配额已用完');
+    }
+
+    // 特殊提示：请求过大
+    if (error.status === 413) {
+      console.error('[service-worker-v4] ⚠️ DeepL请求过大，需要减少批次大小');
+    }
+  }
+  // 4. 其他未知错误
+  else {
+    userMessage = getUserFriendlyMessage(error);
+  }
+
+  // 更新状态并通知用户
+  await RuntimeStateManager.getInstance().updateTranslateActiveState(
+    tabId,
+    'inactive',
+    userMessage
+  );
+}
+```
+
+### 架构设计要点总结
+
+1. **错误分类明确**：fatal（6种）vs retryable（3种）vs AbortError（特殊）
+2. **无errorCode字段**：DeepL不返回错误码，仅依赖HTTP状态码分类
+3. **5个检测点**：网络 → HTTP状态 → JSON解析 → 格式验证 → 数量验证
+4. **3个signal检查**：方法入口 → 循环入口 → 延迟期间
+5. **AbortError直接抛出**：使用handleFetchError统一处理
+6. **用户提示友好化**：翻译器抛出的 `TranslationError`（service=`'deepl'`）消息直接面向用户
+7. **与项目集成**：复用translation-errors.ts和timeout-errors.ts工具函数
+8. **特殊错误关注**：
+   - **456配额用完**：最重要的用户错误⭐，需引导用户升级或检查额度
+   - **413请求过大**：需要调整批次大小，当前默认50条可能超限
+   - **429速率限制**：建议指数退避重试（当前实现为固定延迟）
+
+> 说明：DeepL翻译器在抛出 `TranslationError`（service=`'deepl'`）时直接提供用户友好的消息，上层不会再做二次映射。
+
 ## 📝 实现代码
 
 ### 1. TypeScript 接口定义
@@ -936,8 +1436,14 @@ curl -X POST https://api.deepl.com/v2/translate \
 
 ## 📅 更新历史
 
-- **2025-10-21**：创建初始文档，完成 API 调研和架构设计
-- **2025-10-21**：添加 V4 架构适配、双端点支持、formality 参数
+- **2025-10-25**：添加完整的错误处理架构设计章节（基于统一错误处理模式）
+  - 统一使用 TranslationError + handleFetchError
+  - 13种错误完整分类表（8个API + 5个客户端）
+  - 5个错误检测点详细说明
+  - handleAPIError方法架构设计
+  - 3个signal检查位置
+  - 错误处理执行流程图（Mermaid）
+  - 与timeout-errors.ts集成说明
 - **2025-10-22**：对齐官方文档，修正以下内容：
   - 修正 `split_sentences` 为字符串类型 ("0" | "1" | "nonewlines")
   - 添加 `model_type` 参数支持
@@ -952,7 +1458,7 @@ curl -X POST https://api.deepl.com/v2/translate \
 
 ---
 
-*本文档已完成 V4 架构优化和官方 API 对齐，符合项目规范，可直接用于实现*
+*本文档已完成 V4 架构优化、官方 API 对齐和错误处理架构设计，符合项目规范，可直接用于实现*
 
 **参考资料**：
 - DeepL 翻译 API：https://developers.deepl.com/api-reference/translate
