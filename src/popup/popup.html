@@ -5,146 +5,870 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>翻译设置</title>
     <script type="module" crossorigin src="./popup.ts"></script>
-    <link rel="stylesheet" crossorigin href="../../assets/popup.css">
     <style>
-        /* Popup特定样式调整 */
-        body {
-            width: 400px;
-            min-height: 500px;
-            max-height: 600px;
-            overflow-y: auto;
-            margin: 0;
-            padding: 16px;
-            box-sizing: border-box;
-        }
+/* Popup专用样式 - 所有样式内联（符合 Google 官方 85% popup 示例的做法） */
+body {
+    background-color: #1a1a1a;
+    color: #ffffff;
+    font-family: 'YouTube Noto', Roboto, Arial, Helvetica, sans-serif;
+    padding: 16px; /* 调整为16px（原CSS是15px） */
+    margin: 0;
+    width: 400px;
+    min-height: 500px;
+    max-height: 600px;
+    box-sizing: border-box;
+    overflow-y: auto;
+}
 
-        .setting-item {
-            margin-bottom: 18px;
-            flex-direction: column;
-            align-items: stretch;
-            gap: 8px;
-        }
+/* 给顶级setting-item添加左右padding，和service-card内部对齐 */
+body > .setting-item {
+    padding: 0 15px;
+}
 
-        .setting-row {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
+h1 {
+    text-align: center;
+    font-size: 1.2em;
+    margin-top: 0;
+    margin-bottom: 20px;
+    color: #f1f1f1;
+}
 
-        .setting-row > label {
-            flex-basis: 78px;
-            margin: 0;
-            font-size: 0.9em;
-            color: #c8d1dc;
-            white-space: nowrap;
-        }
+.setting-item {
+    margin-bottom: 18px;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+}
 
-        .setting-control {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
+.setting-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
 
-        .setting-control select,
-        .setting-control input,
-        .setting-control textarea {
-            width: 100%;
-        }
+.setting-row > label {
+    flex: 0 0 78px;  /* 固定宽度78px，不允许增长或收缩 */
+    margin: 0;
+    font-size: 0.9em;
+    color: #c8d1dc;
+    white-space: nowrap;
+}
 
-        .custom-select-container {
-            flex: 1;
-            max-width: 100%;
-        }
+.setting-control {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
 
-        .switch-container {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
+.setting-control select,
+.setting-control input,
+.setting-control textarea {
+    flex: 1;  /* 改为 flex: 1，和 .password-container 保持一致，确保左右对齐 */
+    padding: 8px 12px;
+    background-color: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 6px;
+    font-size: 0.9em;
+}
 
-        .service-card {
-            background: #101a2a;
-            border: 1px solid #27354a;
-            border-radius: 16px;
-            padding: 16px;
-            display: flex;
-            flex-direction: column;
-            gap: 14px;
-        }
+.setting-control select:focus,
+.setting-control input:focus,
+.setting-control textarea:focus {
+    outline: none;
+    border-color: #fff;
+}
 
-        .service-card-body {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
+.setting-link {
+    font-size: 0.78em;
+    color: #3ea6ff;
+    text-decoration: none;
+    white-space: nowrap;
+}
 
-        .service-card .setting-item {
-            margin-bottom: 0;
-        }
+.setting-link:hover {
+    text-decoration: underline;
+}
 
-        .service-card-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-        }
+#api-key-panel > .setting-link {
+    display: block;
+    text-align: left;
+    margin-left: 90px;
+}
 
-        .service-card-title {
-            font-size: 0.95em;
-            font-weight: 600;
-        }
+/* --- Custom Select Styles --- */
+.custom-select-container {
+    position: relative;
+    flex: 1;
+    max-width: 100%;
+}
 
-        .service-card-badge {
-            padding: 2px 10px;
-            border-radius: 999px;
-            font-size: 0.75em;
-            background: rgba(66, 133, 244, 0.18);
-            color: #76a8ff;
-        }
+.custom-select-trigger {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px;
+    background-color: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: 0.9em;
+    cursor: pointer;
+    user-select: none;
+}
 
-        .service-card-badge.is-free {
-            background: rgba(16, 185, 129, 0.18);
-            color: #32d296;
-        }
+.custom-select-trigger.disabled {
+    opacity: 0.6;
+    background-color: #2a2a2a;
+    cursor: not-allowed;
+    border: 1px solid #444;
+}
 
-        .password-container {
-            width: 100%;
-            margin: 0;
-        }
+.custom-select-trigger .selected-value {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    margin-right: 5px;
+}
 
-        .password-container input[type="password"],
-        .password-container input[type="text"] {
-            padding-right: 40px;
-            font-size: 0.9em;
-        }
+.custom-select-trigger .arrow {
+    font-size: 0.8em;
+    transition: transform 0.2s ease-in-out;
+}
 
-        .test-button-container {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
+.custom-select-container.open .custom-select-trigger .arrow {
+    transform: rotate(180deg);
+}
 
-        .custom-select-panel {
-            max-height: 300px !important;
-            overflow-y: auto !important;
-        }
+.custom-select-panel {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background-color: #2a2a2a;
+    border: 1px solid #444;
+    border-top: none;
+    border-radius: 0 0 4px 4px;
+    max-height: 300px !important;
+    overflow-y: auto !important;
+    z-index: 10;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
 
-        textarea {
-            max-height: 100px;
-            resize: vertical;
-        }
+.custom-select-panel input[type="search"] {
+    width: calc(100% - 16px);
+    padding: 8px;
+    margin: 8px;
+    box-sizing: border-box;
+    background-color: #444;
+    color: #fff;
+    border: 1px solid #666;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
 
-        .social-login-container {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
+.custom-select-option {
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 0.9em;
+    color: #eee;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 
-        .social-login-btn {
-            width: 100%;
-            justify-content: flex-start;
-        }
+.custom-select-option:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+    color: #fff;
+}
+
+.custom-select-option.selected {
+    background-color: #065fd4;
+    color: #fff;
+    font-weight: bold;
+}
+
+.custom-select-option.disabled {
+    opacity: 0.5;
+    color: #999 !important;
+    cursor: not-allowed !important;
+    background-color: #f5f5f5 !important;
+}
+
+.custom-select-option.disabled:hover {
+    background-color: #f5f5f5 !important;
+}
+
+.switch-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.switch-container span {
+    font-size: 0.9em;
+    color: #aaa;
+}
+
+.service-card {
+    background: #ffe5e5;
+    border: 1px solid #27354a;
+    border-radius: 16px;
+    padding: 16px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.service-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 0 15px; /* 调整为15px（原CSS是16px） */
+}
+
+.service-card-title {
+    font-size: 0.95em;
+    font-weight: 600;
+}
+
+.service-card-badge {
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 0.75em;
+    background: rgba(66, 133, 244, 0.18);
+    color: #76a8ff;
+}
+
+.service-card-badge.is-free {
+    background: rgba(16, 185, 129, 0.18);
+    color: #32d296;
+}
+
+.service-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 0 15px; /* 添加padding（原CSS没有） */
+    min-height: 165px; /* 固定最小高度，确保"测试连接"按钮位置不跳动（切换服务时） */
+}
+
+.service-card .setting-item {
+    margin-bottom: 0;
+}
+
+/* 增加 Gemini 和 DeepL 面板中"模型"和"API类型"两行之间的间距 */
+#gemini-basic-panel .setting-row:nth-child(2),
+#deepl-basic-panel .setting-row:nth-child(2) {
+    margin-top: 10px;
+}
+
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    margin: 0 10px;
+}
+
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .4s;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .4s;
+}
+
+input:checked + .slider {
+    background-color: #2196F3;
+}
+
+input:checked + .slider:before {
+    transform: translateX(20px);
+}
+
+.slider.round {
+    border-radius: 24px;
+}
+
+.slider.round:before {
+    border-radius: 50%;
+}
+
+#api-key-panel, #custom-api-panel {
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+    /* 删除 margin-top: 5px; - 使用 .service-card-body 的 gap: 8px 统一控制间距 */
+}
+
+#custom-api-panel {
+    display: none;
+}
+
+#api-key-panel.visible, #custom-api-panel.visible {
+    display: block;
+}
+
+/* 删除 #api-key-panel label 的特殊样式 - 让它使用统一的 .setting-row > label 样式 */
+/* 只保留 #custom-api-panel 的垂直布局样式（因为它确实需要label在上，input在下） */
+#custom-api-panel label {
+    margin-bottom: 5px;
+    display: block;
+    color: #aaa;
+    font-size: 0.9em;
+    flex-basis: auto;
+    margin-right: 0;
+}
+
+input[type="text"], textarea {
+    width: 100%;
+    padding: 8px;
+    background-color: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: 0.9em;
+    margin-bottom: 10px;
+    box-sizing: border-box;
+}
+
+input[type="text"]:focus, textarea:focus {
+    outline: none;
+    border: 1px solid #fff;
+}
+
+textarea {
+    max-height: 100px;
+    font-family: monospace;
+    resize: vertical;
+}
+
+.test-api-container {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    margin-top: 5px;
+    margin-bottom: 20px;
+}
+
+.test-button-container {
+    width: 100%;
+    margin-bottom: 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.test-result-container {
+    width: 100%;
+    min-height: 20px;
+}
+
+.test-button {
+    background-color: #2196F3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 15px;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: background-color 0.2s;
+    width: 100%;
+}
+
+.test-button:hover {
+    background-color: #0d6efd;
+}
+
+.test-button:active {
+    background-color: #0a58ca;
+}
+
+.test-button.loading {
+    background-color: #666;
+    cursor: wait;
+}
+
+.test-result {
+    margin-left: 10px;
+    font-size: 0.9em;
+}
+
+.test-result.success {
+    color: #4caf50;
+}
+
+.test-result.error {
+    color: #f44336;
+}
+
+.test-tip {
+    font-size: 0.8em;
+    color: #888;
+    margin: 0;
+    text-align: center;
+}
+
+.api-info {
+    margin-top: 5px;
+    font-size: 0.8em;
+}
+
+.api-info a {
+    color: #3ea6ff;
+    text-decoration: none;
+}
+
+.api-info a:hover {
+    text-decoration: underline;
+}
+
+.radio-group {
+    display: flex;
+    gap: 15px;
+    margin-top: 5px;
+}
+
+.radio-option {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+}
+
+.radio-option input[type="radio"] {
+    margin-right: 5px;
+    accent-color: #2196F3;
+}
+
+.radio-option span {
+    font-size: 0.9em;
+}
+
+#membership-panel {
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+#membership-panel label {
+    margin-bottom: 5px;
+    display: block;
+    color: #aaa;
+    font-size: 0.9em;
+    flex-basis: auto;
+    margin-right: 0;
+}
+
+input[type="password"] {
+    width: 100%;
+    padding: 8px;
+    background-color: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: 0.9em;
+    margin-bottom: 10px;
+    box-sizing: border-box;
+}
+
+input[type="password"]:focus {
+    outline: none;
+    border: 1px solid #fff;
+}
+
+.button-container {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.action-button {
+    background-color: #2196F3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 15px;
+    font-size: 0.9em;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.action-button:hover {
+    background-color: #0d6efd;
+}
+
+.action-button:active {
+    background-color: #0a58ca;
+}
+
+.action-button.loading {
+    background-color: #666;
+    cursor: wait;
+}
+
+.result-text {
+    margin-left: 10px;
+    font-size: 0.9em;
+}
+
+.result-text.success {
+    color: #4caf50;
+}
+
+.result-text.error {
+    color: #f44336;
+}
+
+/* 折叠动画规则 - 只用于需要折叠展开的面板 */
+#service-type-panel, #membership-panel, #custom-api-panel {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out, opacity 0.3s ease-out, margin 0.3s ease-out;
+    opacity: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+#service-type-panel.visible, #membership-panel.visible, #custom-api-panel.visible {
+    max-height: 500px;
+    opacity: 1;
+    margin-top: 10px;
+    margin-bottom: 20px;
+}
+
+/* #api-key-panel 不使用折叠动画，使用简单的 display 切换，间距由 .service-card-body 的 gap: 8px 统一控制 */
+
+.login-title {
+    font-size: 0.9em;
+    color: #aaa;
+    margin-top: 0;
+    margin-bottom: 10px;
+}
+
+.social-login-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    margin-bottom: 15px;
+}
+
+.social-login-btn {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: 4px;
+    border: 1px solid #555;
+    background-color: #333;
+    color: white;
+    font-size: 0.9em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.social-login-btn:hover {
+    background-color: #444;
+    border-color: #777;
+}
+
+.social-login-btn svg {
+    margin-right: 8px;
+}
+
+.social-login-btn span {
+    white-space: nowrap;
+}
+
+.google-btn:hover {
+    background-color: rgba(234, 67, 53, 0.1);
+}
+
+.apple-btn:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.twitter-btn:hover {
+    background-color: rgba(29, 161, 242, 0.1);
+}
+
+.facebook-btn:hover {
+    background-color: rgba(24, 119, 242, 0.1);
+}
+
+.wechat-btn:hover {
+    background-color: rgba(7, 193, 96, 0.1);
+}
+
+.login-status {
+    width: 100%;
+    text-align: center;
+    margin-top: 5px;
+}
+
+.advanced-toggle {
+    cursor: pointer;
+    margin-bottom: 5px;
+}
+
+.advanced-toggle-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 0;
+    border-bottom: 1px solid #444;
+}
+
+.toggle-btn {
+    background: none;
+    border: none;
+    color: #666;
+    cursor: pointer;
+    font-size: 14px;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s ease;
+}
+
+.toggle-btn.expanded .toggle-icon {
+    transform: rotate(90deg);
+}
+
+.advanced-panel {
+    margin-top: 0;
+    padding-top: 5px;
+    transition: max-height 0.3s ease, opacity 0.2s ease;
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+}
+
+.advanced-panel.expanded {
+    max-height: 1000px;
+    opacity: 1;
+}
+
+.advanced-setting-item {
+    margin-bottom: 15px;
+    padding-left: 10px;
+    border-left: 2px solid #555;
+}
+
+.setting-description {
+    font-size: 12px;
+    color: #888;
+    margin-top: 2px;
+}
+
+.slider-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.slider-container input[type="range"] {
+    flex: 1;
+}
+
+#openai-custom-model {
+    margin-top: 5px;
+    width: 100%;
+}
+
+#openai-basic-panel, #openai-advanced-toggle, #openai-advanced-panel {
+    transition: opacity 0.3s ease, height 0.3s ease;
+}
+
+.ratelimit-panel {
+    margin-top: 15px;
+    padding: 10px;
+    background-color: #2a2a2a;
+    border-radius: 6px;
+    border: 1px solid #444;
+}
+
+.ratelimit-panel h3 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    font-size: 14px;
+    color: #ddd;
+}
+
+.ratelimit-info {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.ratelimit-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    padding: 3px 0;
+}
+
+.ratelimit-label {
+    color: #999;
+    font-weight: 500;
+}
+
+.ratelimit-value {
+    font-weight: 600;
+    color: #3ea6ff;
+    font-family: 'Roboto Mono', monospace;
+}
+
+.ratelimit-value.warning {
+    color: #f57c00;
+}
+
+.ratelimit-value.danger {
+    color: #d32f2f;
+}
+
+.ratelimit-value.good {
+    color: #388e3c;
+}
+
+.password-container {
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin-bottom: 0;
+    flex: 1;
+}
+
+.password-container input[type="password"],
+.password-container input[type="text"] {
+    width: 100%;
+    padding-right: 40px;
+    margin-bottom: 0;
+}
+
+.toggle-password {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #aaa;
+    padding: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1;
+}
+
+.toggle-password:hover {
+    color: #fff;
+}
+
+.simple-setting-item {
+    margin-top: 15px;
+    padding: 10px;
+    background-color: #2a2a2a;
+    border-radius: 6px;
+    border: 1px solid #444;
+}
+
+.simple-setting-item label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: #ddd;
+}
+
+body::-webkit-scrollbar,
+.custom-select-panel::-webkit-scrollbar {
+    width: 8px;
+}
+
+body::-webkit-scrollbar-track,
+.custom-select-panel::-webkit-scrollbar-track {
+    background: #2a2a2a;
+}
+
+body::-webkit-scrollbar-thumb,
+.custom-select-panel::-webkit-scrollbar-thumb {
+    background-color: #777;
+    border-radius: 5px;
+    border: 2px solid #2a2a2a;
+}
+
+body::-webkit-scrollbar-thumb:hover,
+.custom-select-panel::-webkit-scrollbar-thumb:hover {
+    background-color: #aaa;
+}
+
+.info-box {
+    padding: 12px;
+    background-color: #2a2a2a;
+    border-radius: 6px;
+    border: 1px solid #444;
+    margin-top: 5px;
+}
+
+.info-box p {
+    margin: 6px 0;
+    font-size: 0.85em;
+    line-height: 1.5;
+    color: #ccc;
+}
+
+.info-box p:first-child {
+    margin-top: 0;
+}
+
+.info-box p:last-child {
+    margin-bottom: 0;
+}
+
+.info-box strong {
+    color: #fff;
+    font-weight: 600;
+}
+
+.info-box a {
+    color: #3ea6ff;
+    text-decoration: none;
+}
+
+.info-box a:hover {
+    text-decoration: underline;
+}
     </style>
 </head>
 <body>
@@ -246,9 +970,9 @@
                         </svg>
                     </button>
                 </div>
-                <a href="#" id="api-info-link" target="_blank" class="setting-link">如何获取API密钥？</a>
             </div>
         </div>
+        <a href="#" id="api-info-link" target="_blank" class="setting-link">如何获取API密钥？</a>
     </div>
 
     <!-- OpenAI基础设置面板 -->
