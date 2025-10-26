@@ -1036,28 +1036,20 @@ let targetLangSearch: HTMLInputElement | null = null;
 let targetLangOptions: HTMLDivElement | null = null;
 let subtitleTypeSwitch: HTMLInputElement | null = null;
 let translationApiSelect: HTMLSelectElement | null = null;
-let apiKeyPanel: HTMLDivElement | null = null;
 let apiKeyInput: HTMLInputElement | null = null;
 let apiInfoLink: HTMLAnchorElement | null = null;
 let customApiPanel: HTMLDivElement | null = null;
 let testApiKeyButton: HTMLButtonElement | null = null;
 let modelSelect: HTMLSelectElement | null = null;
-
-// === 新增: API面板相关元素引用 ===
-let serviceTypePanel: HTMLDivElement | null = null;
-let membershipPanel: HTMLDivElement | null = null;
-let openaiBasicPanel: HTMLDivElement | null = null;
 let togglePasswordButton: HTMLButtonElement | null = null;
 
-// === Gemini相关元素引用 (Phase 1) ===
-let geminiBasicPanel: HTMLDivElement | null = null;
+// === Gemini相关元素引用（仍需要用于事件监听和状态读取） ===
 let geminiModelSelect: HTMLSelectElement | null = null;
-let geminiTierSwitch: HTMLInputElement | null = null;  // 改为开关（checkbox）
+let geminiTierSwitch: HTMLInputElement | null = null;
 
-// === DeepL相关元素引用 (Phase 1) ===
-let deeplBasicPanel: HTMLDivElement | null = null;
+// === DeepL相关元素引用（仍需要用于事件监听和状态读取） ===
 let deeplModelSelect: HTMLSelectElement | null = null;
-let deeplTierSwitch: HTMLInputElement | null = null;  // 开关：免费/付费
+let deeplTierSwitch: HTMLInputElement | null = null;
 
 /**
  * 初始化DOM元素引用（仅在YouTube页面调用）
@@ -1089,30 +1081,20 @@ function initializeDOMElements(): void {
   
   subtitleTypeSwitch = document.getElementById('subtitle-type-switch') as HTMLInputElement;
   translationApiSelect = document.getElementById('translation-api') as HTMLSelectElement;
-  apiKeyPanel = document.getElementById('api-key-panel') as HTMLDivElement;
   apiKeyInput = document.getElementById('api-key') as HTMLInputElement;
   apiInfoLink = document.getElementById('api-info-link') as HTMLAnchorElement;
   customApiPanel = document.getElementById('custom-api-panel') as HTMLDivElement;
   testApiKeyButton = document.getElementById('test-api-key') as HTMLButtonElement;
   modelSelect = document.getElementById('openai-model') as HTMLSelectElement;
-
-  // === 新增: API面板元素引用 ===
-  serviceTypePanel = document.getElementById('service-type-panel') as HTMLDivElement;
-  membershipPanel = document.getElementById('membership-panel') as HTMLDivElement;
-  openaiBasicPanel = document.getElementById('openai-basic-panel') as HTMLDivElement;
   togglePasswordButton = document.getElementById('toggle-password') as HTMLButtonElement;
   serviceCardTitle = document.getElementById('service-card-title') as HTMLSpanElement;
   serviceCardBadge = document.getElementById('service-card-badge') as HTMLSpanElement;
 
-  // === Gemini面板元素引用 (Phase 1) ===
-  geminiBasicPanel = document.getElementById('gemini-basic-panel') as HTMLDivElement;
+  // === Gemini/DeepL 元素引用（用于事件监听和状态读取） ===
   geminiModelSelect = document.getElementById('gemini-model') as HTMLSelectElement;
-  geminiTierSwitch = document.getElementById('gemini-tier-switch') as HTMLInputElement;  // 开关
-
-  // === DeepL面板元素引用 (Phase 1) ===
-  deeplBasicPanel = document.getElementById('deepl-basic-panel') as HTMLDivElement;
+  geminiTierSwitch = document.getElementById('gemini-tier-switch') as HTMLInputElement;
   deeplModelSelect = document.getElementById('deepl-model') as HTMLSelectElement;
-  deeplTierSwitch = document.getElementById('deepl-tier-switch') as HTMLInputElement;  // 开关
+  deeplTierSwitch = document.getElementById('deepl-tier-switch') as HTMLInputElement;
 
 }
 
@@ -1121,28 +1103,21 @@ function initializeDOMElements(): void {
  * @param apiType 当前选择的API类型
  */
 function updateApiPanels(apiType: string): void {
-  console.log(`[popup] 更新API面板: ${apiType}`);
-  
-  // 重置所有面板为隐藏
-  if (apiKeyPanel) {
-    apiKeyPanel.style.display = 'none';
-    apiKeyPanel.classList.remove('visible');
-  }
-  if (serviceTypePanel) {
-    serviceTypePanel.style.display = 'none';
-    serviceTypePanel.classList.remove('visible');
-  }
-  if (membershipPanel) {
-    membershipPanel.style.display = 'none';
-    membershipPanel.classList.remove('visible');
-  }
-  if (customApiPanel) {
-    customApiPanel.style.display = 'none';
-    customApiPanel.classList.remove('visible');
-  }
-  if (openaiBasicPanel) openaiBasicPanel.style.display = 'none';
-  if (geminiBasicPanel) geminiBasicPanel.style.display = 'none';
-  if (deeplBasicPanel) deeplBasicPanel.style.display = 'none';
+  console.log(`[popup] 更新API面板（固定布局）: ${apiType}`);
+
+  // 获取新的统一面板
+  const apiKeyPanel = document.getElementById('api-key-panel');
+  const unifiedModelPanel = document.getElementById('unified-model-panel');
+  const unifiedTierPanel = document.getElementById('unified-tier-panel');
+
+  // 移除所有 active 类
+  document.querySelectorAll('.model-select').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tier-switch-container').forEach(el => el.classList.remove('active'));
+
+  // 移除所有 hidden-but-occupy 类（默认显示所有行）
+  apiKeyPanel?.classList.remove('hidden-but-occupy');
+  unifiedModelPanel?.classList.remove('hidden-but-occupy');
+  unifiedTierPanel?.classList.remove('hidden-but-occupy');
 
   // 根据API类型显示相应面板
   const apiInfo = apiInfoMap[apiType];
@@ -1154,82 +1129,78 @@ function updateApiPanels(apiType: string): void {
     serviceCardBadge.textContent = isFree ? '免费' : '自有密钥';
     serviceCardBadge.classList.toggle('is-free', isFree);
   }
-  // 测试按钮显示与否
-  if (testApiKeyButton) {
-    testApiKeyButton.style.display = apiInfo?.requiresKey || apiType.includes('-free') ? 'block' : 'none';
-  }
-  
+
   // 非付费API，不显示任何面板
   if (!apiInfo) {
     console.log(`[popup] 未找到API信息: ${apiType}`);
     return;
   }
-  
-  // 对于免费API（google-free和microsoft-free）不显示API密钥输入框
-  if (apiType === 'google-free' || apiType === 'microsoft-free') {
-    if (apiKeyPanel) apiKeyPanel.style.display = 'none';
-    return;
-  }
-  
-  // 显示API密钥输入面板，对于所有需要密钥的API
-  if (apiInfo.requiresKey && apiKeyPanel) {
-    console.log(`[popup] 显示API密钥输入框: ${apiType}, requiresKey=${apiInfo.requiresKey}`);
-    apiKeyPanel.style.display = 'block';
-    apiKeyPanel.classList.add('visible'); // 添加 visible 类触发 CSS 动画
 
-    // 更新提示链接
+  // === 根据服务类型决定显示/隐藏哪些元素 ===
+
+  if (apiType === 'google-free' || apiType === 'microsoft-free') {
+    // Google/Microsoft免费：隐藏所有配置行（但保持占位）
+    apiKeyPanel?.classList.add('hidden-but-occupy');
+    unifiedModelPanel?.classList.add('hidden-but-occupy');
+    unifiedTierPanel?.classList.add('hidden-but-occupy');
+  }
+  else if (apiType === 'deepseek') {
+    // DeepSeek：只显示API密钥，隐藏模型和tier
+    unifiedModelPanel?.classList.add('hidden-but-occupy');
+    unifiedTierPanel?.classList.add('hidden-but-occupy');
+
+    // 更新API密钥提示链接
     if (apiInfoLink && apiInfo.infoUrl) {
       apiInfoLink.href = apiInfo.infoUrl;
       apiInfoLink.textContent = `如何获取${apiInfo.name}API密钥？`;
     }
-  } else {
-    console.log(`[popup] 不显示API密钥输入框: ${apiType}, requiresKey=${apiInfo?.requiresKey}, apiKeyPanel=${!!apiKeyPanel}`);
   }
-  
-  // 自定义API
+  else if (apiType === 'openai') {
+    // OpenAI：显示API密钥 + 模型，隐藏tier
+    const openaiModelSelect = document.getElementById('openai-model');
+    openaiModelSelect?.classList.add('active');
+    unifiedTierPanel?.classList.add('hidden-but-occupy');
+
+    // 更新API密钥提示链接
+    if (apiInfoLink && apiInfo.infoUrl) {
+      apiInfoLink.href = apiInfo.infoUrl;
+      apiInfoLink.textContent = `如何获取${apiInfo.name}API密钥？`;
+    }
+  }
+  else if (apiType === 'gemini') {
+    // Gemini：显示所有（API密钥 + 模型 + tier）
+    const geminiModelSelect = document.getElementById('gemini-model');
+    const geminiTierSwitch = document.querySelector('.tier-switch-container[data-service="gemini"]');
+    geminiModelSelect?.classList.add('active');
+    geminiTierSwitch?.classList.add('active');
+
+    // 更新API密钥提示链接
+    if (apiInfoLink && apiInfo.infoUrl) {
+      apiInfoLink.href = apiInfo.infoUrl;
+      apiInfoLink.textContent = `如何获取${apiInfo.name}API密钥？`;
+    }
+  }
+  else if (apiType === 'deepl') {
+    // DeepL：显示所有（API密钥 + 模型 + tier）
+    const deeplModelSelect = document.getElementById('deepl-model');
+    const deeplTierSwitch = document.querySelector('.tier-switch-container[data-service="deepl"]');
+    deeplModelSelect?.classList.add('active');
+    deeplTierSwitch?.classList.add('active');
+
+    // 更新API密钥提示链接
+    if (apiInfoLink && apiInfo.infoUrl) {
+      apiInfoLink.href = apiInfo.infoUrl;
+      apiInfoLink.textContent = `如何获取${apiInfo.name}API密钥？`;
+    }
+  }
+
+  // 处理自定义API（如果需要）
   if (apiInfo.customConfig && customApiPanel) {
     customApiPanel.style.display = 'block';
     customApiPanel.classList.add('visible');
   }
 
-  // 处理DeepL相关面板 (Phase 1)
-  if (apiType === 'deepl') {
-    // 显示DeepL设置面板（模型、tier）
-    if (deeplBasicPanel) deeplBasicPanel.style.display = 'block';
-    // 确保API密钥面板也显示
-    if (apiKeyPanel) {
-      apiKeyPanel.style.display = 'block';
-      apiKeyPanel.classList.add('visible');
-    }
-  }
-  // 处理OpenAI相关面板
-  else if (apiType === 'openai') {
-    if (openaiBasicPanel) openaiBasicPanel.style.display = 'block';
-    // 确保API密钥面板也显示
-    if (apiKeyPanel) {
-      apiKeyPanel.style.display = 'block';
-      apiKeyPanel.classList.add('visible');
-    }
-  }
-  // 处理DeepSeek相关面板
-  else if (apiType === 'deepseek') {
-    // DeepSeek 只显示 API Key 输入框
-    // Model 和 Temperature 固定值，不暴露给用户
-    if (apiKeyPanel) {
-      apiKeyPanel.style.display = 'block';
-      apiKeyPanel.classList.add('visible');
-    }
-  }
-  // 处理Gemini相关面板 (Phase 1)
-  else if (apiType === 'gemini') {
-    // 显示Gemini设置面板（模型、tier）
-    if (geminiBasicPanel) geminiBasicPanel.style.display = 'block';
-    // 确保API密钥面板也显示
-    if (apiKeyPanel) {
-      apiKeyPanel.style.display = 'block';
-      apiKeyPanel.classList.add('visible');
-    }
-  }
+  console.log(`[popup] 固定布局更新完成: ${apiType}`);
 }
 
 /**

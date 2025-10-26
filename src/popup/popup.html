@@ -252,19 +252,54 @@ h1 {
 .service-card-body {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    /* 删除 gap: 8px - 改用 margin-bottom 控制间距，避免 visibility: hidden 时 gap 仍然生效 */
     padding: 0 15px; /* 添加padding（原CSS没有） */
     min-height: 165px; /* 固定最小高度，确保"测试连接"按钮位置不跳动（切换服务时） */
 }
 
 .service-card .setting-item {
-    margin-bottom: 0;
+    margin-bottom: 8px; /* 使用 margin 而不是 gap，因为 gap 在 visibility: hidden 时仍然生效 */
 }
 
-/* 增加 Gemini 和 DeepL 面板中"模型"和"API类型"两行之间的间距 */
-#gemini-basic-panel .setting-row:nth-child(2),
-#deepl-basic-panel .setting-row:nth-child(2) {
-    margin-top: 10px;
+/* === 固定布局：每个面板设置精确的固定高度 === */
+
+/* API密钥面板：包含输入框(40px) + 链接(20px) */
+#api-key-panel {
+    min-height: 65px;
+    box-sizing: border-box;
+}
+
+/* 模型选择面板：只有一行 */
+#unified-model-panel {
+    min-height: 40px;
+    box-sizing: border-box;
+}
+
+/* API类型面板：只有一行，但上面有额外间距 */
+#unified-tier-panel {
+    min-height: 40px;
+    margin-top: 2px; /* 原来是 10px，但现在已有 8px 的 margin-bottom，所以只需再加 2px */
+    box-sizing: border-box;
+}
+
+/* === 固定布局：使用 visibility 控制显示/隐藏（而不是 display） === */
+
+/* 默认隐藏所有模型选择器和tier开关 */
+.model-select,
+.tier-switch-container {
+    display: none; /* 用 display: none 隐藏未激活的选择器 */
+}
+
+/* 显示当前激活的选择器 */
+.model-select.active,
+.tier-switch-container.active {
+    display: block;
+}
+
+/* 使用 visibility 隐藏整行（保持占位，包括 margin 和固定高度） */
+.setting-item.hidden-but-occupy {
+    visibility: hidden;
+    /* 保持固定的 min-height 和 margin，确保占位空间一致 */
 }
 
 .switch {
@@ -954,8 +989,10 @@ body::-webkit-scrollbar-thumb:hover,
             <span id="service-card-badge" class="service-card-badge is-free">免费</span>
         </div>
         <div class="service-card-body">
-    <!-- API密钥输入框 - 确保显示 -->
-    <div id="api-key-panel" class="setting-item" style="display: none;">
+    <!-- 固定布局：所有元素都存在，用 visibility 控制显示/隐藏 -->
+
+    <!-- 行1：API密钥输入框 - 永远存在 -->
+    <div id="api-key-panel" class="setting-item">
         <div class="setting-row">
             <label for="api-key">API 密钥</label>
             <div class="setting-control">
@@ -975,36 +1012,39 @@ body::-webkit-scrollbar-thumb:hover,
         <a href="#" id="api-info-link" target="_blank" class="setting-link">如何获取API密钥？</a>
     </div>
 
-    <!-- OpenAI基础设置面板 -->
-    <div id="openai-basic-panel" class="setting-item" style="display: none;">
+    <!-- 行2：模型选择 - 永远存在，包含所有服务的模型选择器 -->
+    <div id="unified-model-panel" class="setting-item">
         <div class="setting-row">
-            <label for="openai-model">模型</label>
+            <label>模型</label>
             <div class="setting-control">
-                <select id="openai-model" name="openai-model">
+                <!-- OpenAI 模型选择 -->
+                <select id="openai-model" name="openai-model" class="model-select" data-service="openai">
                     <option value="gpt-5">gpt-5 (旗舰)</option>
                     <option value="gpt-5-mini" selected>gpt-5-mini (推荐)</option>
                     <option value="gpt-5-nano">gpt-5-nano (极速)</option>
+                </select>
+                <!-- Gemini 模型选择 -->
+                <select id="gemini-model" name="gemini-model" class="model-select" data-service="gemini">
+                    <option value="gemini-2.5-flash">gemini-2.5-flash (标准)</option>
+                    <option value="gemini-2.5-flash-lite" selected>gemini-2.5-flash-lite (快速·推荐)</option>
+                </select>
+                <!-- DeepL 模型选择 -->
+                <select id="deepl-model" name="deepl-model" class="model-select" data-service="deepl">
+                    <option value="latency_optimized" selected>latency_optimized (延迟优化·推荐)</option>
+                    <option value="quality_optimized">quality_optimized (质量优化)</option>
+                    <option value="prefer_quality_optimized">prefer_quality_optimized (偏好质量)</option>
                 </select>
             </div>
         </div>
     </div>
 
-    <!-- Gemini基础设置面板 (Phase 1: 手动tier选择) -->
-    <div id="gemini-basic-panel" class="setting-item" style="display: none;">
-        <div class="setting-row">
-            <label for="gemini-model">模型</label>
-            <div class="setting-control">
-                <select id="gemini-model" name="gemini-model">
-                    <option value="gemini-2.5-flash">gemini-2.5-flash (标准)</option>
-                    <option value="gemini-2.5-flash-lite" selected>gemini-2.5-flash-lite (快速·推荐)</option>
-                </select>
-            </div>
-        </div>
-
+    <!-- 行3：API类型（免费/付费切换）- 永远存在 -->
+    <div id="unified-tier-panel" class="setting-item">
         <div class="setting-row">
             <label>API 类型</label>
             <div class="setting-control">
-                <div class="switch-container">
+                <!-- Gemini tier 开关 -->
+                <div class="switch-container tier-switch-container" data-service="gemini">
                     <span>免费</span>
                     <label class="switch">
                         <input type="checkbox" id="gemini-tier-switch">
@@ -1012,27 +1052,8 @@ body::-webkit-scrollbar-thumb:hover,
                     </label>
                     <span>付费</span>
                 </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- DeepL基础设置面板 (Phase 1) -->
-    <div id="deepl-basic-panel" class="setting-item" style="display: none;">
-        <div class="setting-row">
-            <label for="deepl-model">模型</label>
-            <div class="setting-control">
-                <select id="deepl-model" name="deepl-model">
-                    <option value="latency_optimized" selected>latency_optimized (延迟优化·推荐)</option>
-                    <option value="quality_optimized">quality_optimized (质量优化)</option>
-                    <option value="prefer_quality_optimized">prefer_quality_optimized (偏好质量)</option>
-                </select>
-            </div>
-        </div>
-
-        <div class="setting-row">
-            <label>API 类型</label>
-            <div class="setting-control">
-                <div class="switch-container">
+                <!-- DeepL tier 开关 -->
+                <div class="switch-container tier-switch-container" data-service="deepl">
                     <span>免费</span>
                     <label class="switch">
                         <input type="checkbox" id="deepl-tier-switch">
