@@ -67,15 +67,15 @@ h1 {
 .setting-control textarea {
     flex: 1;  /* 改为 flex: 1，和 .password-container 保持一致，确保左右对齐 */
     padding: 8px 12px;
-    background-color: #333;
+    background-color: #24355a; /* 蓝紫变体的下拉框背景 */
     color: #fff;
-    border: 1px solid #555;
+    border: 1px solid #27354a;
     border-radius: 6px;
     font-size: 0.9em;
 }
 
 .setting-control select:focus,
-.setting-control input:focus,
+.setting-control > input:focus,
 .setting-control textarea:focus {
     outline: none;
     border-color: #fff;
@@ -110,9 +110,9 @@ h1 {
     justify-content: space-between;
     align-items: center;
     padding: 8px;
-    background-color: #333;
+    background-color: #24355a; /* 蓝紫变体的下拉框背景 */
     color: #fff;
-    border: 1px solid #555;
+    border: 1px solid #27354a;
     border-radius: 4px;
     font-size: 0.9em;
     cursor: pointer;
@@ -214,13 +214,13 @@ h1 {
 }
 
 .service-card {
-    background: #ffe5e5;
+    background: var(--surface); /* 与 popup 主背景统一 */
     border: 1px solid #27354a;
     border-radius: 16px;
-    padding: 16px 0;
+    padding: 16px 0 0 0; /* 移除底部padding，减少16px */
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 10px; /* 从14px减到10px，再减少4px */
 }
 
 .service-card-header {
@@ -252,13 +252,13 @@ h1 {
 .service-card-body {
     display: flex;
     flex-direction: column;
-    /* 删除 gap: 8px - 改用 margin-bottom 控制间距，避免 visibility: hidden 时 gap 仍然生效 */
+    gap: 8px;
     padding: 0 15px; /* 添加padding（原CSS没有） */
-    min-height: 165px; /* 固定最小高度，确保"测试连接"按钮位置不跳动（切换服务时） */
+    min-height: 145px; /* 固定最小高度，减少20px（原165px） */
 }
 
 .service-card .setting-item {
-    margin-bottom: 8px; /* 使用 margin 而不是 gap，因为 gap 在 visibility: hidden 时仍然生效 */
+    margin-bottom: 0;
 }
 
 /* === 固定布局：每个面板设置精确的固定高度 === */
@@ -287,13 +287,18 @@ h1 {
 /* 默认隐藏所有模型选择器和tier开关 */
 .model-select,
 .tier-switch-container {
-    display: none; /* 用 display: none 隐藏未激活的选择器 */
+    display: none !important; /* 用 display: none 隐藏未激活的选择器 */
 }
 
 /* 显示当前激活的选择器 */
 .model-select.active,
 .tier-switch-container.active {
-    display: block;
+    display: block !important;
+}
+
+/* tier-switch-container激活时显示为flex（因为它同时是segmented-control） */
+.tier-switch-container.active.segmented-control {
+    display: flex !important;
 }
 
 /* 使用 visibility 隐藏整行（保持占位，包括 margin 和固定高度） */
@@ -354,11 +359,66 @@ input:checked + .slider:before {
     border-radius: 50%;
 }
 
+/* === iOS-style Segmented Control === */
+.segmented-control {
+    display: flex;
+    background: #1f3048; /* Segmented 底色 */
+    border-radius: 12px;
+    padding: 3px;
+    position: relative;
+    width: 100%;
+}
+
+.segmented-control input[type="radio"] {
+    display: none;
+}
+
+.segmented-control label {
+    flex: 1;
+    text-align: center;
+    padding: 8px 16px;
+    font-size: 0.9em;
+    color: #8c95a9; /* 未选中文字颜色 */
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+    z-index: 2;
+    opacity: 0.5; /* 未选中时50%透明度 */
+}
+
+.segmented-control input[type="radio"]:checked + label {
+    color: white;
+    font-weight: 600; /* 选中时加粗 */
+    opacity: 1; /* 选中时完全不透明 */
+}
+
+.segmented-control .segmented-slider {
+    position: absolute;
+    background: linear-gradient(135deg, #375e95 0%, #574a95 100%); /* 蓝紫渐变 */
+    border-radius: 9px;
+    transition: transform 0.2s ease;
+    height: calc(100% - 6px);
+    width: calc(50% - 3px);
+    top: 3px;
+    left: 3px;
+    z-index: 1;
+    box-shadow: 0 2px 8px rgba(55, 94, 149, 0.4);
+}
+
+.segmented-control input[type="radio"]:nth-child(3):checked ~ .segmented-slider {
+    transform: translateX(100%);
+}
+
 #api-key-panel, #custom-api-panel {
     flex-direction: column;
     align-items: flex-start;
-    width: 100%;
+    /* 删除 width: 100%; - 让flex自动计算宽度，和unified-model-panel保持一致 */
     /* 删除 margin-top: 5px; - 使用 .service-card-body 的 gap: 8px 统一控制间距 */
+}
+
+/* ⚠️ 修复：强制 .setting-row 拉伸到100%宽度，和unified-model-panel保持一致 */
+#api-key-panel .setting-row {
+    width: 100%;
 }
 
 #custom-api-panel {
@@ -806,8 +866,13 @@ input[type="password"]:focus {
 
 .password-container input[type="password"],
 .password-container input[type="text"] {
-    width: 100%;
-    padding-right: 40px;
+    flex: 1;
+    width: auto;  /* 覆盖通用规则的 width: 100% */
+    padding: 8px 12px;  /* 和select保持一致 */
+    background-color: #24355a;  /* 和select一致 */
+    border: 1px solid #27354a;  /* 和select一致 */
+    border-radius: 6px;
+    box-sizing: content-box;  /* ⚠️ 关键！和select保持一致（覆盖input[type="password"]的border-box） */
     margin-bottom: 0;
 }
 
@@ -951,15 +1016,14 @@ body::-webkit-scrollbar-thumb:hover,
 
     <div class="setting-item">
         <div class="setting-row">
-            <label for="subtitle-type-switch">字幕类型</label>
+            <label>字幕类型</label>
             <div class="setting-control">
-                <div class="switch-container">
-                    <span>仅目标语言</span>
-                    <label class="switch">
-                        <input type="checkbox" id="subtitle-type-switch">
-                        <span class="slider round"></span>
-                    </label>
-                    <span>双语</span>
+                <div class="segmented-control">
+                    <input type="radio" name="subtitle-type" id="subtitle-type-translate" value="translate-only" checked>
+                    <label for="subtitle-type-translate">译文</label>
+                    <input type="radio" name="subtitle-type" id="subtitle-type-bilingual" value="bilingual">
+                    <label for="subtitle-type-bilingual">双语</label>
+                    <div class="segmented-slider"></div>
                 </div>
             </div>
         </div>
@@ -1043,23 +1107,21 @@ body::-webkit-scrollbar-thumb:hover,
         <div class="setting-row">
             <label>API 类型</label>
             <div class="setting-control">
-                <!-- Gemini tier 开关 -->
-                <div class="switch-container tier-switch-container" data-service="gemini">
-                    <span>免费</span>
-                    <label class="switch">
-                        <input type="checkbox" id="gemini-tier-switch">
-                        <span class="slider round"></span>
-                    </label>
-                    <span>付费</span>
+                <!-- Gemini tier 分段控制器 -->
+                <div class="segmented-control tier-switch-container" data-service="gemini">
+                    <input type="radio" name="gemini-tier" id="gemini-tier-free" value="free" checked>
+                    <label for="gemini-tier-free">免费</label>
+                    <input type="radio" name="gemini-tier" id="gemini-tier-paid" value="paid">
+                    <label for="gemini-tier-paid">付费</label>
+                    <div class="segmented-slider"></div>
                 </div>
-                <!-- DeepL tier 开关 -->
-                <div class="switch-container tier-switch-container" data-service="deepl">
-                    <span>免费</span>
-                    <label class="switch">
-                        <input type="checkbox" id="deepl-tier-switch">
-                        <span class="slider round"></span>
-                    </label>
-                    <span>付费</span>
+                <!-- DeepL tier 分段控制器 -->
+                <div class="segmented-control tier-switch-container" data-service="deepl">
+                    <input type="radio" name="deepl-tier" id="deepl-tier-free" value="free" checked>
+                    <label for="deepl-tier-free">免费</label>
+                    <input type="radio" name="deepl-tier" id="deepl-tier-paid" value="paid">
+                    <label for="deepl-tier-paid">付费</label>
+                    <div class="segmented-slider"></div>
                 </div>
             </div>
         </div>
