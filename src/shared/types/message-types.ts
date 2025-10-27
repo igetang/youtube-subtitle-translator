@@ -659,6 +659,7 @@ export interface ToggleTranslateRequest {
   currentTime?: number;
   originalSubtitleState?: boolean;
   sourceLang?: string;
+  sourceKind?: 'asr' | 'forced';  // 源语言轨道类型（asr=自动生成，forced=强制，undefined=手动）
   targetLang?: string;
   reuseOriginalSubtitles?: boolean;
 }

@@ -68,6 +68,7 @@ export async function handleToggleTranslateV4(
     newState,
     originalSubtitleState,
     sourceLang: requestedSourceLang,
+    sourceKind: requestedSourceKind,  // 用户指定的源语言类型（asr/forced/undefined）
     targetLang: requestedTargetLang,
     reuseOriginalSubtitles,
     currentTime
@@ -171,7 +172,9 @@ export async function handleToggleTranslateV4(
 
       if (requestedSourceLang) {
         const candidates = availableTracks.filter(track => track.languageCode === requestedSourceLang);
-        sourceTrack = matchWithKind(candidates, cachedTrack?.languageCode === requestedSourceLang ? cachedTrack.kind : undefined);
+        // 优先使用用户明确指定的sourceKind，其次使用缓存的kind
+        const preferredKind = requestedSourceKind || (cachedTrack?.languageCode === requestedSourceLang ? cachedTrack.kind : undefined);
+        sourceTrack = matchWithKind(candidates, preferredKind);
       }
 
       if (!sourceTrack && cachedTrack) {

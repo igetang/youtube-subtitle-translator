@@ -332,6 +332,9 @@ async function toggleTranslation(): Promise<void> {
     console.debug(`[debug][content-script] 当前播放时间: ${currentTime}s`);
   }
 
+  // 获取当前源语言轨道（包括kind）
+  const sourceTrack = await getCurrentSourceTrack(videoId);
+
   try {
     const response = await chrome.runtime.sendMessage({
       type: 'TOGGLE_TRANSLATE',
@@ -339,7 +342,9 @@ async function toggleTranslation(): Promise<void> {
         videoId: videoId,
         newState: isEnabling,
         currentTime: currentTime,  // 添加当前播放时间
-        originalSubtitleState: originalSubtitleState  // 传递原始状态
+        originalSubtitleState: originalSubtitleState,  // 传递原始状态
+        sourceLang: sourceTrack?.languageCode,  // 传递源语言代码
+        sourceKind: sourceTrack?.kind  // 传递源语言类型（asr/forced/undefined）
       }
     });
     
@@ -1324,7 +1329,8 @@ function setupTranslationServiceChangeListener(): void {
           return;
         }
 
-        const sourceLang = await getCurrentSourceLanguageForRealtime(videoId);
+        const sourceTrack = await getCurrentSourceTrack(videoId);
+        const sourceLang = sourceTrack?.languageCode || 'auto';
         capturedSourceLang = sourceLang;
 
         const userPrefs = await prefsManager.getUserPreferences();
@@ -1333,6 +1339,7 @@ function setupTranslationServiceChangeListener(): void {
           data: {
             videoId,
             sourceLang,
+            sourceKind: sourceTrack?.kind,  // 添加源语言类型
             targetLang: userPrefs.targetLang,
             service: newService
           }
@@ -1359,6 +1366,7 @@ function setupTranslationServiceChangeListener(): void {
             currentTime,
             originalSubtitleState,
             sourceLang,
+            sourceKind: sourceTrack?.kind,  // 添加源语言类型
             targetLang: userPrefs.targetLang,
             reuseOriginalSubtitles: true,
             isRestart: true
@@ -1406,11 +1414,21 @@ async function handleSourceLanguageCacheChange(
   changes: { [key: string]: chrome.storage.StorageChange },
   area: string
 ): Promise<void> {
+  console.log('[content-script] handleSourceLanguageCacheChange 被调用', { area, keys: Object.keys(changes) });
+
   if (area !== 'local') return;
 
   // 获取变更数据
   const change = changes[StorageKeys.VIDEO_SOURCE_LANGUAGE_CACHE];
-  if (!change) return;
+  if (!change) {
+    console.log('[content-script] 没有找到 VIDEO_SOURCE_LANGUAGE_CACHE 变更');
+    return;
+  }
+
+  console.log('[content-script] 检测到 VIDEO_SOURCE_LANGUAGE_CACHE 变更', {
+    hasNew: !!change.newValue,
+    hasOld: !!change.oldValue
+  });
 
   const newCache = change.newValue;
   const oldCache = change.oldValue;
@@ -1443,7 +1461,10 @@ async function handleSourceLanguageCacheChange(
         (sourceChanged ? ' [已变更]' : ' [强制刷新]'));
 
       // 处理源语言变更（即使未变化也执行，允许强制刷新）
-      await handleSourceLanguageChange(newVideoData.selectedSourceTrack.languageCode);
+      await handleSourceLanguageChange(
+        newVideoData.selectedSourceTrack.languageCode,
+        newVideoData.selectedSourceTrack.kind
+      );
     }
   }
 }
@@ -1451,8 +1472,8 @@ async function handleSourceLanguageCacheChange(
 /**
  * 处理源语言变更（最大化复用现有功能）
  */
-async function handleSourceLanguageChange(newSourceLang: string): Promise<void> {
-  console.log('[content-script] 开始处理源语言变更:', newSourceLang);
+async function handleSourceLanguageChange(newSourceLang: string, newSourceKind?: 'asr' | 'forced'): Promise<void> {
+  console.log('[content-script] 开始处理源语言变更:', newSourceLang, newSourceKind ? `(${newSourceKind})` : '');
 
   try {
     // 1. 复用hide()清除字幕，复用updateState设置PENDING
@@ -1471,6 +1492,7 @@ async function handleSourceLanguageChange(newSourceLang: string): Promise<void> 
       data: {
         videoId: getVideoId(),
         sourceLang: newSourceLang,
+        sourceKind: newSourceKind,  // 添加源语言类型
         targetLang: userPrefs.targetLang,
         service: userPrefs.translationService
       }
@@ -1496,7 +1518,8 @@ async function handleSourceLanguageChange(newSourceLang: string): Promise<void> 
           newState: true,  // 始终开启
           currentTime: currentTime,
           isRestart: true,  // 标识是重新翻译
-          sourceLang: newSourceLang  // 指定新的源语言
+          sourceLang: newSourceLang,  // 指定新的源语言
+          sourceKind: newSourceKind  // 指定新的源语言类型
         }
       });
 
@@ -1545,7 +1568,8 @@ async function handleTargetLanguageChangeRealtime(newTargetLang: string, oldTarg
       return;
     }
 
-    const sourceLang = await getCurrentSourceLanguageForRealtime(videoId);
+    const sourceTrack = await getCurrentSourceTrack(videoId);
+    const sourceLang = sourceTrack?.languageCode || 'auto';
     capturedSourceLang = sourceLang;
 
     const prefsManager = UserPreferencesManager.getInstance();
@@ -1556,6 +1580,7 @@ async function handleTargetLanguageChangeRealtime(newTargetLang: string, oldTarg
       data: {
         videoId,
         sourceLang,
+        sourceKind: sourceTrack?.kind,  // 添加源语言类型
         targetLang: newTargetLang,
         service: userPrefs.translationService
       }
@@ -1584,6 +1609,7 @@ async function handleTargetLanguageChangeRealtime(newTargetLang: string, oldTarg
         currentTime,
         originalSubtitleState,
         sourceLang,
+        sourceKind: sourceTrack?.kind,  // 添加源语言类型
         targetLang: newTargetLang,
         reuseOriginalSubtitles: true,
         isRestart: true
@@ -1645,6 +1671,26 @@ async function getCurrentSourceLanguageForRealtime(videoId: string): Promise<str
   }
 
   return 'auto';
+}
+
+/**
+ * 获取当前选中的源语言轨道（包括kind信息）
+ */
+async function getCurrentSourceTrack(videoId: string): Promise<{ languageCode: string; kind?: 'asr' | 'forced' } | null> {
+  try {
+    const result = await chrome.storage.local.get(StorageKeys.VIDEO_SOURCE_LANGUAGE_CACHE);
+    const cache = result[StorageKeys.VIDEO_SOURCE_LANGUAGE_CACHE];
+    const cachedItem = cache?.items?.find((item: any) => item.videoId === videoId);
+    if (cachedItem?.selectedSourceTrack) {
+      return {
+        languageCode: cachedItem.selectedSourceTrack.languageCode,
+        kind: cachedItem.selectedSourceTrack.kind
+      };
+    }
+  } catch (error) {
+    console.warn('[content-script] 获取源语言轨道失败:', error);
+  }
+  return null;
 }
 
 // 导出给测试使用
