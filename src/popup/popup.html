@@ -254,7 +254,7 @@ h1 {
     flex-direction: column;
     gap: 8px;
     padding: 0 15px; /* 添加padding（原CSS没有） */
-    min-height: 145px; /* 固定最小高度，减少20px（原165px） */
+    min-height: 145px; /* 固定最小高度，确保"测试连接"按钮位置不跳动（切换服务时） */
 }
 
 .service-card .setting-item {
@@ -869,10 +869,11 @@ input[type="password"]:focus {
     flex: 1;
     width: auto;  /* 覆盖通用规则的 width: 100% */
     padding: 8px 12px;  /* 和select保持一致 */
+    padding-right: 40px;  /* 为眼睛图标留空间 */
     background-color: #24355a;  /* 和select一致 */
     border: 1px solid #27354a;  /* 和select一致 */
     border-radius: 6px;
-    box-sizing: content-box;  /* ⚠️ 关键！和select保持一致（覆盖input[type="password"]的border-box） */
+    box-sizing: content-box;  /* ⚠️ 关键：保持和select一致的盒模型 */
     margin-bottom: 0;
 }
 
@@ -976,7 +977,7 @@ body::-webkit-scrollbar-thumb:hover,
 
     <div class="setting-item">
         <div class="setting-row">
-            <label for="source-language">源语言</label>
+            <label for="source-language">原文语言</label>
             <div class="setting-control">
                 <div class="custom-select-container" id="source-language-container">
                     <div class="custom-select-trigger" id="source-language-trigger">
@@ -984,7 +985,7 @@ body::-webkit-scrollbar-thumb:hover,
                         <span class="arrow">▼</span>
                     </div>
                     <div class="custom-select-panel" id="source-language-panel">
-                        <input type="search" id="source-language-search" placeholder="搜索源语言...">
+                        <input type="search" id="source-language-search" placeholder="搜索原文语言...">
                         <div class="custom-select-options" id="source-language-options">
                             <!-- 语言选项将由JS动态添加 -->
                         </div>

@@ -551,9 +551,9 @@ function generateSearchKeywords(language: Language): string[] {
       }
     }
   }
-  
+
   // 去重并返回
-  return [...new Set(keywords)];
+  return Array.from(new Set(keywords));
 }
 
 /**
@@ -1034,7 +1034,8 @@ let targetLangSelectedValue: HTMLSpanElement | null = null;
 let targetLangPanel: HTMLDivElement | null = null;
 let targetLangSearch: HTMLInputElement | null = null;
 let targetLangOptions: HTMLDivElement | null = null;
-let subtitleTypeSwitch: HTMLInputElement | null = null;
+let subtitleTypeTranslate: HTMLInputElement | null = null;
+let subtitleTypeBilingual: HTMLInputElement | null = null;
 let translationApiSelect: HTMLSelectElement | null = null;
 let apiKeyInput: HTMLInputElement | null = null;
 let apiInfoLink: HTMLAnchorElement | null = null;
@@ -1045,11 +1046,13 @@ let togglePasswordButton: HTMLButtonElement | null = null;
 
 // === Gemini相关元素引用（仍需要用于事件监听和状态读取） ===
 let geminiModelSelect: HTMLSelectElement | null = null;
-let geminiTierSwitch: HTMLInputElement | null = null;
+let geminiTierFree: HTMLInputElement | null = null;
+let geminiTierPaid: HTMLInputElement | null = null;
 
 // === DeepL相关元素引用（仍需要用于事件监听和状态读取） ===
 let deeplModelSelect: HTMLSelectElement | null = null;
-let deeplTierSwitch: HTMLInputElement | null = null;
+let deeplTierFree: HTMLInputElement | null = null;
+let deeplTierPaid: HTMLInputElement | null = null;
 
 /**
  * 初始化DOM元素引用（仅在YouTube页面调用）
@@ -1079,7 +1082,8 @@ function initializeDOMElements(): void {
   targetLangSearch = document.getElementById('target-language-search') as HTMLInputElement;
   targetLangOptions = document.getElementById('target-language-options') as HTMLDivElement;
   
-  subtitleTypeSwitch = document.getElementById('subtitle-type-switch') as HTMLInputElement;
+  subtitleTypeTranslate = document.getElementById('subtitle-type-translate') as HTMLInputElement;
+  subtitleTypeBilingual = document.getElementById('subtitle-type-bilingual') as HTMLInputElement;
   translationApiSelect = document.getElementById('translation-api') as HTMLSelectElement;
   apiKeyInput = document.getElementById('api-key') as HTMLInputElement;
   apiInfoLink = document.getElementById('api-info-link') as HTMLAnchorElement;
@@ -1092,9 +1096,11 @@ function initializeDOMElements(): void {
 
   // === Gemini/DeepL 元素引用（用于事件监听和状态读取） ===
   geminiModelSelect = document.getElementById('gemini-model') as HTMLSelectElement;
-  geminiTierSwitch = document.getElementById('gemini-tier-switch') as HTMLInputElement;
+  geminiTierFree = document.getElementById('gemini-tier-free') as HTMLInputElement;
+  geminiTierPaid = document.getElementById('gemini-tier-paid') as HTMLInputElement;
   deeplModelSelect = document.getElementById('deepl-model') as HTMLSelectElement;
-  deeplTierSwitch = document.getElementById('deepl-tier-switch') as HTMLInputElement;
+  deeplTierFree = document.getElementById('deepl-tier-free') as HTMLInputElement;
+  deeplTierPaid = document.getElementById('deepl-tier-paid') as HTMLInputElement;
 
 }
 
@@ -1326,6 +1332,8 @@ function addEventListeners(): void {
   // 密码显示/隐藏切换按钮
   if (togglePasswordButton && apiKeyInput) {
     togglePasswordButton.addEventListener('click', () => {
+      if (!togglePasswordButton || !apiKeyInput) return;
+
       const eyeOpen = togglePasswordButton.querySelector('.eye-open') as SVGElement;
       const eyeClosed = togglePasswordButton.querySelector('.eye-closed') as SVGElement;
 
@@ -1462,7 +1470,7 @@ function addEventListeners(): void {
         trackKind,
         videoId: currentVideoId
       });
-      await debouncedSaveSourceLanguage(languageCode, trackKind);
+      debouncedSaveSourceLanguage(languageCode, trackKind);
 
       // 重新填充目标语言列表以应用语言族互斥
       populateTargetLanguages();
@@ -1558,8 +1566,12 @@ async function updateUserPreferencesUI(userPreferences: UserPreferences): Promis
     }
     
     // 更新字幕模式
-    if (subtitleTypeSwitch) {
-      subtitleTypeSwitch.checked = userPreferences.subtitleMode === SubtitleMode.BILINGUAL;
+    if (subtitleTypeTranslate && subtitleTypeBilingual) {
+      if (userPreferences.subtitleMode === SubtitleMode.BILINGUAL) {
+        subtitleTypeBilingual.checked = true;
+      } else {
+        subtitleTypeTranslate.checked = true;
+      }
     }
     
     // 更新翻译服务配置
@@ -1597,8 +1609,12 @@ async function updateUserPreferencesUI(userPreferences: UserPreferences): Promis
           geminiModelSelect.value = service.model;
           console.log('[popup] Gemini模型选择已设置:', service.model);
         }
-        if (geminiTierSwitch && service.tier) {
-          geminiTierSwitch.checked = (service.tier === 'paid');  // paid=true, free=false
+        if (geminiTierFree && geminiTierPaid && service.tier) {
+          if (service.tier === 'paid') {
+            geminiTierPaid.checked = true;
+          } else {
+            geminiTierFree.checked = true;
+          }
           console.log('[popup] Gemini tier已设置:', service.tier);
         }
       }
@@ -1609,8 +1625,12 @@ async function updateUserPreferencesUI(userPreferences: UserPreferences): Promis
           deeplModelSelect.value = service.model;
           console.log('[popup] DeepL模型选择已设置:', service.model);
         }
-        if (deeplTierSwitch && service.tier) {
-          deeplTierSwitch.checked = (service.tier === 'pro');  // pro=true, free=false
+        if (deeplTierFree && deeplTierPaid && service.tier) {
+          if (service.tier === 'pro') {
+            deeplTierPaid.checked = true;
+          } else {
+            deeplTierFree.checked = true;
+          }
           console.log('[popup] DeepL tier已设置:', service.tier);
         }
       }
@@ -1800,21 +1820,31 @@ function generateLanguageDisplayName(trackInfo: {
   languageName: string,
   kind?: 'asr' | 'forced'
 }): string {
-  // 尝试获取本地化语言名称
-  const i18nKey = 'lang_' + trackInfo.languageCode.replace(/-/g, '_');
-  const localizedName = chrome.i18n.getMessage(i18nKey);
-  
+  // 智能获取本地化语言名称
+  // 1. 尝试完整语言代码（如 es-ES → lang_es_ES）
+  const fullKey = 'lang_' + trackInfo.languageCode.replace(/-/g, '_');
+  let localizedName = chrome.i18n.getMessage(fullKey);
+
+  // 2. 如果找不到，尝试基础语言代码（如 es-ES → es → lang_es）
+  if (!localizedName || localizedName.trim() === '') {
+    const baseLangCode = trackInfo.languageCode.split('-')[0];
+    const baseKey = 'lang_' + baseLangCode;
+    localizedName = chrome.i18n.getMessage(baseKey);
+  }
+
+  // 3. 确定最终显示名称
   let baseName: string;
   if (localizedName && localizedName.trim() !== '') {
     baseName = localizedName;
   } else {
+    // 如果i18n也找不到，使用YouTube返回的原始名称
     baseName = trackInfo.languageName
       .replace(/\s*\(自动生成\)/g, '')
       .replace(/\s*\(auto-generated\)/g, '')
       .replace(/\s*\(自動生成\)/g, '')
       .trim();
   }
-  
+
   // 根据轨道类型决定是否添加ASR标识
   if (trackInfo.kind === 'asr') {
     return `${baseName}（自动生成）`;
@@ -2021,7 +2051,8 @@ function setupUnifiedSettingsListener(): void {
         await handleTargetLanguageChange(target as HTMLSelectElement);
         break;
 
-      case 'subtitle-type-switch':
+      case 'subtitle-type-translate':
+      case 'subtitle-type-bilingual':
         await handleSubtitleModeChange(target as HTMLInputElement);
         break;
 
@@ -2030,9 +2061,11 @@ function setupUnifiedSettingsListener(): void {
       case 'api-key':
       case 'openai-model':
       case 'gemini-model':
-      case 'gemini-tier-switch':  // Gemini开关ID
+      case 'gemini-tier-free':
+      case 'gemini-tier-paid':
       case 'deepl-model':
-      case 'deepl-tier-switch':  // DeepL开关ID
+      case 'deepl-tier-free':
+      case 'deepl-tier-paid':
         await handleTranslationServiceChange();
         break;
 
@@ -2106,9 +2139,10 @@ async function handleTargetLanguageChange(selectElement: HTMLSelectElement): Pro
 /**
  * 处理字幕模式变更
  */
-async function handleSubtitleModeChange(switchElement: HTMLInputElement): Promise<void> {
+async function handleSubtitleModeChange(radioElement: HTMLInputElement): Promise<void> {
   try {
-    const subtitleMode = switchElement.checked ? SubtitleMode.BILINGUAL : SubtitleMode.TARGET_ONLY;
+    // 从 radio button 的 value 确定字幕模式
+    const subtitleMode = radioElement.value === 'bilingual' ? SubtitleMode.BILINGUAL : SubtitleMode.TARGET_ONLY;
     console.log('[popup] 统一监听器 - 字幕模式变更:', subtitleMode);
 
     // 使用步骤1实现的UserPreferencesManager
@@ -2134,11 +2168,13 @@ async function handleTranslationServiceChange(): Promise<void> {
 
     // Gemini相关字段 (Phase 1)
     const geminiModelSelect = document.getElementById('gemini-model') as HTMLSelectElement;
-    const geminiTierSwitch = document.getElementById('gemini-tier-switch') as HTMLInputElement;
+    const geminiTierFree = document.getElementById('gemini-tier-free') as HTMLInputElement;
+    const geminiTierPaid = document.getElementById('gemini-tier-paid') as HTMLInputElement;
 
     // DeepL相关字段 (Phase 1)
     const deeplModelSelect = document.getElementById('deepl-model') as HTMLSelectElement;
-    const deeplTierSwitch = document.getElementById('deepl-tier-switch') as HTMLInputElement;
+    const deeplTierFree = document.getElementById('deepl-tier-free') as HTMLInputElement;
+    const deeplTierPaid = document.getElementById('deepl-tier-paid') as HTMLInputElement;
 
     const newType = (translationApiSelect?.value as TranslationServiceType);
     const newApiKey = apiKeyInput?.value;
@@ -2146,11 +2182,11 @@ async function handleTranslationServiceChange(): Promise<void> {
 
     // Gemini相关值
     const newGeminiModel = geminiModelSelect?.value;
-    const newGeminiTier = geminiTierSwitch ? (geminiTierSwitch.checked ? 'paid' : 'free') : undefined;
+    const newGeminiTier = geminiTierPaid?.checked ? 'paid' : 'free';
 
     // DeepL相关值
     const newDeeplModel = deeplModelSelect?.value;
-    const newDeeplTier = deeplTierSwitch ? (deeplTierSwitch.checked ? 'pro' : 'free') : undefined;
+    const newDeeplTier = deeplTierPaid?.checked ? 'pro' : 'free';
 
     // 获取当前用户设置
     const userPreferences = await userPreferencesManager.getUserPreferences();
@@ -2225,8 +2261,12 @@ async function handleTranslationServiceChange(): Promise<void> {
       if (geminiModelSelect && updatedService.model) {
         geminiModelSelect.value = updatedService.model;
       }
-      if (geminiTierSwitch && updatedService.tier) {
-        geminiTierSwitch.checked = (updatedService.tier === 'paid');  // paid=true, free=false
+      if (geminiTierFree && geminiTierPaid && updatedService.tier) {
+        if (updatedService.tier === 'paid') {
+          geminiTierPaid.checked = true;
+        } else {
+          geminiTierFree.checked = true;
+        }
       }
       console.log('[popup] Gemini设置已更新:', {
         model: updatedService.model,
@@ -2240,8 +2280,12 @@ async function handleTranslationServiceChange(): Promise<void> {
       if (deeplModelSelect && updatedService.model) {
         deeplModelSelect.value = updatedService.model;
       }
-      if (deeplTierSwitch && updatedService.tier) {
-        deeplTierSwitch.checked = (updatedService.tier === 'pro');  // pro=true, free=false
+      if (deeplTierFree && deeplTierPaid && updatedService.tier) {
+        if (updatedService.tier === 'pro') {
+          deeplTierPaid.checked = true;
+        } else {
+          deeplTierFree.checked = true;
+        }
       }
       console.log('[popup] DeepL设置已更新:', {
         model: updatedService.model,
