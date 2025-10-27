@@ -114,10 +114,12 @@ export class VideoSourceLanguageCacheManager {
       };
     }
 
-    // 更新最后访问时间
-    item.lastAccessed = Date.now();
-    await this.saveCache();
-    
+    // 🔧 修复：移除不必要的lastAccessed更新和saveCache调用
+    // 问题：每次读取都会触发chrome.storage.onChanged事件，导致打开Popup就触发翻译流程
+    // 原因：lastAccessed字段实际上没有被使用（缓存淘汰使用FIFO，不是LRU）
+    // item.lastAccessed = Date.now();
+    // await this.saveCache();
+
     // 简化中间层日志，只在调试时输出
     // console.log(`[video-source-cache] ✓ 缓存命中: ${videoId}, ${item.availableSourceLanguages.length}个轨道`);
     return item;
