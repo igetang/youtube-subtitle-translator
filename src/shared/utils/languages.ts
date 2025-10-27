@@ -21,12 +21,9 @@ export interface Language {
 export const targetLanguages: Language[] = [
   // 主要欧洲语言
   { code: 'en', name: 'English', englishName: 'English' },
-  { code: 'en-GB', name: 'English (UK)', englishName: 'English (UK)', regionCode: 'GB', callingCode: '+44' },
-  { code: 'en-US', name: 'English (US)', englishName: 'English (US)', regionCode: 'US', callingCode: '+1' },
-  { code: 'fr', name: 'Français (French)', englishName: 'French', regionCode: 'FR', callingCode: '+33' }, 
-  { code: 'de', name: 'Deutsch (German)', englishName: 'German', regionCode: 'DE', callingCode: '+49' }, 
-  { code: 'es', name: 'Español (Spanish - Spain)', englishName: 'Spanish (Spain)', regionCode: 'ES', callingCode: '+34' },
-  { code: 'es-419', name: 'Español (Latin America)', englishName: 'Spanish (Latin America)', regionCode: '419' }, 
+  { code: 'fr', name: 'Français (French)', englishName: 'French', regionCode: 'FR', callingCode: '+33' },
+  { code: 'de', name: 'Deutsch (German)', englishName: 'German', regionCode: 'DE', callingCode: '+49' },
+  { code: 'es', name: 'Español (Spanish)', englishName: 'Spanish', regionCode: 'ES', callingCode: '+34' }, 
   { code: 'pt', name: 'Português (Portuguese - Portugal)', englishName: 'Portuguese (Portugal)', regionCode: 'PT', callingCode: '+351'},
   { code: 'pt-BR', name: 'Português (Brasil)', englishName: 'Portuguese (Brazil)', regionCode: 'BR', callingCode: '+55' },
   { code: 'it', name: 'Italiano (Italian)', englishName: 'Italian', regionCode: 'IT', callingCode: '+39' }, 
