@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Popup 全服务预览</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d141f;
+        --surface: #111a27;
+        --surface-strong: #162135;
+        --border: #1f2b3d;
+        --border-weak: #27354a;
+        --text-primary: #f4f6fc;
+        --text-secondary: #8c95a9;
+        --accent: #3f83f8;
+        --accent-muted: rgba(63, 131, 248, 0.25);
+        --radius: 14px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: radial-gradient(circle at top, #1a2233, var(--bg) 60%);
+        font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        color: var(--text-primary);
+        padding: 40px 24px 64px;
+        display: flex;
+        justify-content: center;
+      }
+
+      .popup-grid {
+        width: min(1240px, 100%);
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+        gap: 30px;
+      }
+
+      .popup {
+        background: var(--surface);
+        border-radius: 18px;
+        border: 1px solid var(--border);
+        box-shadow: 0 28px 48px rgba(6, 11, 21, 0.55);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        padding: 22px 26px 18px;
+        border-bottom: 1px solid var(--border-weak);
+      }
+
+      header h1 {
+        margin: 0;
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+      }
+
+      main {
+        padding: 20px 26px 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .setting-item {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .setting-item label {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-secondary);
+      }
+
+      .inline-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .inline-row > label {
+        min-width: 70px;
+      }
+
+      .select,
+      .input {
+        width: 100%;
+        min-height: 40px;
+        border-radius: var(--radius);
+        border: 1px solid var(--border-weak);
+        background: var(--surface-strong);
+        color: var(--text-primary);
+        padding: 0 14px;
+        font-size: 14px;
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        text-align: left;
+      }
+
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-radius: var(--radius);
+        border: 1px solid var(--border-weak);
+        background: var(--surface-strong);
+        padding: 12px 16px;
+        flex: 1;
+      }
+
+      .toggle {
+        width: 52px;
+        height: 26px;
+        border-radius: 999px;
+        background: rgba(63, 131, 248, 0.35);
+        position: relative;
+      }
+
+      .toggle::after {
+        content: '';
+        position: absolute;
+        top: 4px;
+        left: 28px;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: white;
+      }
+
+      .service-panel {
+        padding: 18px 18px 20px;
+        border-radius: 16px;
+        background: #0f1826;
+        border: 1px solid var(--border-weak);
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .service-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .service-title {
+        font-size: 16px;
+        font-weight: 600;
+      }
+
+      .badge {
+        padding: 2px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        background: var(--accent-muted);
+        color: var(--accent);
+      }
+
+      .badge.free {
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
+      }
+
+      .hint {
+        margin: 0;
+        font-size: 12px;
+        color: var(--text-secondary);
+        line-height: 1.6;
+      }
+
+      .link {
+        color: var(--accent);
+        font-size: 13px;
+        text-decoration: none;
+      }
+
+      .link:hover {
+        text-decoration: underline;
+      }
+
+      .action-block {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .action-block button {
+        height: 42px;
+        border-radius: 20px;
+        border: none;
+        background: var(--accent);
+        color: white;
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+        cursor: pointer;
+        transition: transform 0.18s ease, box-shadow 0.18s ease;
+      }
+
+      .action-block button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 12px 26px rgba(63, 131, 248, 0.35);
+      }
+
+      .password-row {
+        display: flex;
+        align-items: center;
+        gap: 0;
+        width: 100%;
+        border-radius: var(--radius);
+        border: 1px solid var(--border-weak);
+        background: var(--surface-strong);
+        overflow: hidden;
+      }
+
+      .password-row input {
+        flex: 1;
+        padding: 0 14px;
+        height: 40px;
+        border: none;
+        background: transparent;
+        color: var(--text-primary);
+        font-size: 14px;
+        font-family: inherit;
+      }
+
+      .password-row button {
+        width: 44px;
+        height: 40px;
+        background: transparent;
+        border: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+      }
+
+      .password-row svg {
+        width: 18px;
+        height: 18px;
+        fill: var(--text-primary);
+        opacity: 0.7;
+      }
+
+      .password-row input::placeholder {
+        color: #6d7b94;
+      }
+
+      .inline-row .select,
+      .inline-row .toggle-row,
+      .inline-row .password-row {
+        flex: 1;
+      }
+
+      footer {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="popup-grid">
+      <!-- Google -->
+      <section class="popup">
+        <header><h1>翻译设置</h1></header>
+        <main>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>源语言</label>
+              <div class="select">英语</div>
+            </div>
+          </section>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>目标语言</label>
+              <div class="select">简体中文</div>
+            </div>
+          </section>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>字幕类型</label>
+              <div class="toggle-row">
+                <span>仅目标语言</span>
+                <span class="toggle"></span>
+                <span>双语</span>
+              </div>
+            </div>
+          </section>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>翻译服务</label>
+              <div class="select">Google 翻译 (免费)</div>
+            </div>
+            <div class="service-panel">
+              <div class="service-header">
+                <span class="service-title">Google 翻译</span>
+                <span class="badge free">免费</span>
+              </div>
+              <p class="hint">无需额外配置，直接使用内置免费额度。</p>
+              <div class="action-block">
+                <button>测试连接</button>
+                <p class="hint">验证服务可用性并打印调试日志。</p>
+              </div>
+            </div>
+          </section>
+        </main>
+      </section>
+
+      <!-- Microsoft -->
+      <section class="popup">
+        <header><h1>翻译设置</h1></header>
+        <main>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>源语言</label>
+              <div class="select">英语</div>
+            </div>
+          </section>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>目标语言</label>
+              <div class="select">简体中文</div>
+            </div>
+          </section>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>字幕类型</label>
+              <div class="toggle-row">
+                <span>仅目标语言</span>
+                <span class="toggle"></span>
+                <span>双语</span>
+              </div>
+            </div>
+          </section>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>翻译服务</label>
+              <div class="select">微软翻译 (免费)</div>
+            </div>
+            <div class="service-panel">
+              <div class="service-header">
+                <span class="service-title">微软翻译</span>
+                <span class="badge free">免费</span>
+              </div>
+              <p class="hint">无需配置，自动使用 Microsoft 免费翻译接口。</p>
+              <div class="action-block">
+                <button>测试连接</button>
+                <p class="hint">验证服务可用性并打印调试日志。</p>
+              </div>
+            </div>
+          </section>
+        </main>
+      </section>
+
+      <!-- DeepSeek -->
+      <section class="popup">
+        <header><h1>翻译设置</h1></header>
+        <main>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>源语言</label>
+              <div class="select">英语</div>
+            </div>
+          </section>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>目标语言</label>
+              <div class="select">简体中文</div>
+            </div>
+          </section>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>字幕类型</label>
+              <div class="toggle-row">
+                <span>仅目标语言</span>
+                <span class="toggle"></span>
+                <span>双语</span>
+              </div>
+            </div>
+          </section>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>翻译服务</label>
+              <div class="select">DeepSeek API</div>
+            </div>
+            <div class="service-panel">
+              <div class="service-header">
+                <span class="service-title">DeepSeek API</span>
+                <span class="badge">自有密钥</span>
+              </div>
+              <div class="setting-item">
+                <div class="inline-row">
+                  <label>API 密钥</label>
+                  <div class="password-row">
+                    <input type="password" placeholder="输入 DeepSeek API Key…" />
+                    <button type="button" aria-label="切换可见性">
+                      <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+                    </button>
+                  </div>
+                </div>
+                <a class="link" href="#">如何获取 DeepSeek API 密钥？</a>
+              </div>
+              <div class="action-block">
+                <button>测试连接</button>
+                <p class="hint">验证密钥有效性并返回接口状态。</p>
+              </div>
+            </div>
+          </section>
+        </main>
+      </section>
+
+      <!-- DeepL -->
+      <section class="popup">
+        <header><h1>翻译设置</h1></header>
+        <main>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>源语言</label>
+              <div class="select">英语</div>
+            </div>
+          </section>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>目标语言</label>
+              <div class="select">简体中文</div>
+            </div>
+          </section>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>字幕类型</label>
+              <div class="toggle-row">
+                <span>仅目标语言</span>
+                <span class="toggle"></span>
+                <span>双语</span>
+              </div>
+            </div>
+          </section>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>翻译服务</label>
+              <div class="select">DeepL API</div>
+            </div>
+            <div class="service-panel">
+              <div class="service-header">
+                <span class="service-title">DeepL API</span>
+                <span class="badge">自有密钥</span>
+              </div>
+              <div class="setting-item">
+                <div class="inline-row">
+                  <label>API 密钥</label>
+                  <div class="password-row">
+                    <input type="password" placeholder="输入 DeepL API Key…" />
+                    <button type="button" aria-label="切换可见性">
+                      <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+                    </button>
+                  </div>
+                </div>
+                <a class="link" href="#">如何获取 DeepL API 密钥？</a>
+              </div>
+              <div class="setting-item">
+                <div class="inline-row">
+                  <label>模型</label>
+                  <div class="select">latency_optimized（延迟优化 · 推荐）</div>
+                </div>
+              </div>
+              <div class="setting-item">
+                <div class="inline-row">
+                  <label>API 类型</label>
+                  <div class="toggle-row">
+                    <span>免费</span>
+                    <span class="toggle"></span>
+                    <span>付费</span>
+                  </div>
+                </div>
+              </div>
+              <div class="action-block">
+                <button>测试连接</button>
+                <p class="hint">将同时校验密钥与当前模型配置。</p>
+              </div>
+            </div>
+          </section>
+        </main>
+      </section>
+
+      <!-- Gemini -->
+      <section class="popup">
+        <header><h1>翻译设置</h1></header>
+        <main>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>源语言</label>
+              <div class="select">英语</div>
+            </div>
+          </section>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>目标语言</label>
+              <div class="select">简体中文</div>
+            </div>
+          </section>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>字幕类型</label>
+              <div class="toggle-row">
+                <span>仅目标语言</span>
+                <span class="toggle"></span>
+                <span>双语</span>
+              </div>
+            </div>
+          </section>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>翻译服务</label>
+              <div class="select">Gemini API</div>
+            </div>
+            <div class="service-panel">
+              <div class="service-header">
+                <span class="service-title">Gemini API</span>
+                <span class="badge">自有密钥</span>
+              </div>
+              <div class="setting-item">
+                <div class="inline-row">
+                  <label>API 密钥</label>
+                  <div class="password-row">
+                    <input type="password" placeholder="输入 Gemini API Key…" />
+                    <button type="button" aria-label="切换可见性">
+                      <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+                    </button>
+                  </div>
+                </div>
+                <a class="link" href="#">如何获取 Gemini API 密钥？</a>
+              </div>
+              <div class="setting-item">
+                <div class="inline-row">
+                  <label>模型</label>
+                  <div class="select">gemini-2.5-flash-lite（快速 · 推荐）</div>
+                </div>
+              </div>
+              <div class="setting-item">
+                <div class="inline-row">
+                  <label>API 套餐</label>
+                  <div class="toggle-row">
+                    <span>免费</span>
+                    <span class="toggle"></span>
+                    <span>付费</span>
+                  </div>
+                </div>
+              </div>
+              <div class="action-block">
+                <button>测试连接</button>
+                <p class="hint">验证密钥、模型与套餐的组合是否可用。</p>
+              </div>
+            </div>
+          </section>
+        </main>
+      </section>
+
+      <!-- OpenAI -->
+      <section class="popup">
+        <header><h1>翻译设置</h1></header>
+        <main>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>源语言</label>
+              <div class="select">英语</div>
+            </div>
+          </section>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>目标语言</label>
+              <div class="select">简体中文</div>
+            </div>
+          </section>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>字幕类型</label>
+              <div class="toggle-row">
+                <span>仅目标语言</span>
+                <span class="toggle"></span>
+                <span>双语</span>
+              </div>
+            </div>
+          </section>
+          <section class="setting-item">
+            <div class="inline-row">
+              <label>翻译服务</label>
+              <div class="select">OpenAI API</div>
+            </div>
+            <div class="service-panel">
+              <div class="service-header">
+                <span class="service-title">OpenAI API</span>
+                <span class="badge">自有密钥</span>
+              </div>
+              <div class="setting-item">
+                <div class="inline-row">
+                  <label>API 密钥</label>
+                  <div class="password-row">
+                    <input type="password" placeholder="输入 OpenAI API Key…" />
+                    <button type="button" aria-label="切换可见性">
+                      <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+                    </button>
+                  </div>
+                </div>
+                <a class="link" href="#">如何获取 OpenAI API 密钥？</a>
+              </div>
+              <div class="setting-item">
+                <div class="inline-row">
+                  <label>模型</label>
+                  <div class="select">gpt-5-mini（推荐）</div>
+                </div>
+              </div>
+              <div class="action-block">
+                <button>测试连接</button>
+                <p class="hint">验证密钥与模型可用性。</p>
+              </div>
+            </div>
+          </section>
+        </main>
+      </section>
+    </div>
+  </body>
+</html>

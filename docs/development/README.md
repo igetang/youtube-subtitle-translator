@@ -7,12 +7,10 @@
 - **[project-structure.md](project-structure.md)** - 项目目录结构说明
 
 ### 编码规范
-- **[naming-conventions.md](naming-conventions.md)** - 命名规范
-- **[file-naming-conventions.md](file-naming-conventions.md)** - 文件命名约定
+- **[naming-conventions.md](naming-conventions.md)** - 命名与日志规范
 
-### 重构指南
-- **[refactor-guide.md](refactor-guide.md)** - 重构指南
-- **[refactor-validation-checklist.md](refactor-validation-checklist.md)** - 重构验证清单
+### 调试与任务追踪
+- **[docs/tasks/log-optimization-progress.md](../tasks/log-optimization-progress.md)** - 日志治理任务进度
 
 ## 🛠️ 开发流程
 

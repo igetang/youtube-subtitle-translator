@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>6种内敛蓝色变体 - 完整Popup界面</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d141f;
+        --surface: #111a27;
+        --surface-strong: #162135;
+        --border: #1f2b3d;
+        --border-weak: #27354a;
+        --text-primary: #f4f6fc;
+        --text-secondary: #8c95a9;
+        --accent: #3f83f8;
+        --accent-muted: rgba(63, 131, 248, 0.25);
+        --radius: 14px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: radial-gradient(circle at top, #1a2233, var(--bg) 60%);
+        font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        color: var(--text-primary);
+        padding: 40px 24px 64px;
+      }
+
+      .container {
+        max-width: 100%;
+        margin: 0 auto;
+      }
+
+      h1 {
+        text-align: center;
+        font-size: 28px;
+        margin-bottom: 12px;
+      }
+
+      .subtitle {
+        text-align: center;
+        color: var(--text-secondary);
+        margin-bottom: 40px;
+        font-size: 14px;
+      }
+
+      .variants-wrapper {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 40px;
+        justify-content: center;
+        margin-bottom: 50px;
+      }
+
+      .variant-section {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .variant-label {
+        font-size: 16px;
+        font-weight: 600;
+        padding: 8px 20px;
+        border-radius: 12px;
+        background: var(--surface-strong);
+        border: 1px solid var(--border);
+        text-align: center;
+      }
+
+      .variant-label .tag {
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 6px;
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
+        margin-left: 8px;
+      }
+
+      .popup {
+        width: 380px;
+        background: var(--surface);
+        border-radius: 18px;
+        border: 1px solid var(--border);
+        box-shadow: 0 28px 48px rgba(6, 11, 21, 0.55);
+        overflow: hidden;
+      }
+
+      header {
+        padding: 22px 26px 18px;
+        border-bottom: 1px solid var(--border-weak);
+      }
+
+      header h2 {
+        margin: 0;
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+      }
+
+      main {
+        padding: 20px 26px 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .setting-item {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .setting-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .setting-row > label {
+        min-width: 78px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-secondary);
+      }
+
+      .setting-control {
+        flex: 1;
+      }
+
+      /* ===== 下拉选择框样式 ===== */
+      .select {
+        width: 100%;
+        min-height: 40px;
+        border-radius: var(--radius);
+        border: 1px solid var(--border-weak);
+        color: var(--text-primary);
+        padding: 0 14px;
+        font-size: 14px;
+        display: flex;
+        align-items: center;
+      }
+
+      /* ===== Segmented Control 样式 ===== */
+      .segmented {
+        display: flex;
+        border-radius: 12px;
+        padding: 3px;
+        position: relative;
+      }
+
+      .segmented input[type="radio"] {
+        display: none;
+      }
+
+      .segmented label {
+        flex: 1;
+        text-align: center;
+        padding: 8px 16px;
+        font-size: 14px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        position: relative;
+        z-index: 2;
+        opacity: 0.5;
+      }
+
+      .segmented input[type="radio"]:checked + label {
+        color: white;
+        font-weight: 600;
+        opacity: 1;
+      }
+
+      .segmented .slider {
+        position: absolute;
+        border-radius: 9px;
+        transition: transform 0.2s ease;
+        height: calc(100% - 6px);
+        width: calc(50% - 3px);
+        top: 3px;
+        left: 3px;
+        z-index: 1;
+      }
+
+      .segmented input[type="radio"]:nth-child(3):checked ~ .slider {
+        transform: translateX(100%);
+      }
+
+      /* ===== 变体1：内敛实心蓝色 ===== */
+      .variant-1 .select {
+        background: #1e3050; /* 深蓝灰 */
+      }
+
+      .variant-1 .segmented {
+        background: #1a2838;
+      }
+
+      .variant-1 .segmented .slider {
+        background: #2d4a73; /* 深蓝色，比原来的#3f83f8暗很多 */
+        box-shadow: 0 2px 6px rgba(45, 74, 115, 0.4);
+      }
+
+      /* ===== 变体2：内敛渐变蓝色 ===== */
+      .variant-2 .select {
+        background: #1e2f45;
+      }
+
+      .variant-2 .segmented {
+        background: #1a2838;
+      }
+
+      .variant-2 .segmented .slider {
+        background: linear-gradient(135deg, #2d4a73 0%, #3a5a88 100%); /* 深蓝渐变 */
+        box-shadow: 0 2px 6px rgba(45, 74, 115, 0.4);
+      }
+
+      /* ===== 变体3：内敛蓝色光晕 ===== */
+      .variant-3 .select {
+        background: #1e3050;
+      }
+
+      .variant-3 .segmented {
+        background: #1a2838;
+      }
+
+      .variant-3 .segmented .slider {
+        background: #2d4a73;
+        box-shadow: 0 2px 8px rgba(45, 74, 115, 0.5), 0 4px 12px rgba(45, 74, 115, 0.3); /* 内敛的光晕 */
+      }
+
+      /* ===== 变体4：更深蓝色 ===== */
+      .variant-4 .select {
+        background: #1a2840;
+      }
+
+      .variant-4 .segmented {
+        background: #172330;
+      }
+
+      .variant-4 .segmented .slider {
+        background: #1e3a5f; /* 非常深的蓝色 */
+        box-shadow: 0 2px 6px rgba(30, 58, 95, 0.4);
+      }
+
+      /* ===== 变体5：内敛蓝紫渐变 ===== */
+      .variant-5 .select {
+        background: #1e2745;
+      }
+
+      .variant-5 .segmented {
+        background: #1a2338;
+      }
+
+      .variant-5 .segmented .slider {
+        background: linear-gradient(135deg, #2d4a73 0%, #3d3a6f 100%); /* 深蓝紫渐变 */
+        box-shadow: 0 2px 6px rgba(45, 74, 115, 0.4);
+      }
+
+      /* ===== 变体6：内敛青色 ===== */
+      .variant-6 .select {
+        background: #1a3440;
+      }
+
+      .variant-6 .segmented {
+        background: #172d38;
+      }
+
+      .variant-6 .segmented .slider {
+        background: #2a5368; /* 深青色，比原来的#06b6d4暗 */
+        box-shadow: 0 2px 6px rgba(42, 83, 104, 0.4);
+      }
+
+      .note {
+        text-align: center;
+        color: var(--text-secondary);
+        font-size: 13px;
+        max-width: 900px;
+        margin: 0 auto;
+        line-height: 1.8;
+      }
+
+      .note strong {
+        color: var(--text-primary);
+        font-weight: 600;
+      }
+
+      .color-ref {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border-radius: 3px;
+        vertical-align: middle;
+        margin: 0 4px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>6种内敛蓝色变体 - 完整界面</h1>
+      <p class="subtitle">所有变体都降低了亮度，更融入深色主题</p>
+
+      <div class="variants-wrapper">
+        <!-- 变体1：内敛实心蓝色 -->
+        <div class="variant-section">
+          <div class="variant-label">
+            变体1 - 内敛实心蓝
+            <span class="tag">推荐</span>
+          </div>
+          <div class="popup variant-1">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>源语言</label>
+                  <div class="setting-control">
+                    <div class="select">英语</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>目标语言</label>
+                  <div class="setting-control">
+                    <div class="select">简体中文</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="segmented">
+                      <input type="radio" name="v1" id="v1-1" checked>
+                      <label for="v1-1">译文</label>
+                      <input type="radio" name="v1" id="v1-2">
+                      <label for="v1-2">双语</label>
+                      <div class="slider"></div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>翻译服务</label>
+                  <div class="setting-control">
+                    <div class="select">OpenAI API</div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 变体2：内敛渐变蓝色 -->
+        <div class="variant-section">
+          <div class="variant-label">
+            变体2 - 内敛渐变蓝
+          </div>
+          <div class="popup variant-2">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>源语言</label>
+                  <div class="setting-control">
+                    <div class="select">英语</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>目标语言</label>
+                  <div class="setting-control">
+                    <div class="select">简体中文</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="segmented">
+                      <input type="radio" name="v2" id="v2-1" checked>
+                      <label for="v2-1">译文</label>
+                      <input type="radio" name="v2" id="v2-2">
+                      <label for="v2-2">双语</label>
+                      <div class="slider"></div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>翻译服务</label>
+                  <div class="setting-control">
+                    <div class="select">OpenAI API</div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 变体3：内敛蓝色光晕 -->
+        <div class="variant-section">
+          <div class="variant-label">
+            变体3 - 内敛蓝色光晕
+          </div>
+          <div class="popup variant-3">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>源语言</label>
+                  <div class="setting-control">
+                    <div class="select">英语</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>目标语言</label>
+                  <div class="setting-control">
+                    <div class="select">简体中文</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="segmented">
+                      <input type="radio" name="v3" id="v3-1" checked>
+                      <label for="v3-1">译文</label>
+                      <input type="radio" name="v3" id="v3-2">
+                      <label for="v3-2">双语</label>
+                      <div class="slider"></div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>翻译服务</label>
+                  <div class="setting-control">
+                    <div class="select">OpenAI API</div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 变体4：更深蓝色 -->
+        <div class="variant-section">
+          <div class="variant-label">
+            变体4 - 更深蓝色
+            <span class="tag">推荐</span>
+          </div>
+          <div class="popup variant-4">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>源语言</label>
+                  <div class="setting-control">
+                    <div class="select">英语</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>目标语言</label>
+                  <div class="setting-control">
+                    <div class="select">简体中文</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="segmented">
+                      <input type="radio" name="v4" id="v4-1" checked>
+                      <label for="v4-1">译文</label>
+                      <input type="radio" name="v4" id="v4-2">
+                      <label for="v4-2">双语</label>
+                      <div class="slider"></div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>翻译服务</label>
+                  <div class="setting-control">
+                    <div class="select">OpenAI API</div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 变体5：内敛蓝紫渐变 -->
+        <div class="variant-section">
+          <div class="variant-label">
+            变体5 - 内敛蓝紫渐变
+          </div>
+          <div class="popup variant-5">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>源语言</label>
+                  <div class="setting-control">
+                    <div class="select">英语</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>目标语言</label>
+                  <div class="setting-control">
+                    <div class="select">简体中文</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="segmented">
+                      <input type="radio" name="v5" id="v5-1" checked>
+                      <label for="v5-1">译文</label>
+                      <input type="radio" name="v5" id="v5-2">
+                      <label for="v5-2">双语</label>
+                      <div class="slider"></div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>翻译服务</label>
+                  <div class="setting-control">
+                    <div class="select">OpenAI API</div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 变体6：内敛青色 -->
+        <div class="variant-section">
+          <div class="variant-label">
+            变体6 - 内敛青色
+          </div>
+          <div class="popup variant-6">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>源语言</label>
+                  <div class="setting-control">
+                    <div class="select">英语</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>目标语言</label>
+                  <div class="setting-control">
+                    <div class="select">简体中文</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="segmented">
+                      <input type="radio" name="v6" id="v6-1" checked>
+                      <label for="v6-1">译文</label>
+                      <input type="radio" name="v6" id="v6-2">
+                      <label for="v6-2">双语</label>
+                      <div class="slider"></div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>翻译服务</label>
+                  <div class="setting-control">
+                    <div class="select">OpenAI API</div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+      </div>
+
+      <div class="note">
+        <p><strong>🎨 6种内敛配色详解：</strong></p>
+        <p>
+          <strong>变体1（内敛实心蓝）</strong> - 滑块#2d4a73，比原版#3f83f8暗40%，最推荐<br>
+          <strong>变体2（内敛渐变蓝）</strong> - #2d4a73→#3a5a88深蓝渐变，有层次<br>
+          <strong>变体3（内敛蓝色光晕）</strong> - 滑块#2d4a73 + 柔和阴影，微光感<br>
+          <strong>变体4（更深蓝色）</strong> - 滑块#1e3a5f，最深最沉稳，也推荐<br>
+          <strong>变体5（内敛蓝紫渐变）</strong> - #2d4a73→#3d3a6f深蓝紫渐变，神秘感<br>
+          <strong>变体6（内敛青色）</strong> - 滑块#2a5368，深青色调，清爽
+        </p>
+        <p style="margin-top: 20px; color: #6d7b94;">
+          💡 所有变体的亮度都降低了，不会再觉得刺眼了！<br>
+          我最推荐：<strong>变体1（内敛实心蓝）</strong> 或 <strong>变体4（更深蓝色）</strong><br>
+          每个变体都统一调整了：源语言框 + 目标语言框 + 字幕类型选择器 + 翻译服务框
+        </p>
+      </div>
+    </div>
+
+    <script>
+      document.querySelectorAll('input[type="radio"]').forEach(input => {
+        input.addEventListener('change', function() {
+          console.log('选择:', this.nextElementSibling.textContent);
+        });
+      });
+    </script>
+  </body>
+</html>

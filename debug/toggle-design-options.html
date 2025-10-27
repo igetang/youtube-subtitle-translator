@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>字幕类型选择器设计方案对比</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d141f;
+        --surface: #111a27;
+        --surface-strong: #162135;
+        --border: #1f2b3d;
+        --border-weak: #27354a;
+        --text-primary: #f4f6fc;
+        --text-secondary: #8c95a9;
+        --accent: #3f83f8;
+        --accent-muted: rgba(63, 131, 248, 0.25);
+        --radius: 14px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: radial-gradient(circle at top, #1a2233, var(--bg) 60%);
+        font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        color: var(--text-primary);
+        padding: 40px 24px 64px;
+      }
+
+      .container {
+        max-width: 100%;
+        margin: 0 auto;
+      }
+
+      h1 {
+        text-align: center;
+        font-size: 28px;
+        margin-bottom: 12px;
+      }
+
+      .subtitle {
+        text-align: center;
+        color: var(--text-secondary);
+        margin-bottom: 40px;
+        font-size: 14px;
+      }
+
+      .options-wrapper {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 40px;
+        justify-content: center;
+        margin-bottom: 50px;
+      }
+
+      .option-section {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .option-label {
+        font-size: 16px;
+        font-weight: 600;
+        padding: 8px 20px;
+        border-radius: 12px;
+        background: var(--surface-strong);
+        border: 1px solid var(--border);
+        text-align: center;
+      }
+
+      .option-label .tag {
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 6px;
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
+        margin-left: 8px;
+      }
+
+      .option-label .tag.hot {
+        background: rgba(244, 63, 94, 0.2);
+        color: #fb7185;
+      }
+
+      .popup {
+        width: 380px;
+        background: var(--surface);
+        border-radius: 18px;
+        border: 1px solid var(--border);
+        box-shadow: 0 28px 48px rgba(6, 11, 21, 0.55);
+        overflow: hidden;
+      }
+
+      header {
+        padding: 22px 26px 18px;
+        border-bottom: 1px solid var(--border-weak);
+      }
+
+      header h2 {
+        margin: 0;
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+      }
+
+      main {
+        padding: 20px 26px 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .setting-item {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .setting-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .setting-row > label {
+        min-width: 78px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-secondary);
+      }
+
+      .setting-control {
+        flex: 1;
+      }
+
+      /* ===== 方案1：iOS风格 Segmented Control ===== */
+      .ios-segmented {
+        display: flex;
+        background: var(--surface-strong);
+        border-radius: 12px;
+        padding: 3px;
+        position: relative;
+      }
+
+      .ios-segmented input[type="radio"] {
+        display: none;
+      }
+
+      .ios-segmented label {
+        flex: 1;
+        text-align: center;
+        padding: 8px 16px;
+        font-size: 14px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        position: relative;
+        z-index: 2;
+        opacity: 0.5; /* 未选中时更暗 */
+      }
+
+      .ios-segmented input[type="radio"]:checked + label {
+        color: var(--text-primary);
+        font-weight: 600; /* 选中时加粗 */
+        opacity: 1; /* 选中时完全不透明 */
+      }
+
+      .ios-segmented .slider {
+        position: absolute;
+        background: rgba(255, 255, 255, 0.08); /* 更亮的背景 */
+        border-radius: 9px;
+        transition: transform 0.2s ease;
+        height: calc(100% - 6px);
+        width: calc(50% - 3px);
+        top: 3px;
+        left: 3px;
+        z-index: 1;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.05); /* 增强阴影 */
+      }
+
+      .ios-segmented input[type="radio"]:nth-child(3):checked ~ .slider {
+        transform: translateX(100%);
+      }
+
+      /* ===== 方案2：Material Design 3 风格 ===== */
+      .md3-segmented {
+        display: flex;
+        border-radius: 12px;
+        border: 1px solid var(--border-weak);
+        overflow: hidden;
+      }
+
+      .md3-segmented input[type="radio"] {
+        display: none;
+      }
+
+      .md3-segmented label {
+        flex: 1;
+        text-align: center;
+        padding: 10px 16px;
+        font-size: 14px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        border-right: 1px solid var(--border-weak);
+        background: transparent;
+      }
+
+      .md3-segmented label:last-child {
+        border-right: none;
+      }
+
+      .md3-segmented input[type="radio"]:checked + label {
+        background: var(--accent-muted);
+        color: var(--accent);
+        font-weight: 500;
+      }
+
+      /* ===== 方案3：改进的 Toggle Switch（带标签） ===== */
+      .improved-toggle {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: var(--surface-strong);
+        border-radius: 12px;
+        padding: 6px 16px;
+        position: relative;
+      }
+
+      .improved-toggle input[type="checkbox"] {
+        display: none;
+      }
+
+      .improved-toggle .label {
+        font-size: 14px;
+        color: var(--text-secondary);
+        transition: all 0.2s ease;
+        cursor: pointer;
+        padding: 6px 0;
+        z-index: 2;
+      }
+
+      .improved-toggle input[type="checkbox"]:not(:checked) ~ .label-left {
+        color: var(--text-primary);
+        font-weight: 500;
+      }
+
+      .improved-toggle input[type="checkbox"]:checked ~ .label-right {
+        color: var(--text-primary);
+        font-weight: 500;
+      }
+
+      .improved-toggle .switch-track {
+        width: 44px;
+        height: 24px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        position: relative;
+        transition: background 0.2s ease;
+        cursor: pointer;
+      }
+
+      .improved-toggle input[type="checkbox"]:checked ~ .switch-track {
+        background: var(--accent);
+      }
+
+      .improved-toggle .switch-thumb {
+        position: absolute;
+        width: 20px;
+        height: 20px;
+        background: white;
+        border-radius: 50%;
+        top: 2px;
+        left: 2px;
+        transition: transform 0.2s ease;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+      }
+
+      .improved-toggle input[type="checkbox"]:checked ~ .switch-track .switch-thumb {
+        transform: translateX(20px);
+      }
+
+      /* ===== 方案4：Pill Toggle（药丸状） ===== */
+      .pill-toggle {
+        display: inline-flex;
+        background: var(--surface-strong);
+        border-radius: 20px;
+        padding: 4px;
+        gap: 4px;
+      }
+
+      .pill-toggle input[type="radio"] {
+        display: none;
+      }
+
+      .pill-toggle label {
+        padding: 8px 20px;
+        font-size: 14px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        border-radius: 16px;
+      }
+
+      .pill-toggle input[type="radio"]:checked + label {
+        background: var(--accent);
+        color: white;
+        font-weight: 500;
+        box-shadow: 0 2px 8px rgba(63, 131, 248, 0.4);
+      }
+
+      /* ===== 方案5：Button Group（按钮组） ===== */
+      .button-group {
+        display: flex;
+        gap: 8px;
+      }
+
+      .button-group input[type="radio"] {
+        display: none;
+      }
+
+      .button-group label {
+        flex: 1;
+        text-align: center;
+        padding: 10px 16px;
+        font-size: 14px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        border-radius: 12px;
+        border: 1px solid var(--border-weak);
+        background: transparent;
+      }
+
+      .button-group input[type="radio"]:checked + label {
+        background: var(--accent);
+        color: white;
+        border-color: var(--accent);
+        font-weight: 500;
+      }
+
+      /* ===== 方案6：Minimal Underline（极简下划线） ===== */
+      .minimal-underline {
+        display: flex;
+        gap: 24px;
+        border-bottom: 2px solid var(--border-weak);
+      }
+
+      .minimal-underline input[type="radio"] {
+        display: none;
+      }
+
+      .minimal-underline label {
+        padding: 10px 4px;
+        font-size: 14px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        position: relative;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -2px;
+      }
+
+      .minimal-underline input[type="radio"]:checked + label {
+        color: var(--accent);
+        border-bottom-color: var(--accent);
+        font-weight: 500;
+      }
+
+      .note {
+        text-align: center;
+        color: var(--text-secondary);
+        font-size: 13px;
+        max-width: 800px;
+        margin: 0 auto;
+        line-height: 1.8;
+      }
+
+      .note strong {
+        color: var(--text-primary);
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>字幕类型选择器设计方案</h1>
+      <p class="subtitle">基于 iOS、Material Design 和现代 UI 设计的6种方案</p>
+
+      <div class="options-wrapper">
+        <!-- 方案1：iOS风格 -->
+        <div class="option-section">
+          <div class="option-label">
+            方案1 - iOS风格
+            <span class="tag">推荐</span>
+          </div>
+          <div class="popup">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="ios-segmented">
+                      <input type="radio" name="ios1" id="ios1-1" checked>
+                      <label for="ios1-1">译文</label>
+                      <input type="radio" name="ios1" id="ios1-2">
+                      <label for="ios1-2">双语</label>
+                      <div class="slider"></div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 方案2：Material Design 3 -->
+        <div class="option-section">
+          <div class="option-label">
+            方案2 - Material Design 3
+            <span class="tag">推荐</span>
+          </div>
+          <div class="popup">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="md3-segmented">
+                      <input type="radio" name="md3-1" id="md3-1-1" checked>
+                      <label for="md3-1-1">译文</label>
+                      <input type="radio" name="md3-1" id="md3-1-2">
+                      <label for="md3-1-2">双语</label>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 方案3：改进的 Toggle -->
+        <div class="option-section">
+          <div class="option-label">
+            方案3 - 改进Toggle
+          </div>
+          <div class="popup">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="improved-toggle">
+                      <input type="checkbox" id="improved-1">
+                      <span class="label label-left">译文</span>
+                      <label for="improved-1" class="switch-track">
+                        <span class="switch-thumb"></span>
+                      </label>
+                      <span class="label label-right">双语</span>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 方案4：Pill Toggle -->
+        <div class="option-section">
+          <div class="option-label">
+            方案4 - 药丸式
+            <span class="tag hot">简洁</span>
+          </div>
+          <div class="popup">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="pill-toggle">
+                      <input type="radio" name="pill-1" id="pill-1-1" checked>
+                      <label for="pill-1-1">译文</label>
+                      <input type="radio" name="pill-1" id="pill-1-2">
+                      <label for="pill-1-2">双语</label>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 方案5：Button Group -->
+        <div class="option-section">
+          <div class="option-label">
+            方案5 - 按钮组
+          </div>
+          <div class="popup">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="button-group">
+                      <input type="radio" name="btn-1" id="btn-1-1" checked>
+                      <label for="btn-1-1">译文</label>
+                      <input type="radio" name="btn-1" id="btn-1-2">
+                      <label for="btn-1-2">双语</label>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 方案6：Minimal Underline -->
+        <div class="option-section">
+          <div class="option-label">
+            方案6 - 极简下划线
+            <span class="tag hot">极简</span>
+          </div>
+          <div class="popup">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="minimal-underline">
+                      <input type="radio" name="min-1" id="min-1-1" checked>
+                      <label for="min-1-1">译文</label>
+                      <input type="radio" name="min-1" id="min-1-2">
+                      <label for="min-1-2">双语</label>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+      </div>
+
+      <div class="note">
+        <p><strong>💡 设计建议：</strong></p>
+        <p>
+          <strong>方案1（iOS风格）</strong> - 最推荐，滑动背景+清晰状态，现代且直观<br>
+          <strong>方案2（Material Design）</strong> - 也很推荐，符合 Google 设计规范<br>
+          <strong>方案4（药丸式）</strong> - 简洁有力，视觉冲击强
+        </p>
+        <p style="margin-top: 20px; color: #6d7b94;">
+          所有方案都支持点击交互，可以直接测试体验！<br>
+          已将"仅目标语言"改为"译文"，更简洁直观。
+        </p>
+      </div>
+    </div>
+
+    <script>
+      // 让所有方案都可以交互
+      document.querySelectorAll('input[type="radio"], input[type="checkbox"]').forEach(input => {
+        input.addEventListener('change', function() {
+          console.log('选择器状态变更:', this.checked || this.value);
+        });
+      });
+    </script>
+  </body>
+</html>

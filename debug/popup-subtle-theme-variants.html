@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Popup 内敛配色方案对比</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d141f;
+        --surface: #111a27;
+        --surface-strong: #162135;
+        --border: #1f2b3d;
+        --border-weak: #27354a;
+        --text-primary: #f4f6fc;
+        --text-secondary: #8c95a9;
+        --accent: #3f83f8;
+        --accent-muted: rgba(63, 131, 248, 0.25);
+        --radius: 14px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: radial-gradient(circle at top, #1a2233, var(--bg) 60%);
+        font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        color: var(--text-primary);
+        padding: 40px 24px 64px;
+      }
+
+      .container {
+        max-width: 100%;
+        margin: 0 auto;
+      }
+
+      h1 {
+        text-align: center;
+        font-size: 28px;
+        margin-bottom: 12px;
+      }
+
+      .subtitle {
+        text-align: center;
+        color: var(--text-secondary);
+        margin-bottom: 40px;
+        font-size: 14px;
+      }
+
+      .variants-wrapper {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 40px;
+        justify-content: center;
+        margin-bottom: 50px;
+      }
+
+      .variant-section {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .variant-label {
+        font-size: 16px;
+        font-weight: 600;
+        padding: 8px 20px;
+        border-radius: 12px;
+        background: var(--surface-strong);
+        border: 1px solid var(--border);
+        text-align: center;
+      }
+
+      .variant-label .tag {
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 6px;
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
+        margin-left: 8px;
+      }
+
+      .popup {
+        width: 380px;
+        background: var(--surface);
+        border-radius: 18px;
+        border: 1px solid var(--border);
+        box-shadow: 0 28px 48px rgba(6, 11, 21, 0.55);
+        overflow: hidden;
+      }
+
+      header {
+        padding: 22px 26px 18px;
+        border-bottom: 1px solid var(--border-weak);
+      }
+
+      header h2 {
+        margin: 0;
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+      }
+
+      main {
+        padding: 20px 26px 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .setting-item {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .setting-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .setting-row > label {
+        min-width: 78px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-secondary);
+      }
+
+      .setting-control {
+        flex: 1;
+      }
+
+      /* ===== 下拉选择框样式 ===== */
+      .select {
+        width: 100%;
+        min-height: 40px;
+        border-radius: var(--radius);
+        border: 1px solid var(--border-weak);
+        color: var(--text-primary);
+        padding: 0 14px;
+        font-size: 14px;
+        display: flex;
+        align-items: center;
+      }
+
+      /* ===== Segmented Control 样式 ===== */
+      .segmented {
+        display: flex;
+        border-radius: 12px;
+        padding: 3px;
+        position: relative;
+      }
+
+      .segmented input[type="radio"] {
+        display: none;
+      }
+
+      .segmented label {
+        flex: 1;
+        text-align: center;
+        padding: 8px 16px;
+        font-size: 14px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        position: relative;
+        z-index: 2;
+        opacity: 0.5;
+      }
+
+      .segmented input[type="radio"]:checked + label {
+        color: white;
+        font-weight: 600;
+        opacity: 1;
+      }
+
+      .segmented .slider {
+        position: absolute;
+        border-radius: 9px;
+        transition: transform 0.2s ease;
+        height: calc(100% - 6px);
+        width: calc(50% - 3px);
+        top: 3px;
+        left: 3px;
+        z-index: 1;
+      }
+
+      .segmented input[type="radio"]:nth-child(3):checked ~ .slider {
+        transform: translateX(100%);
+      }
+
+      /* ===== 方案1：深蓝灰系（推荐） ===== */
+      .scheme-1 .select {
+        background: #1e2d3f; /* 深蓝灰 */
+      }
+
+      .scheme-1 .segmented {
+        background: #1a2838; /* 深蓝灰底色 */
+      }
+
+      .scheme-1 .segmented .slider {
+        background: #2a4a6f; /* 深蓝灰滑块 */
+        box-shadow: 0 2px 6px rgba(42, 74, 111, 0.4);
+      }
+
+      /* ===== 方案2：暗青灰系 ===== */
+      .scheme-2 .select {
+        background: #1a3240; /* 暗青灰 */
+      }
+
+      .scheme-2 .segmented {
+        background: #172d38; /* 暗青灰底色 */
+      }
+
+      .scheme-2 .segmented .slider {
+        background: #2a4d5f; /* 暗青蓝滑块 */
+        box-shadow: 0 2px 6px rgba(42, 77, 95, 0.4);
+      }
+
+      /* ===== 方案3：半透明蓝系（推荐） ===== */
+      .scheme-3 .select {
+        background: rgba(63, 131, 248, 0.08); /* 8%透明蓝 */
+        border: 1px solid rgba(63, 131, 248, 0.15);
+      }
+
+      .scheme-3 .segmented {
+        background: rgba(255, 255, 255, 0.04); /* 4%透明白 */
+      }
+
+      .scheme-3 .segmented .slider {
+        background: rgba(63, 131, 248, 0.25); /* 25%透明蓝 */
+        border: 1px solid rgba(63, 131, 248, 0.3);
+      }
+
+      /* ===== 方案4：Slate灰系 ===== */
+      .scheme-4 .select {
+        background: #1e293b; /* slate-800 */
+      }
+
+      .scheme-4 .segmented {
+        background: #1e293b; /* slate-800 */
+      }
+
+      .scheme-4 .segmented .slider {
+        background: #334155; /* slate-700 */
+        box-shadow: 0 2px 6px rgba(51, 65, 85, 0.5);
+      }
+
+      .note {
+        text-align: center;
+        color: var(--text-secondary);
+        font-size: 13px;
+        max-width: 800px;
+        margin: 0 auto;
+        line-height: 1.8;
+      }
+
+      .note strong {
+        color: var(--text-primary);
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Popup 整体内敛配色方案</h1>
+      <p class="subtitle">所有选择器都使用更低调、更融入深色主题的配色</p>
+
+      <div class="variants-wrapper">
+        <!-- 方案1：深蓝灰系 -->
+        <div class="variant-section">
+          <div class="variant-label">
+            方案1 - 深蓝灰系
+            <span class="tag">推荐</span>
+          </div>
+          <div class="popup scheme-1">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>源语言</label>
+                  <div class="setting-control">
+                    <div class="select">英语</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>目标语言</label>
+                  <div class="setting-control">
+                    <div class="select">简体中文</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="segmented">
+                      <input type="radio" name="s1-type" id="s1-type-1" checked>
+                      <label for="s1-type-1">译文</label>
+                      <input type="radio" name="s1-type" id="s1-type-2">
+                      <label for="s1-type-2">双语</label>
+                      <div class="slider"></div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>翻译服务</label>
+                  <div class="setting-control">
+                    <div class="select">OpenAI API</div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 方案2：暗青灰系 -->
+        <div class="variant-section">
+          <div class="variant-label">
+            方案2 - 暗青灰系
+          </div>
+          <div class="popup scheme-2">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>源语言</label>
+                  <div class="setting-control">
+                    <div class="select">英语</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>目标语言</label>
+                  <div class="setting-control">
+                    <div class="select">简体中文</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="segmented">
+                      <input type="radio" name="s2-type" id="s2-type-1" checked>
+                      <label for="s2-type-1">译文</label>
+                      <input type="radio" name="s2-type" id="s2-type-2">
+                      <label for="s2-type-2">双语</label>
+                      <div class="slider"></div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>翻译服务</label>
+                  <div class="setting-control">
+                    <div class="select">OpenAI API</div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 方案3：半透明蓝系 -->
+        <div class="variant-section">
+          <div class="variant-label">
+            方案3 - 半透明蓝系
+            <span class="tag">推荐</span>
+          </div>
+          <div class="popup scheme-3">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>源语言</label>
+                  <div class="setting-control">
+                    <div class="select">英语</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>目标语言</label>
+                  <div class="setting-control">
+                    <div class="select">简体中文</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="segmented">
+                      <input type="radio" name="s3-type" id="s3-type-1" checked>
+                      <label for="s3-type-1">译文</label>
+                      <input type="radio" name="s3-type" id="s3-type-2">
+                      <label for="s3-type-2">双语</label>
+                      <div class="slider"></div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>翻译服务</label>
+                  <div class="setting-control">
+                    <div class="select">OpenAI API</div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 方案4：Slate灰系 -->
+        <div class="variant-section">
+          <div class="variant-label">
+            方案4 - Slate灰系
+          </div>
+          <div class="popup scheme-4">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>源语言</label>
+                  <div class="setting-control">
+                    <div class="select">英语</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>目标语言</label>
+                  <div class="setting-control">
+                    <div class="select">简体中文</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="segmented">
+                      <input type="radio" name="s4-type" id="s4-type-1" checked>
+                      <label for="s4-type-1">译文</label>
+                      <input type="radio" name="s4-type" id="s4-type-2">
+                      <label for="s4-type-2">双语</label>
+                      <div class="slider"></div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>翻译服务</label>
+                  <div class="setting-control">
+                    <div class="select">OpenAI API</div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+      </div>
+
+      <div class="note">
+        <p><strong>🎨 整体配色说明：</strong></p>
+        <p>
+          <strong>方案1（深蓝灰系）</strong> - 所有元素都用深蓝灰色，整体最和谐<br>
+          <strong>方案3（半透明蓝系）</strong> - 用透明度营造层次，保留蓝色特征又不刺眼<br>
+          <strong>方案2（暗青灰系）</strong> - 带点青色调，更沉稳专业<br>
+          <strong>方案4（Slate灰系）</strong> - 低饱和度灰色，最极简
+        </p>
+        <p style="margin-top: 20px; color: #6d7b94;">
+          💡 现在整个界面的配色都统一内敛了，不会有突兀感<br>
+          我最推荐：<strong>方案1（深蓝灰系）</strong> 或 <strong>方案3（半透明蓝系）</strong>
+        </p>
+      </div>
+    </div>
+
+    <script>
+      document.querySelectorAll('input[type="radio"]').forEach(input => {
+        input.addEventListener('change', function() {
+          console.log('选择:', this.nextElementSibling.textContent);
+        });
+      });
+    </script>
+  </body>
+</html>

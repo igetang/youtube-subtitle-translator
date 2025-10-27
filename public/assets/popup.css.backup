@@ -79,6 +79,13 @@ h1 {
     text-decoration: underline;
 }
 
+/* API密钥链接对齐 - 和输入框左对齐 */
+#api-key-panel > .setting-link {
+    display: block; /* 让链接独占一行 */
+    text-align: left; /* 确保左对齐 */
+    margin-left: 90px; /* label宽度(78px) + gap(12px) */
+}
+
 /* --- Custom Select Styles --- 
  * 使用自定义下拉菜单替代原生select元素
  * 原因：在Mac系统上，原生select元素会显示为系统风格的弹出窗口
@@ -204,10 +211,10 @@ h1 {
 }
 
 .service-card {
-    background: #101a2a;
+    background: #ffe5e5;
     border: 1px solid #27354a;
     border-radius: 16px;
-    padding: 16px;
+    padding: 16px 0; /* 只保留上下padding，去掉左右padding */
     display: flex;
     flex-direction: column;
     gap: 14px;
@@ -218,6 +225,7 @@ h1 {
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+    padding: 0 16px; /* 添加左右padding保持标题缩进 */
 }
 
 .service-card-title {
@@ -241,7 +249,7 @@ h1 {
 .service-card-body {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px; /* 统一间距为 8px */
 }
 
 .service-card .setting-item {
@@ -757,15 +765,15 @@ input[type="password"]:focus {
 /* 密码输入框和显示/隐藏按钮样式 */
 .password-container {
     position: relative;
-    width: 100%;
     display: flex;
     align-items: center; /* 垂直居中 */
     margin-bottom: 0;
+    flex: 1; /* 填满 .setting-control 的空间 */
 }
 
 .password-container input[type="password"],
 .password-container input[type="text"] {
-    flex: 1;
+    width: 100%; /* 改用 width 保持和其他输入框一致 */
     padding-right: 40px; /* 留出按钮空间 */
     margin-bottom: 0; /* 移除 input 的 margin，避免影响容器高度 */
 }

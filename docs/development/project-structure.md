@@ -1,189 +1,85 @@
 # YouTube字幕翻译助手 - 项目结构文档
 
-## 📁 项目结构概览
+> **最后更新**: 2025-10-25（v4.0.0）
+
+本文档概览当前仓库的目录布局，并说明各模块职责，便于新成员快速定位代码位置。
+
+## 📁 目录概览
 
 ```
-5.24/
-├── public/                    # 静态资源目录
-│   ├── manifest.json         # Chrome Extension配置文件
-│   ├── icons/               # 扩展图标
-│   ├── assets/              # 静态资源
-│   └── _locales/            # 国际化文件
-├── src/                      # 源代码目录
-│   ├── background/          # Service Worker (Background Script)
-│   ├── content-scripts/     # Content Scripts
-│   ├── popup/              # Popup页面
-│   ├── popup/              # Popup页面（主UI界面）
-│   ├── options/            # Options页面
-│   ├── shared/             # 共享代码模块
-│   │   ├── types/          # TypeScript类型定义
-│   │   ├── messages/       # 消息系统
-│   │   ├── storage/        # 存储管理
-│   │   ├── utils/          # 工具函数
-│   │   └── index.ts        # 统一导出
-│   └── styles/             # 全局样式
-├── docs/                   # 项目文档
-├── tests/                  # 测试文件
-└── dist/                   # 构建输出目录
+.
+├── public/                      # 静态资源与扩展清单
+│   ├── manifest.json            # Manifest V3 配置
+│   ├── icons/                   # 扩展图标
+│   └── _locales/                # 本地化文案（例如 zh_CN/messages.json）
+├── src/                         # 主要源码
+│   ├── background/              # Service Worker 与后台组件
+│   │   ├── components/          # 翻译器、缓存、限流、Player API 控制器
+│   │   ├── utils/               # 后台工具模块
+│   │   ├── handle-toggle-translate-v4.ts
+│   │   └── service-worker.ts
+│   ├── content-scripts/         # 内容脚本
+│   │   ├── content-script.ts    # 控制栏注入、消息桥接
+│   │   ├── main-world.ts        # 与 YouTube Player API 交互
+│   │   └── subtitle-overlay.ts  # 字幕覆盖层
+│   ├── popup/                   # Popup UI 与逻辑
+│   ├── options/                 # Options 页面（默认未启用）
+│   └── shared/                  # 共享模块
+│       ├── components/          # 共享 UI 控件/协调器
+│       ├── messages/            # MessageBus、消息类型与处理器
+│       ├── storage/             # RuntimeState、UserPreferences、缓存管理
+│       ├── translation/         # 翻译调度与策略
+│       ├── types/               # 类型定义
+│       └── utils/               # 工具函数（语言处理、VTT 等）
+├── docs/                        # 文档、归档与任务跟踪
+├── scripts/                     # 帮助脚本（构建修补、调试工具）
+├── debug/                       # 调试脚本与 Popup 预览
+├── picture/                     # 调试截图、演示素材
+├── dist/                        # `npm run build` 产物
+└── 根级文档（如 `MCP_SETUP.md`、`PROJECT_CONTEXT.md` 等）
 ```
 
-## 🎯 设计原则
+## 🌐 目录说明
 
-### 1. 按功能模块分离
-- 每个Chrome Extension组件有独立目录
-- 清晰的职责边界
-- 便于维护和扩展
+### `public/`
+- `manifest.json`：Chrome 扩展声明文件（Manifest V3）。
+- `icons/`：扩展在不同尺寸下的图标。
+- `_locales/`：本地化字符串，目前包含 `zh_CN/messages.json`。
 
-### 2. 共享代码集中管理
-- `src/shared/` 包含所有可复用代码
-- 统一的类型定义和工具函数
-- 避免代码重复
+### `src/background/`
+- `service-worker.ts`：入口文件，负责消息路由、翻译状态管理。
+- `handle-toggle-translate-v4.ts`：AbortController 会话驱动的翻译流程。
+- `components/`：翻译器、限流器、缓存管理、播放器控制等后台组件。
+- `utils/`：后台使用的工具函数。
 
-### 3. 符合Manifest V3最佳实践
-- Service Worker替代Background Page
-- 模块化设计
-- 安全的消息传递机制
+### `src/content-scripts/`
+- `content-script.ts`：注入控制栏、转发消息。
+- `main-world.ts`：在页面主环境中与 YouTube Player API 交互。
+- `subtitle-overlay.ts` 等：负责字幕覆盖与展示。
 
-## 📦 目录详细说明
+### `src/popup/` 与 `src/options/`
+- Popup：主设置界面（默认加载），包含页面检测、服务配置和 UI 交互。
+- Options：Chrome 扩展选项页（保留模板，按需启用）。
 
-### `/public/` - 静态资源
-```
-public/
-├── manifest.json          # Extension配置文件
-├── icons/                # 16px, 48px, 128px图标
-├── assets/               # 图片、样式等静态资源
-└── _locales/             # 国际化语言包
-    └── zh_CN/
-        └── messages.json
-```
+### `src/shared/`
+- `components/`：共享 UI 控件、协调器。
+- `messages/`：MessageBus 单例、消息类型与处理器。
+- `storage/`：RuntimeState、UserPreferences、翻译缓存管理。
+- `translation/`：翻译调度与策略实现。
+- `types/`、`utils/`：类型定义与通用工具（语言处理、VTT 解析等）。
 
-### `/src/background/` - Service Worker
-```
-background/
-├── background-modules.ts   # 主入口文件
-├── service-worker.ts      # Service Worker实现
-└── handlers/              # 消息处理器
-```
+### 其他目录
+- `scripts/`：构建后修补脚本或一次性任务脚本。
+- `debug/`：浏览器控制台脚本、Popup UI 预览文件。
+- `docs/`：架构 / 开发 / 指南文档，以及历史归档。
+- `picture/`：调试截图、演示素材。
+- `dist/`：生产构建输出。
 
-**职责:**
-- 监听Chrome Extension事件
-- 处理跨标签页消息传递
-- 管理扩展生命周期
+> `tests/` 目录目前尚未启用。如需添加自动化测试，可在根目录创建并在本文档补充说明。
 
-### `/src/content-scripts/` - Content Scripts
-```
-content-scripts/
-├── content-script.ts      # 主内容脚本
-├── main-world.ts         # Main World注入脚本
-└── youtube-injector.ts   # YouTube页面注入器
-```
+## 📌 开发提示
 
-**职责:**
-- 与YouTube页面交互
-- 注入UI控件
-- 监听页面事件
-
-### `/src/sidepanel/` - SidePanel界面【已废弃】
-```
-sidepanel/              # 已迁移到Popup方案
-├── [已废弃]            # 保留作为历史参考
-└── [归档至docs/archive/deprecated-sidepanel/]
-```
-
-**注意:**
-- SidePanel已废弃，功能迁移到Popup
-- 相关文档归档至 `docs/archive/deprecated-sidepanel/`
-
-### `/src/popup/` - Popup界面（主UI方案）
-```
-popup/
-├── popup.html            # Popup页面结构
-├── popup.ts              # Popup逻辑（含页面检测）
-└── components/           # Popup组件
-```
-
-**职责:**
-- 页面类型智能检测
-- YouTube页面：完整翻译功能界面
-- 非YouTube页面：使用说明和引导
-- 翻译设置和管理
-
-### `/src/shared/` - 共享代码
-```
-shared/
-├── types/                # TypeScript类型定义
-│   ├── core-types.ts     # 核心业务类型
-│   ├── storage-types.ts  # 存储相关类型
-│   ├── message-types.ts  # 消息通信类型
-│   └── types.ts          # 统一导出
-├── messages/             # 消息系统
-│   ├── message-bus.ts    # 消息总线
-│   ├── message-handlers.ts # 消息处理器
-│   └── messages.ts       # 统一导出
-├── storage/              # 存储管理
-│   └── storage.ts        # 存储管理器
-├── utils/                # 工具函数
-│   ├── languages.ts      # 语言相关工具
-│   └── language-processing.ts # 语言处理工具
-└── index.ts              # 统一导出入口
-```
-
-## 🔧 构建配置
-
-### Vite配置
-- 多入口构建配置
-- 静态资源拷贝
-- TypeScript支持
-- 别名配置：`@shared` 指向 `src/shared`
-
-### 导入规范
-```typescript
-// 推荐：使用别名导入共享模块
-import { MessageBus } from '@shared';
-import type { MessageType } from '@shared/types/types';
-
-// 避免：直接相对路径导入
-import { MessageBus } from '../../shared/messages/message-bus';
-```
-
-## 🚀 迁移完成状态
-
-### ✅ 已完成
-- [x] 目录结构重构
-- [x] 静态资源迁移到public/
-- [x] 代码模块重新组织
-- [x] 构建配置更新
-- [x] 别名配置添加
-
-### 🔄 待完成
-- [ ] 更新所有import路径
-- [ ] 测试构建流程
-- [ ] 更新开发文档
-- [ ] 验证功能完整性
-
-## 📝 开发建议
-
-1. **新功能开发**: 优先使用共享模块中的类型和工具
-2. **导入顺序**: 先导入类型，再导入实现
-3. **命名规范**: 遵循 `docs/naming-conventions.md`
-4. **模块职责**: 保持单一职责原则
-
-## 🔍 故障排除
-
-### 构建问题
-```bash
-# 检查路径引用
-npm run build
-
-# 检查类型定义
-npm run type-check
-```
-
-### 导入问题
-- 检查 `vite.config.ts` 中的alias配置
-- 确认文件路径正确性
-- 验证导出/导入语法
-
----
-
-本文档记录了项目结构重构的完整过程和新的组织方式，为后续开发提供参考。 
+1. **依赖管理**：通过 `nvm use` 切换到 `.nvmrc` 指定的 Node 版本（22.12.0），再运行 `npm install` / `npm ci`。
+2. **路径别名**：`src/shared` 已在 `tsconfig.json` / `vite.config.ts` 中配置别名（如 `@shared`），建议使用别名导入。
+3. **目录职责**：在对应目录内新增模块时，请遵循单一职责原则，并同步更新本结构文档。
+4. **历史代码**：旧的 SidePanel 代码已移到 `docs/archive/deprecated-sidepanel/`，仅作参考。

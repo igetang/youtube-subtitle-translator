@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Popup 配色调节器 - 实时调节</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d141f;
+        --surface: #111a27;
+        --surface-strong: #162135;
+        --border: #1f2b3d;
+        --border-weak: #27354a;
+        --text-primary: #f4f6fc;
+        --text-secondary: #8c95a9;
+        --accent: #3f83f8;
+        --accent-muted: rgba(63, 131, 248, 0.25);
+        --radius: 14px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: radial-gradient(circle at top, #1a2233, var(--bg) 60%);
+        font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        color: var(--text-primary);
+        padding: 40px 24px 64px;
+      }
+
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+
+      h1 {
+        text-align: center;
+        font-size: 28px;
+        margin-bottom: 12px;
+      }
+
+      .subtitle {
+        text-align: center;
+        color: var(--text-secondary);
+        margin-bottom: 30px;
+        font-size: 14px;
+      }
+
+      /* === 调节面板 === */
+      .tuner-panel {
+        background: var(--surface-strong);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 40px;
+        display: flex;
+        gap: 40px;
+        flex-wrap: wrap;
+      }
+
+      .tuner-section {
+        flex: 1;
+        min-width: 300px;
+      }
+
+      .tuner-section h3 {
+        margin: 0 0 16px 0;
+        font-size: 16px;
+        color: var(--text-primary);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .color-preview {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+      }
+
+      .slider-group {
+        margin-bottom: 16px;
+      }
+
+      .slider-label {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+        font-size: 13px;
+        color: var(--text-secondary);
+      }
+
+      .slider-value {
+        font-weight: 600;
+        color: var(--text-primary);
+        min-width: 80px;
+        text-align: right;
+      }
+
+      input[type="range"] {
+        width: 100%;
+        height: 6px;
+        border-radius: 3px;
+        background: var(--surface);
+        outline: none;
+        -webkit-appearance: none;
+      }
+
+      input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: var(--accent);
+        cursor: pointer;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+      }
+
+      input[type="range"]::-moz-range-thumb {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: var(--accent);
+        cursor: pointer;
+        border: none;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+      }
+
+      .color-code {
+        display: flex;
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      .color-code-item {
+        background: var(--surface);
+        padding: 8px 12px;
+        border-radius: 8px;
+        font-family: 'Courier New', monospace;
+        font-size: 13px;
+        flex: 1;
+        text-align: center;
+      }
+
+      .color-code-label {
+        font-size: 10px;
+        color: var(--text-secondary);
+        margin-bottom: 4px;
+      }
+
+      .color-code-value {
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+
+      /* === 预览区域 === */
+      .preview-wrapper {
+        display: flex;
+        justify-content: center;
+        gap: 40px;
+        margin-bottom: 40px;
+      }
+
+      .preview-section {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .preview-label {
+        font-size: 16px;
+        font-weight: 600;
+        padding: 8px 20px;
+        border-radius: 12px;
+        background: var(--surface-strong);
+        border: 1px solid var(--border);
+        text-align: center;
+      }
+
+      .popup {
+        width: 380px;
+        background: var(--surface);
+        border-radius: 18px;
+        border: 1px solid var(--border);
+        box-shadow: 0 28px 48px rgba(6, 11, 21, 0.55);
+        overflow: hidden;
+      }
+
+      header {
+        padding: 22px 26px 18px;
+        border-bottom: 1px solid var(--border-weak);
+      }
+
+      header h2 {
+        margin: 0;
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+      }
+
+      main {
+        padding: 20px 26px 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .setting-item {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .setting-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .setting-row > label {
+        min-width: 78px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-secondary);
+      }
+
+      .setting-control {
+        flex: 1;
+      }
+
+      /* === 下拉选择框样式 === */
+      .select {
+        width: 100%;
+        min-height: 40px;
+        border-radius: var(--radius);
+        border: 1px solid var(--border-weak);
+        color: var(--text-primary);
+        padding: 0 14px;
+        font-size: 14px;
+        display: flex;
+        align-items: center;
+        transition: background-color 0.2s ease;
+      }
+
+      /* === Segmented Control 样式 === */
+      .segmented {
+        display: flex;
+        border-radius: 12px;
+        padding: 3px;
+        position: relative;
+        transition: background-color 0.2s ease;
+      }
+
+      .segmented input[type="radio"] {
+        display: none;
+      }
+
+      .segmented label {
+        flex: 1;
+        text-align: center;
+        padding: 8px 16px;
+        font-size: 14px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        position: relative;
+        z-index: 2;
+        opacity: 0.5;
+      }
+
+      .segmented input[type="radio"]:checked + label {
+        color: white;
+        font-weight: 600;
+        opacity: 1;
+      }
+
+      .segmented .slider {
+        position: absolute;
+        border-radius: 9px;
+        transition: transform 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+        height: calc(100% - 6px);
+        width: calc(50% - 3px);
+        top: 3px;
+        left: 3px;
+        z-index: 1;
+      }
+
+      .segmented input[type="radio"]:nth-child(3):checked ~ .slider {
+        transform: translateX(100%);
+      }
+
+      .reset-button {
+        margin-top: 16px;
+        padding: 10px 20px;
+        background: var(--surface);
+        color: var(--text-primary);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 14px;
+        transition: all 0.2s;
+      }
+
+      .reset-button:hover {
+        background: var(--surface-strong);
+        border-color: var(--border-weak);
+      }
+
+      .preset-buttons {
+        display: flex;
+        gap: 8px;
+        margin-top: 16px;
+        flex-wrap: wrap;
+      }
+
+      .preset-button {
+        padding: 8px 16px;
+        background: var(--surface);
+        color: var(--text-primary);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 13px;
+        transition: all 0.2s;
+      }
+
+      .preset-button:hover {
+        background: var(--surface-strong);
+        border-color: var(--border-weak);
+      }
+
+      .note {
+        text-align: center;
+        color: var(--text-secondary);
+        font-size: 13px;
+        max-width: 900px;
+        margin: 0 auto;
+        line-height: 1.8;
+      }
+
+      .note strong {
+        color: var(--text-primary);
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>🎨 Popup 配色调节器</h1>
+      <p class="subtitle">实时调节颜色参数，找到最完美的配色方案</p>
+
+      <!-- 调节面板 -->
+      <div class="tuner-panel">
+        <!-- Select 背景色调节 -->
+        <div class="tuner-section">
+          <h3>
+            <div class="color-preview" id="select-preview"></div>
+            <span>Select 背景色</span>
+          </h3>
+          <div class="slider-group">
+            <div class="slider-label">
+              <span>色相 (H)</span>
+              <span class="slider-value" id="select-h-value">210°</span>
+            </div>
+            <input type="range" id="select-h" min="0" max="360" value="210" step="1">
+          </div>
+          <div class="slider-group">
+            <div class="slider-label">
+              <span>饱和度 (S)</span>
+              <span class="slider-value" id="select-s-value">45%</span>
+            </div>
+            <input type="range" id="select-s" min="0" max="100" value="45" step="1">
+          </div>
+          <div class="slider-group">
+            <div class="slider-label">
+              <span>亮度 (L)</span>
+              <span class="slider-value" id="select-l-value">25%</span>
+            </div>
+            <input type="range" id="select-l" min="0" max="100" value="25" step="1">
+          </div>
+          <div class="color-code">
+            <div class="color-code-item">
+              <div class="color-code-label">HEX</div>
+              <div class="color-code-value" id="select-hex">#24415f</div>
+            </div>
+            <div class="color-code-item">
+              <div class="color-code-label">RGB</div>
+              <div class="color-code-value" id="select-rgb">36, 65, 95</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Segmented 底色调节 -->
+        <div class="tuner-section">
+          <h3>
+            <div class="color-preview" id="segmented-bg-preview"></div>
+            <span>Segmented 底色</span>
+          </h3>
+          <div class="slider-group">
+            <div class="slider-label">
+              <span>色相 (H)</span>
+              <span class="slider-value" id="segmented-bg-h-value">210°</span>
+            </div>
+            <input type="range" id="segmented-bg-h" min="0" max="360" value="210" step="1">
+          </div>
+          <div class="slider-group">
+            <div class="slider-label">
+              <span>饱和度 (S)</span>
+              <span class="slider-value" id="segmented-bg-s-value">42%</span>
+            </div>
+            <input type="range" id="segmented-bg-s" min="0" max="100" value="42" step="1">
+          </div>
+          <div class="slider-group">
+            <div class="slider-label">
+              <span>亮度 (L)</span>
+              <span class="slider-value" id="segmented-bg-l-value">20%</span>
+            </div>
+            <input type="range" id="segmented-bg-l" min="0" max="100" value="20" step="1">
+          </div>
+          <div class="color-code">
+            <div class="color-code-item">
+              <div class="color-code-label">HEX</div>
+              <div class="color-code-value" id="segmented-bg-hex">#1f3548</div>
+            </div>
+            <div class="color-code-item">
+              <div class="color-code-label">RGB</div>
+              <div class="color-code-value" id="segmented-bg-rgb">31, 53, 72</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Segmented Slider 颜色调节 -->
+        <div class="tuner-section">
+          <h3>
+            <div class="color-preview" id="slider-preview"></div>
+            <span>Segmented Slider (选中)</span>
+          </h3>
+          <div class="slider-group">
+            <div class="slider-label">
+              <span>色相 (H)</span>
+              <span class="slider-value" id="slider-h-value">215°</span>
+            </div>
+            <input type="range" id="slider-h" min="0" max="360" value="215" step="1">
+          </div>
+          <div class="slider-group">
+            <div class="slider-label">
+              <span>饱和度 (S)</span>
+              <span class="slider-value" id="slider-s-value">46%</span>
+            </div>
+            <input type="range" id="slider-s" min="0" max="100" value="46" step="1">
+          </div>
+          <div class="slider-group">
+            <div class="slider-label">
+              <span>亮度 (L)</span>
+              <span class="slider-value" id="slider-l-value">43%</span>
+            </div>
+            <input type="range" id="slider-l" min="0" max="100" value="43" step="1">
+          </div>
+          <div class="slider-group">
+            <div class="slider-label">
+              <span>阴影透明度</span>
+              <span class="slider-value" id="slider-shadow-value">0.4</span>
+            </div>
+            <input type="range" id="slider-shadow" min="0" max="1" value="0.4" step="0.05">
+          </div>
+          <div class="color-code">
+            <div class="color-code-item">
+              <div class="color-code-label">HEX</div>
+              <div class="color-code-value" id="slider-hex">#3a5f9f</div>
+            </div>
+            <div class="color-code-item">
+              <div class="color-code-label">RGB</div>
+              <div class="color-code-value" id="slider-rgb">58, 95, 159</div>
+            </div>
+          </div>
+          <div class="preset-buttons">
+            <button class="preset-button" onclick="applyPreset('balanced')">平衡版 #3a5f9f</button>
+            <button class="preset-button" onclick="applyPreset('original')">原版 #3f83f8</button>
+            <button class="preset-button" onclick="applyPreset('dark')">内敛版 #2d4a73</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 实时预览 -->
+      <div class="preview-wrapper">
+        <div class="preview-section">
+          <div class="preview-label">实时预览</div>
+          <div class="popup">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>源语言</label>
+                  <div class="setting-control">
+                    <div class="select" id="preview-select-1">英语</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>目标语言</label>
+                  <div class="setting-control">
+                    <div class="select" id="preview-select-2">简体中文</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="segmented" id="preview-segmented">
+                      <input type="radio" name="type" id="type-1" checked>
+                      <label for="type-1">译文</label>
+                      <input type="radio" name="type" id="type-2">
+                      <label for="type-2">双语</label>
+                      <div class="slider" id="preview-slider"></div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>翻译服务</label>
+                  <div class="setting-control">
+                    <div class="select" id="preview-select-3">OpenAI API</div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+      </div>
+
+      <div class="note">
+        <p><strong>💡 使用说明：</strong></p>
+        <p>
+          拖动滑块实时调节颜色，找到你最满意的配色方案。<br>
+          调节完成后，将下方显示的 HEX 颜色代码告诉我，我会应用到实际的 popup.html 中。<br>
+          你也可以点击预设按钮快速切换到常用配色。
+        </p>
+      </div>
+    </div>
+
+    <script>
+      // HSL to RGB 转换
+      function hslToRgb(h, s, l) {
+        h = h / 360;
+        s = s / 100;
+        l = l / 100;
+        let r, g, b;
+
+        if (s === 0) {
+          r = g = b = l;
+        } else {
+          const hue2rgb = (p, q, t) => {
+            if (t < 0) t += 1;
+            if (t > 1) t -= 1;
+            if (t < 1/6) return p + (q - p) * 6 * t;
+            if (t < 1/2) return q;
+            if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+            return p;
+          };
+          const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+          const p = 2 * l - q;
+          r = hue2rgb(p, q, h + 1/3);
+          g = hue2rgb(p, q, h);
+          b = hue2rgb(p, q, h - 1/3);
+        }
+
+        return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+      }
+
+      // RGB to HEX 转换
+      function rgbToHex(r, g, b) {
+        return "#" + [r, g, b].map(x => {
+          const hex = x.toString(16);
+          return hex.length === 1 ? "0" + hex : hex;
+        }).join('');
+      }
+
+      // RGB to HSL 转换
+      function rgbToHsl(r, g, b) {
+        r /= 255;
+        g /= 255;
+        b /= 255;
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        let h, s, l = (max + min) / 2;
+
+        if (max === min) {
+          h = s = 0;
+        } else {
+          const d = max - min;
+          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+          switch (max) {
+            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+            case g: h = (b - r) / d + 2; break;
+            case b: h = (r - g) / d + 4; break;
+          }
+          h /= 6;
+        }
+
+        return [Math.round(h * 360), Math.round(s * 100), Math.round(l * 100)];
+      }
+
+      // HEX to RGB 转换
+      function hexToRgb(hex) {
+        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        return result ? [
+          parseInt(result[1], 16),
+          parseInt(result[2], 16),
+          parseInt(result[3], 16)
+        ] : null;
+      }
+
+      // 更新颜色显示
+      function updateColor(prefix) {
+        const h = document.getElementById(`${prefix}-h`).value;
+        const s = document.getElementById(`${prefix}-s`).value;
+        const l = document.getElementById(`${prefix}-l`).value;
+
+        document.getElementById(`${prefix}-h-value`).textContent = `${h}°`;
+        document.getElementById(`${prefix}-s-value`).textContent = `${s}%`;
+        document.getElementById(`${prefix}-l-value`).textContent = `${l}%`;
+
+        const rgb = hslToRgb(h, s, l);
+        const hex = rgbToHex(...rgb);
+
+        document.getElementById(`${prefix}-hex`).textContent = hex;
+        document.getElementById(`${prefix}-rgb`).textContent = rgb.join(', ');
+        document.getElementById(`${prefix}-preview`).style.backgroundColor = hex;
+
+        return hex;
+      }
+
+      // 更新预览
+      function updatePreview() {
+        const selectBg = updateColor('select');
+        const segmentedBg = updateColor('segmented-bg');
+        const sliderBg = updateColor('slider');
+        const shadowAlpha = document.getElementById('slider-shadow').value;
+
+        document.getElementById('slider-shadow-value').textContent = shadowAlpha;
+
+        // 应用到预览元素
+        document.querySelectorAll('.select').forEach(el => {
+          el.style.backgroundColor = selectBg;
+        });
+
+        const segmented = document.getElementById('preview-segmented');
+        segmented.style.backgroundColor = segmentedBg;
+
+        const slider = document.getElementById('preview-slider');
+        slider.style.backgroundColor = sliderBg;
+
+        // 提取slider的RGB用于阴影
+        const sliderRgb = hexToRgb(sliderBg);
+        slider.style.boxShadow = `0 2px 8px rgba(${sliderRgb.join(', ')}, ${shadowAlpha})`;
+      }
+
+      // 预设方案
+      function applyPreset(preset) {
+        const presets = {
+          balanced: { h: 215, s: 46, l: 43 },  // #3a5f9f
+          original: { h: 215, s: 93, l: 61 },  // #3f83f8
+          dark: { h: 215, s: 44, l: 31 }       // #2d4a73
+        };
+
+        const config = presets[preset];
+        document.getElementById('slider-h').value = config.h;
+        document.getElementById('slider-s').value = config.s;
+        document.getElementById('slider-l').value = config.l;
+        updatePreview();
+      }
+
+      // 绑定事件监听
+      ['select', 'segmented-bg', 'slider'].forEach(prefix => {
+        ['h', 's', 'l'].forEach(component => {
+          const el = document.getElementById(`${prefix}-${component}`);
+          if (el) {
+            el.addEventListener('input', updatePreview);
+          }
+        });
+      });
+
+      document.getElementById('slider-shadow').addEventListener('input', updatePreview);
+
+      // 初始化
+      updatePreview();
+    </script>
+  </body>
+</html>

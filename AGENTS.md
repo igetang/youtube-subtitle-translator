@@ -18,7 +18,7 @@
 - 共享逻辑集中在 `src/shared/`（消息总线、存储、UI 组件、翻译策略）；构建修补脚本位于 `scripts/`，架构文档存放 `docs/`，调试截图在 `picture/`。
 
 ## Build, Test, and Debug Commands
-- `npm install` 安装依赖；`package-lock.json` 更新后务必重新安装并对齐 `.nvmrc` Node 版本。
+- `npm install` 安装依赖；`package-lock.json` 更新后务必重新安装，Node 版本固定为 `22.12.0`（`.nvmrc`）。
 - `npm run dev` 并行监听主世界与内容脚本；使用 `npm run dev:main` 或 `npm run dev:content` 定向排查 postMessage 流量。
 - `npm run build` 生成生产包并触发 `npm run fix:worker`；可用 `npm run build:content|mainworld|worker` 缩短反馈周期。
 - `npx jest` 运行全部单测；指定路径（如 `npx jest src/content-scripts/test-content-script.ts`）聚焦回归，配合 `--watch` 快速验证。

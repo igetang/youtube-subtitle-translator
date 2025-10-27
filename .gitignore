@@ -8,4 +8,7 @@ dist/
 .DS_Store
 
 # Cursor specific files (optional)
-.cursor/ 
+.cursor/
+
+# Chrome debug profile (exclude home directory paths)
+~/.config/

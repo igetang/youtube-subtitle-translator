@@ -97,7 +97,7 @@ const API_TYPE_TO_SERVICE_TYPE: Record<LegacyTranslationApiType, TranslationServ
   [LegacyTranslationApiType.GOOGLE_FREE]: TranslationServiceType.GOOGLE_FREE,
   [LegacyTranslationApiType.MICROSOFT_FREE]: TranslationServiceType.MICROSOFT_FREE,
   [LegacyTranslationApiType.YOUDAO_FREE]: TranslationServiceType.DUMMY, // 有道免费暂时映射到DUMMY
-  [LegacyTranslationApiType.DEEPL]: TranslationServiceType.DUMMY, // DeepL暂时映射到DUMMY
+  [LegacyTranslationApiType.DEEPL]: TranslationServiceType.DEEPL,
   [LegacyTranslationApiType.OPENAI]: TranslationServiceType.OPENAI,
   [LegacyTranslationApiType.GEMINI]: TranslationServiceType.GEMINI,
   [LegacyTranslationApiType.DEEPSEEK]: TranslationServiceType.DEEPSEEK,
@@ -115,6 +115,7 @@ const SERVICE_TYPE_TO_API_TYPE: Record<TranslationServiceType, LegacyTranslation
   [TranslationServiceType.OPENAI]: LegacyTranslationApiType.OPENAI,
   [TranslationServiceType.GEMINI]: LegacyTranslationApiType.GEMINI,
   [TranslationServiceType.DEEPSEEK]: LegacyTranslationApiType.DEEPSEEK,
+  [TranslationServiceType.DEEPL]: LegacyTranslationApiType.DEEPL,
   [TranslationServiceType.QWEN]: LegacyTranslationApiType.QWEN,
   [TranslationServiceType.DUMMY]: LegacyTranslationApiType.DUMMY
 };

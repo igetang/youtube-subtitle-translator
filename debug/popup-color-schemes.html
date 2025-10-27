@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Service Panel 背景色方案对比</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d141f;
+        --surface: #111a27;
+        --surface-strong: #162135;
+        --border: #1f2b3d;
+        --border-weak: #27354a;
+        --text-primary: #f4f6fc;
+        --text-secondary: #8c95a9;
+        --accent: #3f83f8;
+        --accent-muted: rgba(63, 131, 248, 0.25);
+        --radius: 14px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: radial-gradient(circle at top, #1a2233, var(--bg) 60%);
+        font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        color: var(--text-primary);
+        padding: 40px 24px 64px;
+      }
+
+      .container {
+        max-width: 100%;
+        margin: 0 auto;
+      }
+
+      h1 {
+        text-align: center;
+        font-size: 28px;
+        margin-bottom: 12px;
+      }
+
+      .subtitle {
+        text-align: center;
+        color: var(--text-secondary);
+        margin-bottom: 40px;
+        font-size: 14px;
+      }
+
+      .schemes-wrapper {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 40px;
+        justify-content: center;
+        margin-bottom: 50px;
+      }
+
+      .scheme-section {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .scheme-label {
+        font-size: 16px;
+        font-weight: 600;
+        padding: 8px 20px;
+        border-radius: 12px;
+        background: var(--surface-strong);
+        border: 1px solid var(--border);
+      }
+
+      .scheme-label .color-hex {
+        font-family: 'Consolas', monospace;
+        font-size: 13px;
+        color: var(--accent);
+        margin-left: 8px;
+      }
+
+      .popup {
+        width: 380px;
+        background: var(--surface);
+        border-radius: 18px;
+        border: 1px solid var(--border);
+        box-shadow: 0 28px 48px rgba(6, 11, 21, 0.55);
+        overflow: hidden;
+      }
+
+      header {
+        padding: 22px 26px 18px;
+        border-bottom: 1px solid var(--border-weak);
+      }
+
+      header h2 {
+        margin: 0;
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+      }
+
+      main {
+        padding: 20px 26px 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .setting-item {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .setting-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .setting-row > label {
+        min-width: 78px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-secondary);
+      }
+
+      .setting-control {
+        flex: 1;
+      }
+
+      .select {
+        width: 100%;
+        min-height: 40px;
+        border-radius: var(--radius);
+        border: 1px solid var(--border-weak);
+        background: var(--surface-strong);
+        color: var(--text-primary);
+        padding: 0 14px;
+        font-size: 14px;
+        display: flex;
+        align-items: center;
+      }
+
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-radius: var(--radius);
+        border: 1px solid var(--border-weak);
+        background: var(--surface-strong);
+        padding: 12px 16px;
+        width: 100%;
+      }
+
+      .toggle-row span:first-child,
+      .toggle-row span:last-child {
+        font-size: 13px;
+        color: var(--text-secondary);
+      }
+
+      .toggle {
+        width: 52px;
+        height: 26px;
+        border-radius: 999px;
+        background: rgba(63, 131, 248, 0.35);
+        position: relative;
+      }
+
+      .toggle::after {
+        content: '';
+        position: absolute;
+        top: 3px;
+        right: 3px;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: white;
+      }
+
+      .service-card-body {
+        display: flex;
+        flex-direction: column;
+        padding: 0;
+      }
+
+      .service-card-body .setting-item {
+        margin-bottom: 8px;
+      }
+
+      .service-panel {
+        padding: 18px;
+        border-radius: 16px;
+        border: 1px solid var(--border-weak);
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .service-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .service-title {
+        font-size: 15px;
+        font-weight: 600;
+      }
+
+      .badge {
+        padding: 3px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        background: var(--accent-muted);
+        color: var(--accent);
+        font-weight: 500;
+      }
+
+      .password-row {
+        display: flex;
+        align-items: center;
+        gap: 0;
+        width: 100%;
+        border-radius: var(--radius);
+        border: 1px solid var(--border-weak);
+        background: var(--surface-strong);
+        overflow: hidden;
+      }
+
+      .password-row input {
+        flex: 1;
+        padding: 0 14px;
+        height: 40px;
+        border: none;
+        background: transparent;
+        color: var(--text-primary);
+        font-size: 14px;
+        font-family: inherit;
+      }
+
+      .password-row input::placeholder {
+        color: #6d7b94;
+      }
+
+      .password-row button {
+        width: 44px;
+        height: 40px;
+        background: transparent;
+        border: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+      }
+
+      .password-row svg {
+        width: 18px;
+        height: 18px;
+        fill: var(--text-primary);
+        opacity: 0.7;
+      }
+
+      .link {
+        color: var(--accent);
+        font-size: 13px;
+        text-decoration: none;
+        display: block;
+        margin-top: 6px;
+      }
+
+      .link:hover {
+        text-decoration: underline;
+      }
+
+      .action-block {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 4px;
+      }
+
+      .action-block button {
+        height: 42px;
+        border-radius: 20px;
+        border: none;
+        background: var(--accent);
+        color: white;
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+        cursor: pointer;
+        transition: transform 0.18s ease, box-shadow 0.18s ease;
+      }
+
+      .action-block button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 12px 26px rgba(63, 131, 248, 0.35);
+      }
+
+      .hint {
+        margin: 0;
+        font-size: 12px;
+        color: var(--text-secondary);
+        line-height: 1.5;
+      }
+
+      /* 不同方案的背景色 - 差异更明显 */
+      .scheme-current .service-panel {
+        background: #0f1826; /* 当前方案 */
+      }
+
+      .scheme-1 .service-panel {
+        background: #070c14; /* 非常深，接近纯黑 */
+      }
+
+      .scheme-2 .service-panel {
+        background: #1a2636; /* 偏亮，接近 surface-strong */
+      }
+
+      .scheme-3 .service-panel {
+        background: #0b1219; /* 深冷色调 */
+      }
+
+      .scheme-4 .service-panel {
+        background: #131f2e; /* 中等蓝灰 */
+      }
+
+      .scheme-5 .service-panel {
+        background: #162135; /* 使用 surface-strong */
+      }
+
+      .recommended {
+        position: relative;
+      }
+
+      .recommended .scheme-label::before {
+        content: '⭐';
+        margin-right: 6px;
+      }
+
+      .note {
+        text-align: center;
+        color: var(--text-secondary);
+        font-size: 13px;
+        max-width: 800px;
+        margin: 0 auto;
+        line-height: 1.8;
+      }
+
+      .note strong {
+        color: var(--text-primary);
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Service Panel 背景色方案对比</h1>
+      <p class="subtitle">完整 Popup 界面展示 · 选择最适合的 service-panel 背景色</p>
+
+      <div class="schemes-wrapper">
+        <!-- 当前方案 -->
+        <div class="scheme-section">
+          <div class="scheme-label">
+            当前方案
+            <span class="color-hex">#0f1826</span>
+          </div>
+          <div class="popup scheme-current">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>源语言</label>
+                  <div class="setting-control">
+                    <div class="select">英语</div>
+                  </div>
+                </div>
+              </section>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>目标语言</label>
+                  <div class="setting-control">
+                    <div class="select">简体中文</div>
+                  </div>
+                </div>
+              </section>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="toggle-row">
+                      <span>仅目标语言</span>
+                      <span class="toggle"></span>
+                      <span>双语</span>
+                    </div>
+                  </div>
+                </div>
+              </section>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>翻译服务</label>
+                  <div class="setting-control">
+                    <div class="select">OpenAI API</div>
+                  </div>
+                </div>
+                <div class="service-card-body">
+                  <div class="service-panel">
+                    <div class="service-header">
+                      <span class="service-title">OpenAI API</span>
+                      <span class="badge">自有密钥</span>
+                    </div>
+                    <div class="setting-item">
+                      <div class="setting-row">
+                        <label>API 密钥</label>
+                        <div class="setting-control">
+                          <div class="password-row">
+                            <input type="password" placeholder="输入 API Key…" />
+                            <button type="button">
+                              <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <a class="link" href="#">如何获取 OpenAI API 密钥？</a>
+                    </div>
+                    <div class="setting-item">
+                      <div class="setting-row">
+                        <label>模型</label>
+                        <div class="setting-control">
+                          <div class="select">gpt-4o-mini（推荐）</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="action-block">
+                      <button>测试连接</button>
+                      <p class="hint">点击测试将验证当前翻译服务的连接状态。</p>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 方案1 -->
+        <div class="scheme-section recommended">
+          <div class="scheme-label">
+            方案 1 - 极深黑
+            <span class="color-hex">#070c14</span>
+          </div>
+          <div class="popup scheme-1">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>源语言</label>
+                  <div class="setting-control">
+                    <div class="select">英语</div>
+                  </div>
+                </div>
+              </section>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>目标语言</label>
+                  <div class="setting-control">
+                    <div class="select">简体中文</div>
+                  </div>
+                </div>
+              </section>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="toggle-row">
+                      <span>仅目标语言</span>
+                      <span class="toggle"></span>
+                      <span>双语</span>
+                    </div>
+                  </div>
+                </div>
+              </section>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>翻译服务</label>
+                  <div class="setting-control">
+                    <div class="select">OpenAI API</div>
+                  </div>
+                </div>
+                <div class="service-card-body">
+                  <div class="service-panel">
+                    <div class="service-header">
+                      <span class="service-title">OpenAI API</span>
+                      <span class="badge">自有密钥</span>
+                    </div>
+                    <div class="setting-item">
+                      <div class="setting-row">
+                        <label>API 密钥</label>
+                        <div class="setting-control">
+                          <div class="password-row">
+                            <input type="password" placeholder="输入 API Key…" />
+                            <button type="button">
+                              <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <a class="link" href="#">如何获取 OpenAI API 密钥？</a>
+                    </div>
+                    <div class="setting-item">
+                      <div class="setting-row">
+                        <label>模型</label>
+                        <div class="setting-control">
+                          <div class="select">gpt-4o-mini（推荐）</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="action-block">
+                      <button>测试连接</button>
+                      <p class="hint">点击测试将验证当前翻译服务的连接状态。</p>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 方案2 -->
+        <div class="scheme-section">
+          <div class="scheme-label">
+            方案 2 - 偏亮
+            <span class="color-hex">#1a2636</span>
+          </div>
+          <div class="popup scheme-2">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>源语言</label>
+                  <div class="setting-control">
+                    <div class="select">英语</div>
+                  </div>
+                </div>
+              </section>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>目标语言</label>
+                  <div class="setting-control">
+                    <div class="select">简体中文</div>
+                  </div>
+                </div>
+              </section>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="toggle-row">
+                      <span>仅目标语言</span>
+                      <span class="toggle"></span>
+                      <span>双语</span>
+                    </div>
+                  </div>
+                </div>
+              </section>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>翻译服务</label>
+                  <div class="setting-control">
+                    <div class="select">OpenAI API</div>
+                  </div>
+                </div>
+                <div class="service-card-body">
+                  <div class="service-panel">
+                    <div class="service-header">
+                      <span class="service-title">OpenAI API</span>
+                      <span class="badge">自有密钥</span>
+                    </div>
+                    <div class="setting-item">
+                      <div class="setting-row">
+                        <label>API 密钥</label>
+                        <div class="setting-control">
+                          <div class="password-row">
+                            <input type="password" placeholder="输入 API Key…" />
+                            <button type="button">
+                              <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <a class="link" href="#">如何获取 OpenAI API 密钥？</a>
+                    </div>
+                    <div class="setting-item">
+                      <div class="setting-row">
+                        <label>模型</label>
+                        <div class="setting-control">
+                          <div class="select">gpt-4o-mini（推荐）</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="action-block">
+                      <button>测试连接</button>
+                      <p class="hint">点击测试将验证当前翻译服务的连接状态。</p>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 方案3 -->
+        <div class="scheme-section recommended">
+          <div class="scheme-label">
+            方案 3 - 深冷色
+            <span class="color-hex">#0b1219</span>
+          </div>
+          <div class="popup scheme-3">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>源语言</label>
+                  <div class="setting-control">
+                    <div class="select">英语</div>
+                  </div>
+                </div>
+              </section>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>目标语言</label>
+                  <div class="setting-control">
+                    <div class="select">简体中文</div>
+                  </div>
+                </div>
+              </section>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="toggle-row">
+                      <span>仅目标语言</span>
+                      <span class="toggle"></span>
+                      <span>双语</span>
+                    </div>
+                  </div>
+                </div>
+              </section>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>翻译服务</label>
+                  <div class="setting-control">
+                    <div class="select">OpenAI API</div>
+                  </div>
+                </div>
+                <div class="service-card-body">
+                  <div class="service-panel">
+                    <div class="service-header">
+                      <span class="service-title">OpenAI API</span>
+                      <span class="badge">自有密钥</span>
+                    </div>
+                    <div class="setting-item">
+                      <div class="setting-row">
+                        <label>API 密钥</label>
+                        <div class="setting-control">
+                          <div class="password-row">
+                            <input type="password" placeholder="输入 API Key…" />
+                            <button type="button">
+                              <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <a class="link" href="#">如何获取 OpenAI API 密钥？</a>
+                    </div>
+                    <div class="setting-item">
+                      <div class="setting-row">
+                        <label>模型</label>
+                        <div class="setting-control">
+                          <div class="select">gpt-4o-mini（推荐）</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="action-block">
+                      <button>测试连接</button>
+                      <p class="hint">点击测试将验证当前翻译服务的连接状态。</p>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 方案4 -->
+        <div class="scheme-section">
+          <div class="scheme-label">
+            方案 4 - 中蓝灰
+            <span class="color-hex">#131f2e</span>
+          </div>
+          <div class="popup scheme-4">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>源语言</label>
+                  <div class="setting-control">
+                    <div class="select">英语</div>
+                  </div>
+                </div>
+              </section>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>目标语言</label>
+                  <div class="setting-control">
+                    <div class="select">简体中文</div>
+                  </div>
+                </div>
+              </section>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="toggle-row">
+                      <span>仅目标语言</span>
+                      <span class="toggle"></span>
+                      <span>双语</span>
+                    </div>
+                  </div>
+                </div>
+              </section>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>翻译服务</label>
+                  <div class="setting-control">
+                    <div class="select">OpenAI API</div>
+                  </div>
+                </div>
+                <div class="service-card-body">
+                  <div class="service-panel">
+                    <div class="service-header">
+                      <span class="service-title">OpenAI API</span>
+                      <span class="badge">自有密钥</span>
+                    </div>
+                    <div class="setting-item">
+                      <div class="setting-row">
+                        <label>API 密钥</label>
+                        <div class="setting-control">
+                          <div class="password-row">
+                            <input type="password" placeholder="输入 API Key…" />
+                            <button type="button">
+                              <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <a class="link" href="#">如何获取 OpenAI API 密钥？</a>
+                    </div>
+                    <div class="setting-item">
+                      <div class="setting-row">
+                        <label>模型</label>
+                        <div class="setting-control">
+                          <div class="select">gpt-4o-mini（推荐）</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="action-block">
+                      <button>测试连接</button>
+                      <p class="hint">点击测试将验证当前翻译服务的连接状态。</p>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 方案5 -->
+        <div class="scheme-section">
+          <div class="scheme-label">
+            方案 5 - 强对比
+            <span class="color-hex">#162135</span>
+          </div>
+          <div class="popup scheme-5">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>源语言</label>
+                  <div class="setting-control">
+                    <div class="select">英语</div>
+                  </div>
+                </div>
+              </section>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>目标语言</label>
+                  <div class="setting-control">
+                    <div class="select">简体中文</div>
+                  </div>
+                </div>
+              </section>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="toggle-row">
+                      <span>仅目标语言</span>
+                      <span class="toggle"></span>
+                      <span>双语</span>
+                    </div>
+                  </div>
+                </div>
+              </section>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>翻译服务</label>
+                  <div class="setting-control">
+                    <div class="select">OpenAI API</div>
+                  </div>
+                </div>
+                <div class="service-card-body">
+                  <div class="service-panel">
+                    <div class="service-header">
+                      <span class="service-title">OpenAI API</span>
+                      <span class="badge">自有密钥</span>
+                    </div>
+                    <div class="setting-item">
+                      <div class="setting-row">
+                        <label>API 密钥</label>
+                        <div class="setting-control">
+                          <div class="password-row">
+                            <input type="password" placeholder="输入 API Key…" />
+                            <button type="button">
+                              <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <a class="link" href="#">如何获取 OpenAI API 密钥？</a>
+                    </div>
+                    <div class="setting-item">
+                      <div class="setting-row">
+                        <label>模型</label>
+                        <div class="setting-control">
+                          <div class="select">gpt-4o-mini（推荐）</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="action-block">
+                      <button>测试连接</button>
+                      <p class="hint">点击测试将验证当前翻译服务的连接状态。</p>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+      </div>
+
+      <div class="note">
+        <p><strong>💡 我的推荐：</strong></p>
+        <p>
+          <strong>方案 1（#070c14）</strong> - 极深黑色，提供强烈的层次对比和卡片浮起感<br>
+          <strong>方案 3（#0b1219）</strong> - 深冷色调，既有对比又不会太亮，视觉平衡最好
+        </p>
+        <p style="margin-top: 20px; color: #6d7b94;">
+          方案2太亮可能喧宾夺主，方案4/5对比不够明显
+        </p>
+      </div>
+    </div>
+  </body>
+</html>

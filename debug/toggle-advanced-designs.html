@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>字幕类型选择器 - 创新设计方案</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d141f;
+        --surface: #111a27;
+        --surface-strong: #162135;
+        --border: #1f2b3d;
+        --border-weak: #27354a;
+        --text-primary: #f4f6fc;
+        --text-secondary: #8c95a9;
+        --accent: #3f83f8;
+        --accent-muted: rgba(63, 131, 248, 0.25);
+        --radius: 14px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: radial-gradient(circle at top, #1a2233, var(--bg) 60%);
+        font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        color: var(--text-primary);
+        padding: 40px 24px 64px;
+      }
+
+      .container {
+        max-width: 100%;
+        margin: 0 auto;
+      }
+
+      h1 {
+        text-align: center;
+        font-size: 28px;
+        margin-bottom: 12px;
+      }
+
+      .subtitle {
+        text-align: center;
+        color: var(--text-secondary);
+        margin-bottom: 40px;
+        font-size: 14px;
+      }
+
+      .options-wrapper {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 40px;
+        justify-content: center;
+        margin-bottom: 50px;
+      }
+
+      .option-section {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .option-label {
+        font-size: 16px;
+        font-weight: 600;
+        padding: 8px 20px;
+        border-radius: 12px;
+        background: var(--surface-strong);
+        border: 1px solid var(--border);
+        text-align: center;
+      }
+
+      .option-label .tag {
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 6px;
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
+        margin-left: 8px;
+      }
+
+      .option-label .tag.fire {
+        background: rgba(251, 146, 60, 0.2);
+        color: #fb923c;
+      }
+
+      .popup {
+        width: 380px;
+        background: var(--surface);
+        border-radius: 18px;
+        border: 1px solid var(--border);
+        box-shadow: 0 28px 48px rgba(6, 11, 21, 0.55);
+        overflow: hidden;
+      }
+
+      header {
+        padding: 22px 26px 18px;
+        border-bottom: 1px solid var(--border-weak);
+      }
+
+      header h2 {
+        margin: 0;
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+      }
+
+      main {
+        padding: 20px 26px 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .setting-item {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .setting-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .setting-row > label {
+        min-width: 78px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-secondary);
+      }
+
+      .setting-control {
+        flex: 1;
+      }
+
+      /* ===== 方案1：带图标的Segmented Control ===== */
+      .icon-segmented {
+        display: flex;
+        background: var(--surface-strong);
+        border-radius: 12px;
+        padding: 3px;
+        position: relative;
+      }
+
+      .icon-segmented input[type="radio"] {
+        display: none;
+      }
+
+      .icon-segmented label {
+        flex: 1;
+        text-align: center;
+        padding: 8px 12px;
+        font-size: 14px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: color 0.25s ease;
+        position: relative;
+        z-index: 2;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+      }
+
+      .icon-segmented label::before {
+        content: '';
+        font-size: 16px;
+      }
+
+      .icon-segmented label[for$="-1"]::before {
+        content: '📄';
+      }
+
+      .icon-segmented label[for$="-2"]::before {
+        content: '📚';
+      }
+
+      .icon-segmented input[type="radio"]:checked + label {
+        color: var(--text-primary);
+        font-weight: 500;
+      }
+
+      .icon-segmented .slider {
+        position: absolute;
+        background: var(--surface);
+        border-radius: 9px;
+        transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        height: calc(100% - 6px);
+        width: calc(50% - 3px);
+        top: 3px;
+        left: 3px;
+        z-index: 1;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      }
+
+      .icon-segmented input[type="radio"]:nth-child(3):checked ~ .slider {
+        transform: translateX(100%);
+      }
+
+      /* ===== 方案2：悬浮卡片 ===== */
+      .floating-cards {
+        display: flex;
+        gap: 8px;
+      }
+
+      .floating-cards input[type="radio"] {
+        display: none;
+      }
+
+      .floating-cards label {
+        flex: 1;
+        text-align: center;
+        padding: 10px 16px;
+        font-size: 14px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        border-radius: 12px;
+        background: var(--surface-strong);
+        border: 1px solid transparent;
+      }
+
+      .floating-cards input[type="radio"]:checked + label {
+        color: var(--text-primary);
+        background: var(--accent);
+        font-weight: 500;
+        transform: translateY(-2px);
+        box-shadow: 0 8px 16px rgba(63, 131, 248, 0.4);
+      }
+
+      /* ===== 方案3：渐变光晕 ===== */
+      .gradient-glow {
+        display: flex;
+        background: var(--surface-strong);
+        border-radius: 12px;
+        padding: 3px;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .gradient-glow::before {
+        content: '';
+        position: absolute;
+        width: calc(50% - 6px);
+        height: calc(100% - 6px);
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 9px;
+        top: 3px;
+        left: 3px;
+        opacity: 0;
+        transition: all 0.3s ease;
+        filter: blur(8px);
+      }
+
+      .gradient-glow input[type="radio"] {
+        display: none;
+      }
+
+      .gradient-glow label {
+        flex: 1;
+        text-align: center;
+        padding: 8px 16px;
+        font-size: 14px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.25s ease;
+        position: relative;
+        z-index: 2;
+        border-radius: 9px;
+      }
+
+      .gradient-glow input[type="radio"]:checked + label {
+        color: white;
+        font-weight: 500;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.5);
+      }
+
+      /* ===== 方案4：Glassmorphism 毛玻璃 ===== */
+      .glass-morph {
+        display: flex;
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(10px);
+        border-radius: 12px;
+        padding: 3px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        position: relative;
+      }
+
+      .glass-morph input[type="radio"] {
+        display: none;
+      }
+
+      .glass-morph label {
+        flex: 1;
+        text-align: center;
+        padding: 8px 16px;
+        font-size: 14px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.25s ease;
+        position: relative;
+        z-index: 2;
+      }
+
+      .glass-morph input[type="radio"]:checked + label {
+        color: var(--text-primary);
+        font-weight: 500;
+      }
+
+      .glass-morph .glass-slider {
+        position: absolute;
+        background: rgba(255, 255, 255, 0.15);
+        backdrop-filter: blur(20px);
+        border-radius: 9px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        height: calc(100% - 6px);
+        width: calc(50% - 3px);
+        top: 3px;
+        left: 3px;
+        z-index: 1;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      }
+
+      .glass-morph input[type="radio"]:nth-child(3):checked ~ .glass-slider {
+        transform: translateX(100%);
+      }
+
+      /* ===== 方案5：Chip标签式 ===== */
+      .chip-style {
+        display: flex;
+        gap: 8px;
+      }
+
+      .chip-style input[type="radio"] {
+        display: none;
+      }
+
+      .chip-style label {
+        padding: 8px 16px;
+        font-size: 13px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        border-radius: 20px;
+        background: transparent;
+        border: 1.5px solid var(--border-weak);
+      }
+
+      .chip-style input[type="radio"]:checked + label {
+        color: var(--accent);
+        background: var(--accent-muted);
+        border-color: var(--accent);
+        font-weight: 500;
+      }
+
+      /* ===== 方案6：大卡片选择 ===== */
+      .card-radio {
+        display: flex;
+        gap: 12px;
+      }
+
+      .card-radio input[type="radio"] {
+        display: none;
+      }
+
+      .card-radio label {
+        flex: 1;
+        padding: 16px;
+        font-size: 14px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.25s ease;
+        border-radius: 12px;
+        background: var(--surface-strong);
+        border: 2px solid transparent;
+        text-align: center;
+        position: relative;
+      }
+
+      .card-radio label::before {
+        content: '';
+        display: block;
+        width: 18px;
+        height: 18px;
+        border: 2px solid var(--border-weak);
+        border-radius: 50%;
+        margin: 0 auto 8px;
+        transition: all 0.2s ease;
+      }
+
+      .card-radio input[type="radio"]:checked + label {
+        color: var(--text-primary);
+        border-color: var(--accent);
+        background: rgba(63, 131, 248, 0.08);
+        font-weight: 500;
+      }
+
+      .card-radio input[type="radio"]:checked + label::before {
+        border-color: var(--accent);
+        background: var(--accent);
+        box-shadow: inset 0 0 0 3px var(--surface-strong);
+      }
+
+      /* ===== 方案7：极简线条 ===== */
+      .minimal-line {
+        display: flex;
+        gap: 0;
+        border: 1px solid var(--border-weak);
+        border-radius: 12px;
+        overflow: hidden;
+      }
+
+      .minimal-line input[type="radio"] {
+        display: none;
+      }
+
+      .minimal-line label {
+        flex: 1;
+        text-align: center;
+        padding: 10px 16px;
+        font-size: 14px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        border-right: 1px solid var(--border-weak);
+        background: transparent;
+        position: relative;
+      }
+
+      .minimal-line label:last-child {
+        border-right: none;
+      }
+
+      .minimal-line label::after {
+        content: '';
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        width: 100%;
+        height: 3px;
+        background: var(--accent);
+        transform: scaleX(0);
+        transition: transform 0.2s ease;
+      }
+
+      .minimal-line input[type="radio"]:checked + label {
+        color: var(--accent);
+        font-weight: 500;
+      }
+
+      .minimal-line input[type="radio"]:checked + label::after {
+        transform: scaleX(1);
+      }
+
+      .note {
+        text-align: center;
+        color: var(--text-secondary);
+        font-size: 13px;
+        max-width: 800px;
+        margin: 0 auto;
+        line-height: 1.8;
+      }
+
+      .note strong {
+        color: var(--text-primary);
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>字幕类型选择器 - 创新设计</h1>
+      <p class="subtitle">融合2024最新设计趋势 · 7种高级方案</p>
+
+      <div class="options-wrapper">
+        <!-- 方案1：带图标 -->
+        <div class="option-section">
+          <div class="option-label">
+            方案1 - 带图标
+            <span class="tag">直观</span>
+          </div>
+          <div class="popup">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="icon-segmented">
+                      <input type="radio" name="icon-1" id="icon-1-1" checked>
+                      <label for="icon-1-1">译文</label>
+                      <input type="radio" name="icon-1" id="icon-1-2">
+                      <label for="icon-1-2">双语</label>
+                      <div class="slider"></div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 方案2：悬浮卡片 -->
+        <div class="option-section">
+          <div class="option-label">
+            方案2 - 悬浮卡片
+            <span class="tag fire">动感</span>
+          </div>
+          <div class="popup">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="floating-cards">
+                      <input type="radio" name="float-1" id="float-1-1" checked>
+                      <label for="float-1-1">译文</label>
+                      <input type="radio" name="float-1" id="float-1-2">
+                      <label for="float-1-2">双语</label>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 方案3：渐变光晕 -->
+        <div class="option-section">
+          <div class="option-label">
+            方案3 - 渐变光晕
+            <span class="tag fire">炫酷</span>
+          </div>
+          <div class="popup">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="gradient-glow">
+                      <input type="radio" name="grad-1" id="grad-1-1" checked>
+                      <label for="grad-1-1">译文</label>
+                      <input type="radio" name="grad-1" id="grad-1-2">
+                      <label for="grad-1-2">双语</label>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 方案4：Glassmorphism -->
+        <div class="option-section">
+          <div class="option-label">
+            方案4 - 毛玻璃
+            <span class="tag">2024趋势</span>
+          </div>
+          <div class="popup">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="glass-morph">
+                      <input type="radio" name="glass-1" id="glass-1-1" checked>
+                      <label for="glass-1-1">译文</label>
+                      <input type="radio" name="glass-1" id="glass-1-2">
+                      <label for="glass-1-2">双语</label>
+                      <div class="glass-slider"></div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 方案5：Chip标签 -->
+        <div class="option-section">
+          <div class="option-label">
+            方案5 - Chip标签
+            <span class="tag">简洁</span>
+          </div>
+          <div class="popup">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="chip-style">
+                      <input type="radio" name="chip-1" id="chip-1-1" checked>
+                      <label for="chip-1-1">译文</label>
+                      <input type="radio" name="chip-1" id="chip-1-2">
+                      <label for="chip-1-2">双语</label>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 方案6：大卡片 -->
+        <div class="option-section">
+          <div class="option-label">
+            方案6 - 大卡片
+            <span class="tag">清晰</span>
+          </div>
+          <div class="popup">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="card-radio">
+                      <input type="radio" name="card-1" id="card-1-1" checked>
+                      <label for="card-1-1">译文</label>
+                      <input type="radio" name="card-1" id="card-1-2">
+                      <label for="card-1-2">双语</label>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+
+        <!-- 方案7：极简线条 -->
+        <div class="option-section">
+          <div class="option-label">
+            方案7 - 极简线条
+            <span class="tag">极简</span>
+          </div>
+          <div class="popup">
+            <header><h2>翻译设置</h2></header>
+            <main>
+              <section class="setting-item">
+                <div class="setting-row">
+                  <label>字幕类型</label>
+                  <div class="setting-control">
+                    <div class="minimal-line">
+                      <input type="radio" name="line-1" id="line-1-1" checked>
+                      <label for="line-1-1">译文</label>
+                      <input type="radio" name="line-1" id="line-1-2">
+                      <label for="line-1-2">双语</label>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+      </div>
+
+      <div class="note">
+        <p><strong>🎨 设计亮点：</strong></p>
+        <p>
+          <strong>方案1（带图标）</strong> - 📄译文 / 📚双语，视觉更直观<br>
+          <strong>方案2（悬浮卡片）</strong> - 选中时上浮+阴影，动感十足<br>
+          <strong>方案3（渐变光晕）</strong> - 紫色渐变背景，炫酷现代<br>
+          <strong>方案4（毛玻璃）</strong> - Glassmorphism 2024热门趋势
+        </p>
+        <p style="margin-top: 20px; color: #6d7b94;">
+          所有方案都有流畅动画，点击试试！<br>
+          我个人最推荐：<strong>方案1（带图标）</strong> 或 <strong>方案2（悬浮卡片）</strong>
+        </p>
+      </div>
+    </div>
+
+    <script>
+      document.querySelectorAll('input[type="radio"]').forEach(input => {
+        input.addEventListener('change', function() {
+          console.log('选择:', this.nextElementSibling.textContent);
+        });
+      });
+    </script>
+  </body>
+</html>

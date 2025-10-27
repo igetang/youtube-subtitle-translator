@@ -1,16 +1,16 @@
 # VTC 5.24 架构设计文档 - Part 3 (存储与缓存架构)
 
-> **文档更新**: 2025-07-16  
-> **版本**: v5.24.7+ (**当前统一版本**)  
-> **当前方案**: ✅ **Popup直接调用** (已实施完成)
+> **文档更新**: 2025-10-25  
+> **版本**: v5.24.10（Service Worker Orchestration + AbortController V4）  
+> **当前方案**: ✅ **Popup UI + Service Worker 调度（HandleToggleTranslate V4）**
 
 ## 🚨 **方案变更说明**
 
-### **✅ 当前采用方案: Popup直接调用架构**
-- **存储架构**: 完全适配Popup架构，优化页面检测和界面切换
-- **缓存策略**: 支持双重界面的数据缓存需求
-- **消息通信**: 无需消息中转，直接调用Chrome API
-- **状态管理**: 通过`chrome.storage.session`共享内存自动同步
+### **✅ 当前采用方案: Popup + Service Worker 调度**
+- **核心流程**: Popup 负责 UI，其余逻辑由 Service Worker 的 `handleToggleTranslateV4` 统一调度
+- **消息通信**: 通过后台 `window.postMessage ↔️ chrome.runtime` 协议，与内容脚本交互
+- **状态管理**: `RuntimeStateManager` 基于 `chrome.storage.session` 维护 INACTIVE/PENDING/ACTIVE
+- **缓存协作**: `VideoSourceLanguageCacheManager` 与 `TranslationCacheManager` 提供命中/复用能力，命中后仍会同步字幕轨道
 
 ### **❌ 已放弃方案: SidePanel**
 
@@ -34,13 +34,14 @@
 
 ### 6.1 存储设计原则
 
-为了确保职责清晰、数据管理的集中化以及遵循"关注点分离"原则，**所有对 `chrome.storage.local` 的直接API调用都应封装在 BackgroundScript 中**，或由BackgroundScript调用的专用存储管理模块中。
+为了确保职责清晰、数据管理集中以及 Service Worker 的生命周期稳定，**所有存储访问都通过后台的 `StorageManager` 与各类管理器（UserPreferences / RuntimeState / Cache）完成**，Popup 与内容脚本不直接操作原生 `chrome.storage.*`。
 
 **核心原则**：
-- **BackgroundScript作为数据守门人**：负责处理所有存储消息并执行相应的存储操作
-- **消息驱动的数据访问**：其他组件通过向BackgroundScript发送定义好的消息来进行数据操作
-- **统一存储区域**：扩展统一使用 `chrome.storage.local` 区域，不使用 `chrome.storage.sync`
-- **键名前缀组织**：使用前缀清晰地组织不同类型的数据，避免键名冲突
+- **Service Worker 作为数据守门人**：后台脚本（`service-worker.ts`）统一响应消息并调用存储管理器
+- **消息驱动的数据访问**：`handleToggleTranslateV4` 接收来自 Popup/内容脚本的请求，串联状态、缓存与翻译流程
+- **分层存储策略**：持久化数据使用 `chrome.storage.local`，跨标签页运行态使用 `chrome.storage.session`（详见 6.4 与 7.1.2）
+- **统一键名管理**：通过 `StorageKeys` 与专用管理器约束键前缀，避免直接拼接字符串
+- **避免直接调用原生 API**：若确需批量写入，亦通过 `StorageManager.set()`/`get()` 等封装方法实现，保留监控与迁移钩子
 
 ### 6.2 两层缓存架构
 
@@ -62,47 +63,49 @@
 ```
 ### 6.3 缓存处理流程
 
-#### 6.3.1 Popup界面缓存流程 ⭐ **当前方案**
+#### 6.3.1 HandleToggleTranslate V4 执行顺序（当前方案）
 
-**完整缓存检查顺序**：
+`handle-toggle-translate-v4.ts` 将翻译开关的生命周期拆分为多个阶段，每一阶段都会优先命中缓存，失败时再回落到页面 API：
+
+1. **Stage 1 — 用户偏好加载**  
+   - 通过 `UserPreferencesManager.getUserPreferences()`（`chrome.storage.local`）读取目标语言、字幕模式、翻译服务。  
+   - 缺失时触发默认值与 Hash 校验逻辑。
+
+2. **Stage 2 — 源语言缓存命中**  
+   - 使用 `VideoSourceLanguageCacheManager.get(videoId)`（`chrome.storage.local` 单键容器）读取可用轨道与上次选择。  
+   - 若缓存命中，优先按「用户请求 → 缓存记录 → 智能选择算法」排序匹配，并记录 `sourceLang`/`sourceKind`。
+
+3. **Stage 2.5 — 翻译缓存命中**  
+   - 调用 `TranslationCacheManager.get(videoId, sourceLang, sourceKind, targetLang, service)`。  
+   - **即使命中，也会调用 `setSubtitleTrackAPI`**（`sendSetSubtitleTrack` → `chrome.tabs.sendMessage`）同步播放器轨道，确保字幕按钮与缓存使用的源语言一致。  
+   - 命中后直接切换状态为 ACTIVE 并返回缓存内容；流程在此结束。
+
+4. **Stage 3 — 轨道拉取与缓存回写**  
+   - 未命中时，通过内容脚本的 `getVideoTrackData` → `getSubtitleTracksAPI` 获取播放器轨道。  
+   - 选出最佳轨道后再次调用 `setSubtitleTrackAPI`，并异步写回 `VideoSourceLanguageCacheManager.set()`，维持 FIFO + TTL。
+
+5. **Stage 4 — 字幕获取**  
+   - 若未请求复用缓存字幕，则发送 `TRIGGER_SUBTITLE_LOAD`，并监听 `SUBTITLE_DATA` 消息获取最新 VTT。  
+   - 失败会抛出 `StageTimeoutError`，终止整个流程并回滚状态。
+
+6. **Stage 5 — 两阶段翻译**  
+   - `TwoPhaseTranslatorV4` 使用紧急/批量流程执行翻译，超时与降级由 `TranslationSession` + `AbortTimeoutManager` 控制。  
+   - 翻译完成后调用 `TranslationCacheManager.set()` 写入缓存（含 `availableSourceLanguages` 与 `dataHash`），最后通知内容脚本渲染。
+
+#### 6.3.2 历史方案：SidePanel 缓存流程（已归档）
+
+> **📚 历史记录**：保留 SidePanel 流程作为技术参考，实际代码已移除（详见归档文档）。
+
 ```
-用户点击扩展图标
-    ↓
-[Chrome] 自动打开Popup
-    ↓ 
-[Popup] 页面检测 → 发送数据请求到 Background
-    ↓
-[Background] 两层缓存检查：
-    ↓
-┌─────────────── 缓存检查流程 ──────────────┐
-│ 1. 用户偏好设置检查                        │
-│    - 检查 user_preferences_*              │
-│    - 获取: targetLang, subtitleMode等     │
-│                                         │
-│ 2. 视频源语言和字幕轨道缓存检查              │
-│    - 检查 video_source_language_cache     │
-│    - 获取该视频的源语言选择和字幕轨道       │
-│    - 如无缓存则调用YouTube API获取         │
-└─────────────────────────────────────────┘
-    ↓
-合并设置数据和轨道信息 → 发送到Popup界面
-```
-
-#### 6.3.2 传统SidePanel缓存流程 📚 **已放弃**
-
-> **📚 历史记录**: 以下为SidePanel的缓存流程，保留作为技术参考  
-> **放弃原因**: 复杂的消息流和状态管理，用户体验不一致
-
-```
-用户点击翻译设置按钮 (当前实现)
+用户点击翻译设置按钮
     ↓
 [UIManager] 设置按钮点击事件
     ↓ 
-直接调用 chrome.action.openPopup()  // ✅ 直接调用
+chrome.action.openPopup()
     ↓
-[Popup] 通过Port连接通知Background更新状态  // ✅ 生命周期管理
+[Popup] 通过 Port 通知 Background
     ↓
-从 chrome.storage.session 读取状态和设置  // ✅ 共享内存
+读取 chrome.storage.session 的状态与设置（现已废弃）
 ```
 
 #### 6.3.3 智能写入机制
@@ -116,13 +119,13 @@
 
 2. **性能优化策略**：
 ```typescript
-   // 批量更新示例
+   // 批量更新示例（必须通过 StorageManager 保留日志 & 迁移钩子）
    const batchUpdate = {
      'settings_targetLang': 'ja',
      'settings_subtitleMode': 'dual',
      'settings_translationService': 'openai'
    };
-   await chrome.storage.local.set(batchUpdate);
+   await StorageManager.getInstance().setBatch(batchUpdate, 'local');
    ```
 
 3. **自动清理机制**：
@@ -153,20 +156,20 @@
 #### 6.5.1 缓存大小限制和清理
 
 **存储限制管理**：
-- **总缓存大小限制**：10MB (chrome.storage.local 限制)
-- **单视频缓存限制**：500KB (包括字幕轨道 + 翻译结果)
-- **最大缓存视频数量**：50个视频
+- **VideoSourceLanguageCache**：单键容器，最大 10 条记录（FIFO），每条记录 30 天 TTL，命中时刷新 `lastAccessed`
+- **TranslationCache**：键前缀 `subtitle_translation_cache_`，全局最多 50 条记录（LRU），每条包含原始字幕/译文及 `availableSourceLanguages`
+- **RuntimeState**：存储在 `chrome.storage.session`，浏览器关闭后自动清空
 
 **自动清理策略**：
 
-**FIFO清理机制**：
-- **视频源语言缓存**：采用先进先出策略，最大容量10个视频
-- **翻译缓存**：基于时间戳和使用频率进行智能清理
+**FIFO / LRU 机制**：
+- **VideoSourceLanguageCache**：超过 10 条时移除最早访问的视频；访问命中或更新都会触发 `saveCache()` 覆盖式写入
+- **TranslationCache**：写入前执行 `_enforceLruPolicy()`，按 `lastUsed` 升序删除多余键；缓存命中会异步刷新 `lastUsed`
 
 **容量管理原则**：
-- 同一videoId的更新操作直接覆盖，不影响FIFO顺序
-- 新增条目时才执行容量检查和清理操作
-- 批量清理操作避免频繁的单个删除操作
+- 对同一 `videoId` 写入时直接覆盖旧条目，保持数组/键数量稳定
+- 只有新增条目会触发 FIFO/LRU 清理，减少不必要的 remove 操作
+- 结合 `dataHash` 校验防止脏数据污染容量统计
 
 > **📋 具体实现**：详细的清理算法和代码实现请参见相关管理器类的源代码
 
@@ -359,27 +362,35 @@ export const DEFAULT_RUNTIME_STATE: RuntimeState = {
 ```
 
 **存储规范**：
-- **存储位置**: `chrome.storage.session`（跨标签页状态同步）
-- **存储键**: `runtime_state_translateActive`（翻译状态）
-- **存储架构**: 单一键存储，简化状态管理
+- **存储位置**: `chrome.storage.session`（跨标签页同步翻译状态 & Popup 手势）
+- **存储键**:  
+  - `runtime_state_translateActive`：翻译状态（INACTIVE / PENDING / ACTIVE）  
+  - `runtime_state_popupOpen`：Popup 是否处于开启态
 - **管理器**: `RuntimeStateManager`
-- **生命周期**: 会话级存储，浏览器关闭后清空
-- **设计理念**: 专注翻译状态，页面级设置面板管理
+- **生命周期**: 会话级存储，浏览器关闭即清空
+- **设计理念**: 将所有运行态写入后台，避免 Service Worker 重启造成状态丢失
 
-**简化存储设计**：
+**API 使用示例**：
 ```typescript
-// ✅ v5.24.7+简化存储方式：仅存储翻译状态
-await chrome.storage.session.set({
-  'runtime_state_translateActive': TranslateActiveState.ACTIVE
-});
+const runtimeStateManager = RuntimeStateManager.getInstance();
 
-// 存储键常量定义
-export const RUNTIME_STATE_STORAGE_KEYS = {
-  TRANSLATE_ACTIVE: 'runtime_state_translateActive'
-} as const;
+// 设置状态（内部会校验合法流转）
+await runtimeStateManager.setTranslateState(TranslateActiveState.PENDING);
+
+// 读取当前状态
+const translateState = await runtimeStateManager.getTranslateState();
+if (translateState === TranslateActiveState.ACTIVE) {
+  // 已完成翻译
+}
+
+// 监听状态变化（service-worker.ts 内部使用）
+runtimeStateManager.addChangeListener(
+  RuntimeStateChangeEvent.TRANSLATE_ACTIVE_CHANGED,
+  (newValue) => console.log('state changed:', newValue)
+);
 ```
 
-> **📋 设计说明**：v5.24.7+版本采用存储读取优先策略，RuntimeState包含翻译状态和设置面板状态。设置面板状态通过`runtimeStateManager.getSettingPanelState()`高性能读取。
+> **📋 设计说明**：`setTranslateState` 会先更新内存缓存，再写入 `chrome.storage.session`。若传入非法状态，则复用 `TranslateStateHelper.canTransition()` 阻止。
 
 **三态翻译逻辑设计**：
 - **INACTIVE**: 翻译功能关闭，按钮为非激活状态
@@ -387,9 +398,10 @@ export const RUNTIME_STATE_STORAGE_KEYS = {
 - **PENDING**: 翻译执行中，显示加载状态，支持B45-B48检测循环
 
 **翻译按钮流程支持**：
-- **B38三分支**: `translateActive` 枚举直接匹配 INACTIVE/ACTIVE/PENDING
-- **B45-B48 PENDING检测**: 支持PENDING状态的循环检测和超时处理
-- **状态变更源追踪**: 通过 `RuntimeStateManager` 的事件机制追踪状态变更来源
+- **INACTIVE ➝ PENDING**: 用户打开翻译，后台创建新的 `TranslationSession`
+- **PENDING ➝ ACTIVE**: 字幕抓取 + 翻译完成，并成功向内容脚本下发译文
+- **PENDING ➝ INACTIVE**: 字幕抓取失败或翻译异常时自动回滚
+- **状态变更追踪**: Service Worker 监听存储变化，向 Popup / 内容脚本广播最新状态
 
 **YouTube SPA导航处理设计**（2025-09-16）：
 - **设计原则**: 视频切换 = 页面刷新，每个视频从干净状态开始
@@ -397,44 +409,11 @@ export const RUNTIME_STATE_STORAGE_KEYS = {
 - **检测机制**: 监听`yt-navigate-finish`事件 + URL轮询备用方案
 - **用户体验**: 新视频默认关闭翻译，用户主动选择是否开启
 - **架构决策**: 不做基于videoId的复杂状态隔离，保持简单可维护
-
-
-**使用示例**：
-```typescript
-// B38: 当前翻译开关状态判断
-const translateState = await runtimeStateManager.getState('translateActive');
-switch (translateState) {
-  case TranslateActiveState.ACTIVE:
-    // B39: 根据缓存状态智能执行翻译
-    break;
-  case TranslateActiveState.INACTIVE:
-    // B40: 设置保存完成，等待用户操作
-    break;
-  case TranslateActiveState.PENDING:
-    // B41: PENDING状态下的设置变更处理
-    // B45-B48: 启动检测循环
-    break;
-}
-
-// 设置PENDING状态（B45开始检测循环）
-await runtimeStateManager.setState('translateActive', TranslateActiveState.PENDING);
-
-// B47: 重新检查状态
-const currentState = await runtimeStateManager.getState('translateActive');
-if (currentState === TranslateActiveState.PENDING) {
-  // B48: 状态仍为PENDING，继续检测或超时处理
-}
-
-// ❌ 已废弃：设置面板状态改为页面级管理，通过chrome.sidePanel API检测
-```
-
-**v5.24.7+极简架构优势**：
-- ✅ **专注核心**: 仅管理翻译状态，移除设置面板相关状态
-- ✅ **简化管理**: 翻译状态跨标签页共享，Popup界面状态简化管理
-- ✅ **类型安全**: TranslateActiveState枚举提供编译时检查
-- ✅ **状态清晰**: INACTIVE/ACTIVE/PENDING语义明确，易于调试
-- ✅ **性能优化**: 移除不必要状态，减少存储操作
-- ✅ **维护简便**: 极简设计，代码更易维护和扩展
+**v4.0 架构优势**：
+- ✅ **专注核心**: 运行态仅包含翻译状态与 Popup 打开状态，信息量最小化
+- ✅ **跨标签同步**: 借助 `chrome.storage.session` 自动向所有标签页广播
+- ✅ **类型安全**: 枚举约束 + `TranslateStateHelper` 防止非法状态写入
+- ✅ **调试友好**: Service Worker 日志记录状态来源，易于定位异常
 
 #### 7.1.3 **VideoSourceLanguageData** - 视频源语言数据
 
@@ -442,181 +421,87 @@ if (currentState === TranslateActiveState.PENDING) {
 
 ```typescript
 /**
- * 视频源语言数据 - 完整版设计
- * 存储每个视频的源语言相关信息
- * 注意：不存储baseUrl，避免过期问题
+ * 视频源语言数据（与 VideoSourceLanguageCacheManager 一致）
+ * - 保存完整轨道元数据（languageCode/name/kind）
+ * - 不包含 baseUrl，避免 YouTube 签名过期
  */
 interface VideoSourceLanguageData {
-  /** 视频ID */
   videoId: string;
-  
-  /** 可用的源语言列表（仅元数据，不含URL） */
   availableSourceLanguages: TrackMetadata[];
-  
-  /** 用户上次选择的源语言 */
-  lastSelectedLanguage?: string;
-  
-  /** 数据获取时间戳 */
+  selectedSourceTrack?: TrackMetadata;
   fetchedAt: number;
-  
-  /** 最后访问时间戳 */
   lastAccessed: number;
 }
 
 /**
- * 字幕轨道元数据
- * 只包含稳定信息，不包含会过期的URL
+ * 字幕轨道元数据（经过 sanitize，kind 仅允许 'asr' | 'forced' | undefined）
  */
 interface TrackMetadata {
-  /** 语言代码 */
   languageCode: string;
-  /** 显示名称 */
   name: string;
-  /** 字幕类型 */
-  kind?: 'asr' | 'forced' | undefined;
-  // 注意：不包含 baseUrl
+  kind?: 'asr' | 'forced';
+}
+
+/**
+ * 缓存容器：单键存储，内部维护 FIFO 队列
+ */
+interface VideoSourceLanguageCache {
+  items: VideoSourceLanguageData[];
+  maxSize: number; // 固定 10
 }
 ```
 
 **存储规范**：
 - **存储位置**: `chrome.storage.local`
-- **存储键**: `video_source_${videoId}` （分散存储，每个视频独立）
-- **缓存策略**: LRU淘汰，30天过期
-- **数据大小**: ~2KB/视频
-- **更新逻辑**: 打开Popup时检查缓存，过期则重新获取
+- **存储键**: `StorageKeys.VIDEO_SOURCE_LANGUAGE_CACHE`（单键对象，内部维护 FIFO 数组）
+- **缓存策略**: 命中时刷新 `lastAccessed`，超过 `maxSize`（10）触发 FIFO；单条记录超过 30 天则丢弃
+- **更新逻辑**: `VideoSourceLanguageCacheManager.set()`/`updateSelectedLanguage()` 负责写入与清理，所有写操作都会调用内部 `saveCache()`
 
-**实现逻辑**：
+**核心能力**：
+- ✅ **避免重复 API 调用**：Popup / Service Worker 拉取轨道前优先命中缓存
+- ✅ **记忆轨道选择**：缓存 `selectedSourceTrack`（包含 kind），供下一次直接复用
+- ✅ **轨道清洗**：写入/读取时统一通过 `sanitizeKind` 过滤，仅保留稳定值
+- ✅ **后台异步写入**：`handleToggleTranslateV4` 在轨道拉取成功后异步调用 `set()`，不阻塞主流程
+
+**使用示例**：
 ```typescript
-/**
- * 获取或更新视频源语言数据
- * @param videoId 视频ID
- */
-async getVideoSourceLanguageData(videoId: string): Promise<VideoSourceLanguageData | null> {
-  const key = `video_source_${videoId}`;
-  const result = await chrome.storage.local.get(key);
-  const data = result[key];
-  
-  // 检查缓存有效性（30天过期）
-  if (data && (Date.now() - data.fetchedAt < 30 * 24 * 60 * 60 * 1000)) {
-    // 更新最后访问时间
-    data.lastAccessed = Date.now();
-    await chrome.storage.local.set({ [key]: data });
-    return data;
-  }
-  
-  // 缓存过期或不存在，需要重新获取
-  return null;
-}
+const manager = VideoSourceLanguageCacheManager.getInstance();
+const cached = await manager.get(videoId);
 
-/**
- * 保存视频源语言数据
- * @param videoId 视频ID  
- * @param languages 可用语言列表
- * @param selectedLang 用户选择的语言
- */
-async saveVideoSourceLanguageData(
-  videoId: string, 
-  languages: TrackMetadata[],
-  selectedLang?: string
-): Promise<void> {
-  const key = `video_source_${videoId}`;
-  const data: VideoSourceLanguageData = {
-    videoId,
-    availableSourceLanguages: languages,
-    lastSelectedLanguage: selectedLang,
-    fetchedAt: Date.now(),
-    lastAccessed: Date.now()
-  };
-  
-  await chrome.storage.local.set({ [key]: data });
-}
-```
-
-**核心解决问题**：
-- ✅ **避免重复API调用**: 缓存源语言元数据，Popup秒开
-- ✅ **用户选择记忆**: 记住用户为每个视频选择的源语言偏好
-- ✅ **性能优化**: 从~500ms API调用优化到~10ms缓存读取
-- ✅ **离线可用**: 即使网络问题也能显示源语言列表
-- ✅ **避免URL过期**: 不存储baseUrl，需要时实时获取
-
-**使用场景**：
-```typescript
-// 场景1: 打开Popup时获取源语言列表
-const data = await getVideoSourceLanguageData(videoId);
-if (data) {
-  // 使用缓存的语言列表，瞬间加载
-  renderLanguageList(data.availableSourceLanguages);
-  setSelectedLanguage(data.lastSelectedLanguage);
+if (cached) {
+  // 直接使用缓存的轨道列表与已选轨道
+  renderTracks(cached.availableSourceLanguages, cached.selectedSourceTrack);
 } else {
-  // 缓存未命中，从API获取
-  const languages = await fetchFromYouTubeAPI(videoId);
-  await saveVideoSourceLanguageData(videoId, languages);
-}
-
-// 场景2: 用户更改源语言选择
-async function onSourceLanguageChange(videoId: string, newLang: string) {
-  const data = await getVideoSourceLanguageData(videoId);
-  if (data) {
-    data.lastSelectedLanguage = newLang;
-    await saveVideoSourceLanguageData(videoId, data.availableSourceLanguages, newLang);
-  }
-}
-
-// 场景3: 构建翻译缓存键
-const data = await getVideoSourceLanguageData(videoId);
-const sourceLang = data?.lastSelectedLanguage || 'auto';
-const cacheKey = `translation_${videoId}_${sourceLang}_${targetLang}_${serviceType}`;
-```
-
-**查询优先级**：
-```
-1. VideoSourceLanguageCache (Local Storage) → 源语言元数据（不含URL）
-2. Content Script API调用 → 获取新数据
-```
-
-**baseUrl处理策略**：
-- **翻译设置按钮**：只需要语言列表元数据，不需要baseUrl
-- **翻译开关按钮**：需要字幕时，通过GET_SUBTITLE_DATA消息实时获取最新baseUrl
-- **原因**：YouTube的baseUrl包含时间戳和签名，会过期，不适合缓存
-
-#### 7.1.6 **SubtitleCache** - 基础翻译缓存结构
-
-```typescript
-/**
- * 翻译缓存结构 - 映射表格式
- */
-interface SubtitleCache {
-  [cacheKey: string]: {  // 缓存键: videoId + apiType + targetLang
-    translatedSubtitles: {
-      [id: string]: string;  // 字幕ID到翻译文本的映射
-    };
-    timestamp: number;    // 缓存时间戳
-  };
+  const tracks = await fetchFromYouTubeAPI(videoId);
+  const bestTrack = selectBestSourceLanguage(tracks, targetLang, null);
+  await manager.set({
+    videoId,
+    availableSourceLanguages: tracks,
+    selectedSourceTrack: bestTrack
+  });
 }
 ```
 
-**存储规范**：
-- **存储位置**: `chrome.storage.local`
-- **键格式**: 使用复合键标识唯一的翻译缓存条目
-- **生命周期**: 持久化存储，基于时间戳进行清理
-- **用途**: 避免重复翻译相同内容，提升性能
+#### 7.1.6 **TranslationCacheData** - 完整翻译缓存数据
 
-#### 7.1.7 **TranslationCacheData** - 完整翻译缓存数据
-
-> 📌 **重要**：字幕内容使用VTT格式字符串存储以节省空间，详见 [09-subtitle-data-format-architecture.md](./09-subtitle-data-format-architecture.md)
+> 📌 **重要**：字幕内容以 VTT 字符串保存，保持与内容脚本协议一致；历史 `SubtitleCache`（按字幕 ID 映射的结构）已移至归档。
 
 ```typescript
 interface TranslationCacheData {
   // === 标识信息 ===
   videoId: string;                              // 视频ID
   sourceLang: string;                           // 源语言（用于匹配）
+  sourceKind?: 'asr' | 'forced';                // 源字幕类型（ASR / 强制字幕 / manual）
   targetLang: string;                           // 目标语言（用于匹配）
+
+  // === 源语言补充信息 ===
+  availableSourceLanguages: SimplifiedCaptionTrack[]; // 缓存命中时可直接渲染备选列表
 
   // === 翻译服务配置（安全版本） ===
   translationService: {                         // 服务配置（不含API密钥）
     type: TranslationServiceType;               // 服务类型
-    model?: string;                             // AI模型（如果适用）
-    temperature?: number;                        // 温度参数（如果适用）
+    model?: string | null;                      // AI模型
+    temperature?: number | null;                // 温度参数
   };
 
   // === 原始和翻译内容 ===
@@ -624,7 +509,6 @@ interface TranslationCacheData {
   translatedSubtitles: string;                  // 翻译后的字幕（VTT格式字符串，非数组）
   
   // === 缓存管理 ===
-  createdAt: number;                            // 创建时间戳
   lastUsed: number;                             // 最后使用时间戳
   
   // === 数据完整性验证 ===
@@ -634,63 +518,40 @@ interface TranslationCacheData {
 
 **存储规范**：
 - **存储位置**: `chrome.storage.local`
-- **键格式**: `translation_${videoId}_${sourceLang}_${targetLang}_${serviceType}[_${model}][_${temperature}]`
+- **键格式**: `subtitle_translation_cache_${videoId}_${sourceLang}_${sourceKind}_${targetLang}_${service.type}_${service.model || 'default'}_${service.temperature || 'default'}`
 - **键生成函数**:
   ```typescript
-  function generateCacheKey(
+  function getCacheKey(
     videoId: string,
     sourceLang: string, 
+    sourceKind: 'asr' | 'forced' | undefined,
     targetLang: string,
     service: TranslationService
   ): string {
-    // 基础部分
-    let key = `translation_${videoId}_${sourceLang}_${targetLang}_${service.type}`;
-    
-    // 根据服务类型添加特定参数，确保缓存精确匹配
-    switch (service.type) {
-      case 'openai':
-      case 'gemini':
-      case 'deepseek':
-      case 'qwen':
-        // AI服务需要包含模型和temperature
-        if (service.model) key += `_${service.model}`;
-        if (service.temperature !== undefined) key += `_${service.temperature}`;
-        break;
-        
-      case 'google-free':
-      case 'microsoft-free':
-        // 免费服务无额外参数
-        break;
-        
-      case 'deepl':
-        // DeepL可能有formality参数
-        if (service.formality) key += `_${service.formality}`;
-        break;
-        
-      case 'custom':
-        // 自定义服务需要endpoint的hash
-        if (service.endpoint) key += `_${hashString(service.endpoint)}`;
-        break;
-    }
-    
-    return key;
+    const kindPart = sourceKind || 'manual';
+    const modelPart = service.model || 'default';
+    const tempPart = service.temperature ?? 'default';
+    return `subtitle_translation_cache_${videoId}_${sourceLang}_${kindPart}_${targetLang}_${service.type}_${modelPart}_${tempPart}`;
   }
   ```
 - **键示例**: 
   ```typescript
-  // 付费AI服务（有model和temperature参数）
-  'translation_dQw4w9WgXcQ_en_zh-CN_openai_gpt-4o_0.7'
-  
-  // 免费服务（无model和temperature）
-  'translation_dQw4w9WgXcQ_ja_zh-CN_google-free'
+  // ASR 轨道 + OpenAI 模型
+  'subtitle_translation_cache_dQw4w9WgXcQ_en_asr_zh-CN_openai_gpt-5-mini_default'
+
+  // 手动轨道 + 免费谷歌翻译
+  'subtitle_translation_cache_dQw4w9WgXcQ_ja_manual_zh-CN_google-free_default_default'
   ```
-- **存储策略**: 分散存储，每个翻译结果独立键值对
-- **缓存大小**: ~85KB/翻译（原字幕35KB + 译文50KB）
-- **过期策略**: 30天自动过期，LRU淘汰
+- **存储策略**: 分散键值存储 + LRU（最多 50 条，写入前执行 `_enforceLruPolicy()`）
+- **缓存大小**: 取决于字幕长度，单条通常 50~120 KB（含原文/译文 VTT）
 - **安全特性**: 
   - ✅ **排除敏感信息**: translationService不包含API密钥
   - ✅ **保存原始字幕**: 支持切换翻译服务无需重新获取
   - ✅ **精确匹配**: 任何服务参数变化都会生成新的缓存键
+- **字段说明**:
+  - `availableSourceLanguages`: 缓存命中时直接复用轨道列表，避免再次访问 Player API
+  - `sourceKind`: 与轨道选择结果配对，便于 ASR/强制字幕的差异化处理
+  - `dataHash`: 基于 videoId + sourceLang + sourceKind + targetLang + service 计算的完整性校验
 - **特点**: 循环覆盖，存满后覆盖最早的（LRU策略）
 - **管理器**: 由翻译模块和缓存管理器共同管理
 - **清理策略**: 基于`lastUsed`时间戳和存储配额
@@ -701,13 +562,18 @@ interface TranslationCacheData {
 {
   videoId: "abc123",
   sourceLang: "en",
+  sourceKind: "manual",
   targetLang: "zh-CN",
+  availableSourceLanguages: [
+    { languageCode: "en", name: "English" },
+    { languageCode: "ja", name: "日本語", kind: "asr" }
+  ],
   
   // 翻译服务配置（不含API密钥）
   translationService: {
     type: "openai",
-    model: "gpt-4o",
-    temperature: 0.7
+    model: "gpt-5-mini",
+    temperature: null
   },
   
   // 原始字幕（VTT格式）
@@ -728,8 +594,6 @@ Today we'll discuss the development of AI`,
 00:00:04.000 --> 00:00:06.000
 今天我们将讨论人工智能的发展`,
   
-  createdAt: 1640995000000,
-  
   lastUsed: 1640995200000,
   dataHash: "a1b2c3d4e5f6"
 }
@@ -743,6 +607,7 @@ Today we'll discuss the development of AI`,
 - ✅ **支持离线对比**: 用户可以对比原文和译文
 - ✅ **安全存储**: translationService不包含API密钥等敏感信息
 - ✅ **自动管理**: LRU策略自动清理，Hash验证保证数据可靠性
+- ✅ **轨道再利用**: 缓存命中时直接填充 `availableSourceLanguages`，加快 Popup 渲染
 
 ## 缓存架构说明
 
@@ -772,12 +637,12 @@ Today we'll discuss the development of AI`,
  */
 class TranslationCacheManager {
   async findByVideoAndSourceLang(videoId: string, sourceLang: string): Promise<TranslationCacheData[]> {
-    const pattern = `translation_${videoId}_${sourceLang}_*`;
-    const keys = await chrome.storage.local.get(null);
-    
-    return Object.entries(keys)
-      .filter(([key]) => key.match(new RegExp(`^translation_${videoId}_${sourceLang}_`)))
+    const all = await chrome.storage.local.get(null);
+
+    return Object.entries(all)
+      .filter(([key]) => key.startsWith(`subtitle_translation_cache_${videoId}_${sourceLang}_`))
       .map(([_, value]) => value as TranslationCacheData)
+      .filter(item => item.sourceLang === sourceLang)
       .sort((a, b) => b.lastUsed - a.lastUsed);  // 最近使用的优先
   }
   

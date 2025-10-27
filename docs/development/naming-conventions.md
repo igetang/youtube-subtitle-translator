@@ -1,148 +1,80 @@
-# YouTube字幕翻译助手 - 命名规范文档
+# YouTube字幕翻译助手 - 命名规范
 
-> **版本**: v3.0.0  
-> **最后更新**: 2025-09-02
+> **最后更新**: 2025-10-25  
+> 适用于 `src/` 下所有 TypeScript / Vue-less 模块及相关文档
 
-## 🎯 文件命名规范
+规范目标：提高可读性、避免导入混淆、确保团队协作时命名一致。
 
-### 📁 统一导出文件命名标准
+---
 
-为避免多个 `index.ts` 文件造成混淆，我们采用以下命名规范：
+## 1. TypeScript/JavaScript 命名约定
 
-| 目录 | 原文件名 | 新文件名 | 用途描述 |
-|------|----------|----------|----------|
-| `src/types/` | ~~index.ts~~ | `types.ts` | 类型定义统一导出 |
-| `src/messages/` | ~~index.ts~~ | `messages.ts` | 消息系统统一导出 |
-| `src/storage/` | ~~index.ts~~ | `storage.ts` | 存储系统统一导出 |
-| `background/` | ~~index.ts~~ | `background-modules.ts` | 后台脚本模块导出 |
+| 实体类型 | 约定 | 示例 |
+| -------- | ---- | ---- |
+| 类 / 枚举 | PascalCase | `AbortTimeoutManager`, `TranslateActiveState` |
+| 函数 / 变量 | camelCase | `handleToggleTranslateV4`, `selectBestSourceLanguage` |
+| 常量（顶层） | UPPER_SNAKE_CASE | `ERROR_MESSAGE_DURATION` |
+| 类型别名 / 接口 | PascalCase，必要时追加后缀 | `ToggleTranslateRequest`, `SubtitleEntry` |
+| 日志前缀 | `[模块名]` 或 `[debug][模块名]` | `[service-worker-v4]`, `[debug][ContentScript]` |
 
-### 🏗️ 导入引用更新
+> **提示**：在 TypeScript 中优先使用 `type` / `interface` 描述结构，避免使用 `any`。导出类型应用 `export type ...`，导出实现使用 `export function / class ...`。
 
-#### 类型定义引用
+---
+
+## 2. 文件与目录命名
+
+### 2.1 总体原则
+- 使用 **kebab-case**（小写 + 连字符）作为文件名：`message-bus.ts`、`user-preferences-manager.ts`。
+- 避免 `index.ts`；若必须作为目录入口，请在 README 或注释中说明用途。
+- 目录名称使用英文单词或组合，见下表。
+
+### 2.2 统一导出文件
+
+| 目录 | 统一导出文件 | 说明 |
+| ---- | ------------ | ---- |
+| `src/shared/types/` | `types.ts` | 汇总核心类型（原 `index.ts`） |
+| `src/shared/messages/` | `index.ts` | 暴露 MessageBus/Handlers（其余文件按职责命名） |
+| `src/shared/storage/` | `index.ts` | 暴露存储相关管理器 |
+| `src/background/` | `background-modules.ts` | 组装后台模块出口 |
+
+### 2.3 功能文件命名
+- **模块名称 + 功能**：`handle-toggle-translate-v4.ts`、`translation-cache-manager.ts`。
+- **类型文件**：`{module}-types.ts`（例如 `runtime-state-types.ts`）。
+- **工具函数**：`{功能}-utils.ts` 或 `utils/{功能}.ts`。
+- **翻译服务适配器**：`{provider}-translator.ts`（如 `microsoft-translator.ts`）。
+
+### 2.4 导入示例
+
 ```typescript
-// ✅ 推荐写法
-import { MessageType, VideoId } from '../types/types';
+// ✅ 推荐：显式文件名或别名
+import { MessageBus } from '@shared/messages/message-bus';
+import type { TranslateActiveState } from '@shared/types/runtime-state-types';
 
-// ❌ 避免写法
-import { MessageType, VideoId } from '../types/index';
-import { MessageType, VideoId } from '../types/';
-```
+// ✅ 推荐：从统一出口导入
+import { TranslationCacheManager } from '@shared/storage';
 
-#### 消息系统引用
-```typescript
-// ✅ 推荐写法
-import { MessageBus, MessageHandlers } from '../messages/message-bus';
-
-// ❌ 避免写法
-import { EventBus } from '../messages/event-bus';  // 已废弃
-```
-
-#### 存储系统引用
-```typescript
-// ✅ 推荐写法
-import { StorageManager } from '../storage/storage';
-
-// ❌ 避免写法
+// ❌ 避免：依赖目录默认导出或 index 简写
+import { MessageBus } from '@shared/messages';
 import { StorageManager } from '../storage/index';
 ```
 
-### 📋 文件命名原则
+---
 
-#### 1. **模块导出文件**
-- 使用模块名作为文件名：`types.ts`、`messages.ts`、`storage.ts`
-- 避免使用 `index.ts`（除非确实是目录的唯一入口点）
+## 3. 日志与前缀
 
-#### 2. **功能描述性文件**
-- 使用功能描述：`background-modules.ts`、`message-handlers.ts`
-- 体现文件的具体作用
+- **普通日志**：`console.log('[service-worker-v4] 开启翻译会话')`
+- **调试信息**：`console.debug('[debug][TwoPhaseTranslatorV4] 生成批次', batch)`
+- **警告/错误**：使用 `console.warn` / `console.error`，保持与日志优化任务一致。
+- 在多人协作时保持前缀一致，便于过滤。
 
-#### 3. **组件文件**
-- 使用组件名：`message-bus.ts`、`user-preferences-manager.ts`
-- 采用kebab-case命名
+---
 
-#### 4. **类型定义文件**
-- 后缀使用 `-types.ts`：`core-types.ts`、`storage-types.ts`
-- 明确表示这是类型定义文件
+## 4. 命名检查清单
 
-### 🔍 命名一致性检查
+1. 新文件命名是否符合 kebab-case？  
+2. 是否避免 `index.ts` 的模糊导入？  
+3. 新增类型是否放置在 `src/shared/types/` 下并命名为 `*-types.ts`？  
+4. 导入语句是否使用显式路径或别名？  
+5. 日志前缀是否体现模块名称？
 
-#### 当前项目结构（重构后）
-```
-src/
-├── types/
-│   ├── core-types.ts          # 核心类型定义
-│   ├── storage-types.ts       # 存储类型定义
-│   ├── message-types.ts       # 消息类型定义
-│   └── types.ts              # 统一导出 (原index.ts)
-├── shared/
-│   ├── messages/
-│   │   ├── index.ts              # 统一导出
-│   │   ├── message-bus.ts        # 主要消息总线
-│   │   ├── messages.ts           # 消息类型定义
-│   │   └── message-handlers.ts   # 消息处理器
-│   └── events/                   # 保留用于向后兼容
-│       └── event-bus.ts          # 原有事件总线(向后兼容)
-└── storage/
-    ├── [various managers].ts
-    └── storage.ts            # 统一导出 (原index.ts)
-
-background/
-├── background.ts             # 主要后台脚本
-├── [various modules].ts
-└── background-modules.ts     # 模块导出 (原index.ts)
-```
-
-### ⚠️ 注意事项
-
-1. **构建系统配置**
-   - 更新 `vite.config.ts` 中的入口点引用
-   - 检查所有import语句的路径
-
-2. **向后兼容性**
-   - 保持原有文件的功能不变
-   - 新的命名仅用于避免混淆
-
-3. **团队协作**
-   - 所有团队成员使用统一的命名规范
-   - Code Review时检查命名一致性
-
-### 🚀 迁移指导
-
-#### 现有代码迁移
-如果发现旧的import语句，按以下方式更新：
-
-```typescript
-// 旧的导入方式
-import { MessageType } from '../types';
-import { MessageBus } from '../events';
-import { StorageManager } from '../storage';
-
-// 新的导入方式
-import { MessageType } from '../types/types';
-import { MessageBus } from '../messages/messages';
-import { StorageManager } from '../storage/storage';
-```
-
-#### 自动化检查
-可以使用以下命令检查项目中的导入：
-
-```bash
-# 查找所有可能的index导入
-grep -r "from.*index" src/
-grep -r "from.*/" src/ | grep -v ".ts"
-```
-
-### 📊 命名规范总结
-
-| 类型 | 规范 | 示例 |
-|------|------|------|
-| 类型定义文件 | `{module}-types.ts` | `core-types.ts` |
-| 模块导出文件 | `{module}.ts` | `types.ts`, `messages.ts` |
-| 功能实现文件 | `{功能描述}.ts` | `message-bus.ts` |
-| 组件文件 | `{组件名}.ts` | `user-preferences-manager.ts` |
-
-这样的命名规范确保了：
-- ✅ 文件用途清晰明确
-- ✅ 避免import时的混淆
-- ✅ 便于代码维护和团队协作
-- ✅ 支持IDE的智能提示和导航 
+如需新增命名规则，请先更新本文件并在评审时说明。*** End Patch
