@@ -1501,6 +1501,15 @@ async function handleSourceLanguageChange(newSourceLang: string, newSourceKind?:
     if (cacheResponse.success && cacheResponse.data) {
       // 5A. 有缓存：复用show()方法显示
       console.log('[content-script] 使用缓存的翻译结果');
+
+      // 🔧 修复：缓存命中后也要切换YouTube字幕轨道
+      const setResult = await handleSetSubtitleTrackAPI(newSourceLang, newSourceKind);
+      if (setResult.success) {
+        console.log(`[content-script] ✓ 已切换YouTube字幕轨道: ${newSourceLang}${newSourceKind ? ` (${newSourceKind})` : ''}`);
+      } else {
+        console.warn('[content-script] ⚠️ 切换YouTube字幕轨道失败，但仍显示翻译字幕');
+      }
+
       await subtitleOverlay.show(cacheResponse.data);
       stateManager?.updateState('translateActive', 'active');
     } else {
