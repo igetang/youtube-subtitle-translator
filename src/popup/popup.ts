@@ -1282,10 +1282,13 @@ async function saveTargetLanguage(langCode: string): Promise<void> {
   try {
     await userPreferencesManager.updateUserPreferences({ targetLang: langCode });
     console.log('[popup] 目标语言已保存:', langCode);
-    
+
+    // 更新全局变量（关键！让源语言互斥检测能用到最新值）
+    currentTargetLang = langCode;
+
     // 重新填充源语言列表以应用语言族互斥逻辑
     populateSourceLanguages();
-    
+
     console.log('[popup] 目标语言已保存:', langCode, '，源语言列表已更新');
     console.log(`[popup] 语言族互斥检测已应用，当前目标语言: ${langCode}`);
   } catch (error) {
@@ -1893,15 +1896,28 @@ function populateSourceLanguages(searchTerm: string = ''): void {
 
       // 生成显示文本
       const displayName = generateLanguageDisplayName(trackInfo);
-      option.textContent = displayName;
-      
+
       // 应用语言族互斥逻辑：检查是否与当前目标语言冲突
-      const currentTargetLang = getCurrentTargetLanguage();
       if (currentTargetLang && isSameLanguageFamily(trackInfo.languageCode, currentTargetLang)) {
         option.classList.add('disabled');
         option.setAttribute('data-disabled-reason', 'same-language-family');
         option.title = `无法选择同语言族的语言：${displayName} 与目标语言冲突`;
+
+        // 创建语言名称元素
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = displayName;
+
+        // 创建提示文字元素
+        const hintSpan = document.createElement('span');
+        hintSpan.className = 'disabled-hint';
+        hintSpan.textContent = '（与目标语言相同）';
+
+        option.appendChild(nameSpan);
+        option.appendChild(hintSpan);
+
         console.log(`[popup] populateSourceLanguages: 源语言 ${trackInfo.languageCode} 因与目标语言 ${currentTargetLang} 冲突而被禁用`);
+      } else {
+        option.textContent = displayName;
       }
       
       // 如果有搜索词，高亮匹配的部分
