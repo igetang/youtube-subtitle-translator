@@ -180,12 +180,18 @@ export class GeminiTranslator {
         const t3 = performance.now();
         console.debug(`[debug][GeminiTranslator] Prompt长度: ${prompt.length}字符`);
 
-        // 3. 动态估算maxOutputTokens（使用OpenAI公式）
-        const yamlOverhead = batch.length * 4; // YAML格式额外字符：id、缩进、引号等
-        const estimatedOutputTokens = this.estimateOutputTokens(prompt, yamlOverhead);
+        // 3. 估算maxOutputTokens（基于输入字节数 ÷ 2.5 × 1.2）
+        const encoder = new TextEncoder();
+        const inputBytes = encoder.encode(yamlInput).length;
+        const estimatedOutputTokens = Math.ceil((inputBytes / 2.5) * 1.2);  // 字节数 ÷ 2.5 × 1.2
+        const maxOutputTokens = Math.min(estimatedOutputTokens, this.modelConfig.maxOutput);  // 不超过模型上限
+
+        console.log(
+          `[GeminiTranslator] 📊 估算输出: ${inputBytes}字节 (÷2.5×1.2) → ${maxOutputTokens}tokens`
+        );
 
         // 4. 调用Gemini API
-        const responseText = await this.callGeminiAPI(prompt, signal, estimatedOutputTokens);
+        const responseText = await this.callGeminiAPI(prompt, signal, maxOutputTokens);
         const t4 = performance.now();
 
         // 4. 解析YAML结果
@@ -231,27 +237,6 @@ export class GeminiTranslator {
     return results;
   }
 
-  /**
-   * 估算输出token数（基于输入长度）
-   * 根据OpenAI最佳实践：设置合理的maxOutputTokens可以显著降低延迟
-   * @param inputText 输入文本（YAML格式）
-   * @param yamlOverhead YAML格式额外字符数
-   * @returns 估算的输出token数
-   */
-  private estimateOutputTokens(inputText: string, yamlOverhead: number = 0): number {
-    // 完全使用OpenAI的估算公式：
-    // 1. 字符数 → 估算输入tokens: 字符数 ÷ 2.5
-    // 2. 输入tokens → 估算输出tokens: 输入tokens × 1.2（20%余量）
-    const totalChars = inputText.length + yamlOverhead;
-    const estimatedInputTokens = totalChars / 2.5;  // 字符→输入tokens
-    const estimatedOutputTokens = Math.ceil(estimatedInputTokens * 1.2);  // 输出≈输入+20%余量
-
-    console.log(
-      `[GeminiTranslator] 📊 估算: ${totalChars}字符 → ` +
-      `输入~${Math.round(estimatedInputTokens)}tokens → 输出~${estimatedOutputTokens}tokens`
-    );
-    return estimatedOutputTokens;
-  }
 
   /**
    * 转换为YAML格式
