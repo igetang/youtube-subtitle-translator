@@ -117,7 +117,7 @@ export default defineConfig(({ command, mode }) => {
             dest: '.',
           },
           {
-            src: 'public/_locales',
+            src: '_locales',
             dest: '.',
           },
         ],

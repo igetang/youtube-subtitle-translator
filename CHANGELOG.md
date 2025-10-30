@@ -9,6 +9,25 @@
 
 ### 🐛 **Bug 修复**
 
+#### 修复5：Popup源语言下拉框中英混合显示
+- **问题**：源语言下拉框显示"Chinese"（英文）和"英语"（中文）混合
+- **根因**：
+  - 构建配置从不完整的 `public/_locales` 复制i18n文件
+  - `public/_locales/zh_CN/messages.json` 缺少3个关键条目：`lang_zh`、`lang_zh_CN`、`lang_zh_TW`
+  - vite默认将整个 `public` 目录复制到 `dist`，覆盖了viteStaticCopy的正确复制
+- **解决**：
+  - 修改 `vite.config.ts:120` - 从完整的 `_locales` 复制而不是 `public/_locales`
+  - 删除 `public/_locales` 目录 - 避免vite默认复制行为覆盖
+  - 实现单一数据源，`_locales` 作为唯一i18n源文件
+- **影响文件**：
+  - `vite.config.ts` (line 120)
+  - `public/_locales/` (整个目录已删除)
+- **技术细节**：
+  - popup.ts已实现智能语言显示（`generateLanguageDisplayName`函数，line 1845-1877）
+  - 两级语言代码回退机制：`es-ES → lang_es_ES → lang_es`
+  - Chrome i18n API：`chrome.i18n.getMessage()`
+- **效果**：所有语言显示为中文，避免未来 `_locales` 和 `public/_locales` 不同步
+
 #### 修复1：OpenAI Token估算不足导致翻译数量不匹配
 - **问题**：翻译后字幕条数少于输入条数（如期望20条，实际15条）
 - **根因**：Token估算使用 `chars × 1.2`，对多字节字符不准确且冗余不足

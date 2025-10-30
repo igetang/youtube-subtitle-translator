@@ -1,8 +1,32 @@
 # YouTube字幕翻译扩展 - 项目上下文快照
-> 最后更新：2025-10-27
+> 最后更新：2025-10-30
 > 用途：新Claude Code会话快速了解当前状态
 
 ## 🎯 当前状态
+
+### 最近修复的Bug (2025-10-30)
+
+**✅ 已修复：Popup源语言下拉框中英混合显示问题**
+- 问题：源语言下拉框显示"Chinese"（英文）和"英语"（中文）混合，用户体验差
+- 根本原因：
+  - 构建配置从不完整的 `public/_locales` 复制i18n文件
+  - `public/_locales/zh_CN/messages.json` 缺少3个关键条目：`lang_zh`、`lang_zh_CN`、`lang_zh_TW`
+  - vite默认会将整个 `public` 目录复制到 `dist`，覆盖了viteStaticCopy的正确复制
+- 解决方案：
+  - 修改 `vite.config.ts:120` - 从完整的 `_locales` 复制而不是 `public/_locales`
+  - 删除 `public/_locales` 目录 - 避免vite默认复制行为覆盖
+  - 实现单一数据源，`_locales` 作为唯一i18n源文件
+- 影响文件：
+  - `vite.config.ts` (line 120)
+  - `public/_locales/` (整个目录已删除)
+- 技术细节：
+  - popup.ts已实现智能语言显示（`generateLanguageDisplayName`函数）
+  - 两级语言代码回退机制：`es-ES → lang_es_ES → lang_es`
+  - Chrome i18n API：`chrome.i18n.getMessage()`
+- 验证结果：
+  - ✅ 源文件和dist文件完全一致（56行）
+  - ✅ 所有语言显示为中文，不再出现英文
+  - ✅ 避免未来 `_locales` 和 `public/_locales` 不同步问题
 
 ### 最近完成的优化 (2025-10-27)
 
@@ -90,12 +114,17 @@
 - 修复位置：`src/background/components/two-phase-translator-v4.ts` 第347-379行
 - 提交记录：15c4367
 
-### 今日任务 (2025-10-27)
-- [x] 修复API密钥输入框宽度对齐问题
-- [x] 优化service-card布局，减少高度20px
-- [x] 统一password输入框样式（box-sizing, 背景色, 边框）
+### 今日任务 (2025-10-30)
+- [x] 修复popup源语言下拉框中英混合显示问题
+- [x] 修改vite构建配置，从 `_locales` 复制i18n文件
+- [x] 删除 `public/_locales` 避免vite默认复制覆盖
 
 ## 📋 最近3天的重要改动
+
+### 2025-10-30
+- **修复popup语言显示bug**：解决源语言下拉框中英混合问题
+- **优化构建配置**：改用 `_locales` 作为单一i18n数据源
+- **删除冗余目录**：移除 `public/_locales` 避免文件不同步
 
 ### 2025-10-27
 - **Popup UI布局修复**：解决API密钥输入框右边比其他框短的问题（根本原因：flex布局的align-items）
