@@ -27,6 +27,7 @@
  * 模型配置映射表
  */
 import { handleFetchError, TranslationError } from '@shared/types/translation-errors';
+import { LanguageCodeMapper } from '@shared/utils/language-code-mapper';
 
 const MODEL_CONFIGS: Record<string, {
   contextWindow: number;
@@ -84,8 +85,6 @@ export class OpenAITranslator {
     this.model = model;
     this.temperature = temperature;
     this.modelConfig = MODEL_CONFIGS[model] || MODEL_CONFIGS['gpt-5-mini'];
-
-    console.log(`[OpenAITranslator] 初始化: 模型=${model}, temperature=${temperature}, 上下文=${this.modelConfig.contextWindow} tokens, 最大输出=${this.modelConfig.maxOutput} tokens`);
   }
 
   /**
@@ -125,29 +124,28 @@ export class OpenAITranslator {
       const jsonInput = JSON.stringify(numberedTexts);
       console.debug(`[debug][OpenAITranslator] JSON输入长度: ${jsonInput.length}字符, ${numberedTexts.length}条带编号字幕`);
 
-      // 3. 构建messages（强化版Prompt，数量约束前置）
+      // 3. 转换目标语言代码为英文名称（Chat API要求）
+      const targetLangName = LanguageCodeMapper.toEnglishName(targetLang);
+
+      // 4. 构建messages（精简版Prompt，明确输入输出格式）
       const messages = [
         {
           role: "system",
           content: `You are a professional subtitle translator.
-Translate ${texts.length} subtitles from ${sourceLang} to ${targetLang}.
+Translate ${texts.length} subtitles from ${sourceLang} to ${targetLangName}.
 
-CRITICAL REQUIREMENT: Input has ${texts.length} items, output MUST have ${texts.length} items.
+INPUT FORMAT: JSON array with ${texts.length} numbered items: ["[0] text1", "[1] text2", ...]
+OUTPUT FORMAT: JSON array with ${texts.length} translations: ["[0] 翻译1", "[1] 翻译2", ...]
 
-STRICT RULES:
-- Return EXACTLY ${texts.length} translations in a valid JSON array
-- DO NOT merge duplicate or similar items
-- DO NOT skip any items
-- Each input [n] must have exactly one output [n]
-- DO NOT add any text before or after the JSON array
-- Ensure proper JSON syntax: valid quotes, commas, and brackets
+CRITICAL RULES:
+- Input has ${texts.length} items → Output MUST have ${texts.length} items
+- NEVER merge duplicate items (they have different timestamps)
+- Each [n] input must produce one [n] output, even if text is identical
+- Return ONLY valid JSON array, no extra text
 
 Example:
 Input: ["[0] Hello", "[1] Hello", "[2] World"]
-Output: ["[0] 你好", "[1] 你好", "[2] 世界"]
-
-Your response must be a valid JSON array that can be parsed by JSON.parse().
-Return ONLY the JSON array, nothing else.`
+Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
         },
         {
           role: "user",
@@ -158,6 +156,9 @@ Return ONLY the JSON array, nothing else.`
       // 4. 调用API（动态计算max_completion_tokens，考虑JSON额外开销）
       const jsonOverhead = texts.length * 4; // JSON格式额外字符：[] " " ,
       const estimatedOutputTokens = this.estimateOutputTokens(jsonInput, jsonOverhead);
+
+      // 打印合并日志：模型 + max_completion_tokens + 翻译语言参数
+      console.log(`[OpenAITranslator] 模型=${this.model}, max_completion_tokens=${estimatedOutputTokens}, 翻译语言参数: ${sourceLang} → ${targetLangName}`);
 
       if (signal.aborted) {
         throw new DOMException('OpenAI 翻译已取消', 'AbortError');
@@ -223,13 +224,12 @@ Return ONLY the JSON array, nothing else.`
 
       // 8. 最终数量验证
       if (translations.length !== texts.length) {
-        console.error(`[OpenAITranslator] ❌ 翻译数量不匹配: 期望${texts.length}条，实际${translations.length}条`);
+        // 打印详细调试信息
         console.error(`[OpenAITranslator] 原始输入(全部${texts.length}条):`, cleanedTexts);
-        console.error(`[OpenAITranslator] 带编号结果(全部${numberedTranslations.length}条):`, numberedTranslations);
-        console.error(`[OpenAITranslator] 去编号结果(全部${translations.length}条):`, translations);
+        console.error(`[OpenAITranslator] AI返回结果(全部${numberedTranslations.length}条):`, numberedTranslations);
         console.error(`[OpenAITranslator] API原始响应:`, responseText);
 
-        // JSON方案下，数量不匹配是严重错误，不做自动修复
+        // 抛出错误
         throw new TranslationError(
           `OpenAI 翻译数量不匹配：期望${texts.length}条，实际${translations.length}条`,
           'retryable',
@@ -299,8 +299,6 @@ Return ONLY the JSON array, nothing else.`
       verbosity: 'low'                 // 提高输出完整性
     };
 
-    console.log(`[OpenAITranslator] 🔧 API参数: temperature=${this.temperature}, reasoning_effort=minimal, verbosity=lowni`);
-
     let response: Response;
 
     try {
@@ -335,6 +333,17 @@ Return ONLY the JSON array, nothing else.`
 
     const content = data.choices?.[0]?.message?.content;
     if (!content) {
+      // 添加详细调试信息，帮助排查问题
+      console.error('[OpenAITranslator] API返回结构异常:', {
+        hasChoices: !!data.choices,
+        choicesLength: data.choices?.length,
+        firstChoice: data.choices?.[0],
+        hasMessage: !!data.choices?.[0]?.message,
+        messageContent: data.choices?.[0]?.message?.content,
+        finishReason: data.choices?.[0]?.finish_reason,
+        fullResponse: data
+      });
+
       throw new TranslationError(
         'OpenAI API 返回内容为空',
         'retryable',

@@ -9,6 +9,7 @@ import {
   handleFetchError,
   TranslationError,
 } from '@shared/types/translation-errors';
+import { LanguageCodeMapper } from '@shared/utils/language-code-mapper';
 
 /**
  * DeepSeek API 消息接口
@@ -215,10 +216,14 @@ export class DeepSeekTranslator {
     const combinedText = texts.join(DeepSeekTranslator.SEPARATOR);
     const count = texts.length;
 
+    // 转换目标语言代码为英文名称（Chat API要求）
+    const targetLangName = LanguageCodeMapper.toEnglishName(targetLang);
+    console.log(`[DeepSeekTranslator] 📝 翻译语言参数: ${sourceLang} → ${targetLangName}`);
+
     return [
       {
         role: 'system',
-        content: `You are a professional translator. Translate ALL ${count} subtitles from ${sourceLang} to ${targetLang}.
+        content: `You are a professional translator. Translate ALL ${count} subtitles from ${sourceLang} to ${targetLangName}.
 
 CRITICAL RULES:
 1. Return EXACTLY ${count} translations (one per input text)

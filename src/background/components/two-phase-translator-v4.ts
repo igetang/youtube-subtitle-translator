@@ -99,9 +99,10 @@ export class TwoPhaseTranslatorV4 {
   
   /**
    * 执行紧急翻译（支持取消）
-   * 
+   *
    * @param subtitles 所有字幕
    * @param currentTime 当前播放时间（秒）
+   * @param sourceLang 源语言（如"English"，用于翻译API）
    * @param preferences 用户偏好设置
    * @param signal AbortSignal用于取消操作
    * @returns 紧急翻译结果数组
@@ -115,6 +116,7 @@ export class TwoPhaseTranslatorV4 {
       text: string;
     }>,
     currentTime: number,
+    sourceLang: string,
     preferences: any,
     signal: AbortSignal
   ): Promise<Array<{
@@ -180,7 +182,7 @@ export class TwoPhaseTranslatorV4 {
       if (isMicrosoftService) {
         translatedTexts = await this.translateWithMicrosoftSubtitles(
           urgentBatch,
-          'auto',
+          sourceLang,  // ✅ 使用传入的源语言name
           preferences.targetLang,
           'urgent',
           signal
@@ -189,7 +191,7 @@ export class TwoPhaseTranslatorV4 {
         translatedTexts = await this.callTranslationAPI(
           texts,
           preferences.translationService,
-          'auto',
+          sourceLang,  // ✅ 使用传入的源语言name
           preferences.targetLang,
           signal,
           { stage: 'urgent' }
@@ -229,9 +231,10 @@ export class TwoPhaseTranslatorV4 {
   
   /**
    * 执行批量翻译（支持取消）
-   * 
+   *
    * @param subtitles 所有字幕
    * @param urgentResults 紧急翻译结果（用于去重）
+   * @param sourceLang 源语言（如"English"，用于翻译API）
    * @param preferences 用户偏好设置
    * @param signal AbortSignal用于取消操作
    * @returns 批量翻译结果数组
@@ -245,6 +248,7 @@ export class TwoPhaseTranslatorV4 {
       text: string;
     }>,
     urgentResults: Array<any>,
+    sourceLang: string,
     preferences: any,
     signal: AbortSignal
   ): Promise<Array<{
@@ -368,7 +372,7 @@ export class TwoPhaseTranslatorV4 {
           if (isMicrosoftService) {
             translatedTexts = await this.translateWithMicrosoftSubtitles(
               batch,
-              'auto',
+              sourceLang,  // ✅ 使用传入的源语言name
               preferences.targetLang,
               'batch',
               batchSignal
@@ -377,7 +381,7 @@ export class TwoPhaseTranslatorV4 {
             translatedTexts = await this.callTranslationAPI(
               texts,
               preferences.translationService,
-              'auto',
+              sourceLang,  // ✅ 使用传入的源语言name
               preferences.targetLang,
               batchSignal,
               { stage: 'batch' }
@@ -420,7 +424,8 @@ export class TwoPhaseTranslatorV4 {
             ? '翻译超时'
             : batchError.message || '翻译失败';
 
-          console.error(`[TwoPhaseTranslatorV4] ✗ 批次 ${i + 1}/${batches.length} 失败:`, batchError);
+          // 批次失败改为debug（避免重复打印，真正的错误已在OpenAI/DeepSeek/Gemini层打印）
+          console.debug(`[debug][TwoPhaseTranslatorV4] 批次 ${i + 1}/${batches.length} 失败: ${errorMsg}`);
           throw new Error(errorMsg);
         }
       }
@@ -431,9 +436,8 @@ export class TwoPhaseTranslatorV4 {
     } catch (error: any) {
       if (error.name === 'AbortError') {
         console.log('[TwoPhaseTranslatorV4] ✗ 批量翻译被取消');
-      } else {
-        console.error('[TwoPhaseTranslatorV4] ✗ 批量翻译失败:', error);
       }
+      // 删除重复的错误日志（已在批次层和最外层打印）
       throw error;
     }
     

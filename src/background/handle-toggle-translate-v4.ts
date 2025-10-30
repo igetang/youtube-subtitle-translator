@@ -145,7 +145,9 @@ export async function handleToggleTranslateV4(
         ? `[debug][service-worker-v4] Stage 2: 源语言缓存 [命中] | 可用轨道: ${sourceData.availableSourceLanguages?.length || 0}个${sourceData.selectedSourceTrack ? ' | 已选: ' + sourceData.selectedSourceTrack.languageCode + (sourceData.selectedSourceTrack.kind ? ' (' + sourceData.selectedSourceTrack.kind + ')' : '') : ''}`
         : '[debug][service-worker-v4] Stage 2: 源语言缓存 [未命中]'
     );
-    let sourceLang = 'auto';
+    // ✅ 新架构：同时保存 languageCode 和 name
+    let sourceLanguageCode = 'auto';  // 用于YouTube API
+    let sourceLanguageName = 'auto';  // 用于翻译API
     let sourceKind: string | undefined;
 
     // 如果有缓存的轨道信息，先尝试使用缓存选择源语言
@@ -168,7 +170,7 @@ export async function handleToggleTranslateV4(
         return manual || candidates[0];
       };
 
-      let sourceTrack: { languageCode: string; kind?: string } | undefined;
+      let sourceTrack: { languageCode: string; name: string; kind?: string } | undefined;
 
       if (requestedSourceLang) {
         const candidates = availableTracks.filter(track => track.languageCode === requestedSourceLang);
@@ -194,9 +196,12 @@ export async function handleToggleTranslateV4(
         );
       }
 
-      sourceLang = sourceTrack.languageCode;
+      // ✅ 统一使用YouTube API原始字段命名
+      sourceLanguageCode = sourceTrack.languageCode;  // 用于YouTube API（如 "en"）
+      sourceLanguageName = sourceTrack.name;          // 用于翻译API（如 "English"）
       sourceKind = sourceTrack.kind;
-      console.log('[service-worker-v4] ✓ 选择源语言: ' + sourceLang +
+      console.log('[service-worker-v4] ✓ 选择源语言: ' + sourceLanguageName +
+                  ' [' + sourceLanguageCode + ']' +
                   (sourceKind ? ' (' + sourceKind + ')' : '') +
                   (requestedSourceLang ? ' [用户指定]' : ' [自动选择]'));
     }
@@ -226,10 +231,10 @@ export async function handleToggleTranslateV4(
       }
     };
 
-    // 检查完整缓存（使用初步选择的源语言）
+    // 检查完整缓存（使用初步选择的源语言name）
     const cachedResult = await translationCacheManager.get(
       videoId,
-      sourceLang,
+      sourceLanguageName,  // ✅ 缓存键使用name
       sourceKind,
       preferences.targetLang,
       preferences.translationService
@@ -239,7 +244,7 @@ export async function handleToggleTranslateV4(
       console.log('[service-worker-v4] ✓ 命中完整缓存');
 
       // 即使缓存命中也要切换字幕轨道
-      await sendSetSubtitleTrack(sourceLang, sourceKind);
+      await sendSetSubtitleTrack(sourceLanguageCode, sourceKind);  // ✅ YouTube API使用code
 
       console.log('[service-worker-v4] → 设置状态为 ACTIVE（缓存命中）');
       await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
@@ -260,7 +265,7 @@ export async function handleToggleTranslateV4(
     console.log('[service-worker-v4] → Stage 3: 获取字幕轨道');
 
     // 如果没有缓存的轨道信息，或源语言仍是auto，主动获取轨道
-    if (!sourceData?.availableSourceLanguages?.length || sourceLang === 'auto') {
+    if (!sourceData?.availableSourceLanguages?.length || sourceLanguageCode === 'auto') {
       try {
         // 获取可用字幕轨道（先尝试playerResponse，再兜底Player API）
         const trackResponse = await session.executeStage(
@@ -322,33 +327,43 @@ export async function handleToggleTranslateV4(
             console.warn('[service-worker-v4] 轨道快照记录失败:', snapshotError);
           }
 
+          // ✅ 保持YouTube API原始字段：languageCode 和 name
+          // 不需要转换字段名，直接使用API返回的数据
+
           // 使用智能选择算法选择最佳源语言
           const sourceTrack = selectBestSourceLanguage(
-            trackResponse.tracks,
+            trackResponse.tracks,  // 直接传递原始tracks
             preferences.targetLang,
             sourceData?.selectedSourceTrack
           );
-          sourceLang = sourceTrack.languageCode;
+          // ✅ 统一使用YouTube API原始字段命名
+          sourceLanguageCode = sourceTrack.languageCode;  // 用于YouTube API（如 "en"）
+          sourceLanguageName = sourceTrack.name;          // 用于翻译API（如 "English"）
           sourceKind = sourceTrack.kind;
-          console.log('[service-worker-v4] ✓ 智能选择并设置: ' + sourceLang +
+          console.log('[service-worker-v4] ✓ 智能选择并设置: ' + sourceLanguageName +
+                      ' [' + sourceLanguageCode + ']' +
                       (sourceKind ? ' (' + sourceKind + ')' : '') +
                       ' | 可用: ' + trackResponse.tracks.length + '个');
 
-          await sendSetSubtitleTrack(sourceLang, sourceKind);
+          await sendSetSubtitleTrack(sourceLanguageCode, sourceKind);  // ✅ YouTube API使用code
 
           // 异步缓存轨道信息（不阻塞主流程）
           Promise.resolve().then(async () => {
             try {
               const trackMetadata = trackResponse.tracks.map((track: any) => ({
                 languageCode: track.languageCode,
-                name: track.name,
+                name: track.name,  // ✅ 保持YouTube API原始字段名
                 kind: track.kind
               }));
 
               await videoSourceLanguageCacheManager.set({
                 videoId: videoId,
                 availableSourceLanguages: trackMetadata,
-                selectedSourceTrack: sourceTrack
+                selectedSourceTrack: {
+                  languageCode: sourceLanguageCode,
+                  name: sourceLanguageName,
+                  kind: sourceKind
+                }
               });
             } catch (err) {
               console.error('[service-worker-v4] 轨道缓存失败:', err);
@@ -356,16 +371,18 @@ export async function handleToggleTranslateV4(
           });
         } else {
           console.warn('[service-worker-v4] 未能获取轨道信息，继续使用auto');
-          sourceLang = 'auto';
+          sourceLanguageCode = 'auto';
+          sourceLanguageName = 'auto';
         }
       } catch (error) {
         console.warn('[service-worker-v4] 获取轨道信息失败，继续使用auto:', error);
-        sourceLang = 'auto';
+        sourceLanguageCode = 'auto';
+        sourceLanguageName = 'auto';
       }
     } else {
-      console.log(`[service-worker-v4] 已有缓存轨道信息，源语言: ${sourceLang}` +
+      console.log(`[service-worker-v4] 已有缓存轨道信息，源语言: ${sourceLanguageName}` +
                   (sourceKind ? ` (${sourceKind})` : ''));
-      await sendSetSubtitleTrack(sourceLang, sourceKind);
+      await sendSetSubtitleTrack(sourceLanguageCode, sourceKind);  // ✅ YouTube API使用code
     }
 
     // ========== Stage 4: 获取字幕（5秒超时）==========
@@ -373,10 +390,10 @@ export async function handleToggleTranslateV4(
 
     let subtitleData: SubtitleData | null = null;
 
-    if (reuseOriginalSubtitles && sourceLang && sourceLang !== 'auto') {
+    if (reuseOriginalSubtitles && sourceLanguageName && sourceLanguageName !== 'auto') {
       try {
-        const cachedEntries = await translationCacheManager.findByVideoAndSourceLang(videoId, sourceLang);
-        const reusableEntry = cachedEntries.find(entry => entry.originalSubtitles);
+        const cachedEntries = await translationCacheManager.findByVideoAndSourceLang(videoId, sourceLanguageName);
+        const reusableEntry = cachedEntries.find((entry: any) => entry.originalSubtitles);
 
         if (reusableEntry?.originalSubtitles) {
           const parsed = parseVttString(reusableEntry.originalSubtitles, false);
@@ -388,7 +405,7 @@ export async function handleToggleTranslateV4(
                 end: entry.start + entry.duration,
                 index: idx
               })),
-              sourceLang: sourceLang,
+              sourceLang: sourceLanguageName,  // ✅ 使用name
               currentTime: typeof currentTime === 'number' ? currentTime : 0
             };
             console.log('[service-worker-v4] ✓ 复用缓存字幕: ' + parsed.length + ' 条');
@@ -405,12 +422,13 @@ export async function handleToggleTranslateV4(
         async (signal) => {
           const triggerPayload = {
             type: 'TRIGGER_SUBTITLE_LOAD',
-            sourceLang: sourceLang,
+            sourceLanguageCode: sourceLanguageCode,  // ✅ 传递code（用于YouTube API）
+            sourceLanguageName: sourceLanguageName,  // ✅ 传递name（用于翻译API）
             sourceKind: sourceKind,
             originalSubtitleState: originalSubtitleState  // 传递原始状态
           };
-          console.debug('[debug][service-worker-v4] → 触发字幕加载' +
-                      (triggerPayload.sourceLang ? ': ' + triggerPayload.sourceLang : ''));
+          console.debug('[debug][service-worker-v4] → 触发字幕加载: ' + sourceLanguageName +
+                      ' [' + sourceLanguageCode + ']');
           await chrome.tabs.sendMessage(tabId, triggerPayload);
           return true;
         },
@@ -467,12 +485,12 @@ export async function handleToggleTranslateV4(
 
     const effectiveSubtitleData = subtitleData as SubtitleData;
 
-    console.log(`[service-worker-v4] Stage 4: 字幕数据 [就绪] | ${effectiveSubtitleData.subtitles.length} 条 | 源语言: ${sourceLang}`);
+    console.log(`[service-worker-v4] Stage 4: 字幕数据 [就绪] | ${effectiveSubtitleData.subtitles.length} 条 | 源语言: ${sourceLanguageName}`);
 
     // 如果字幕数据中包含源语言信息，且当前是auto，更新源语言
-    if (effectiveSubtitleData.sourceLang && sourceLang === 'auto') {
-      sourceLang = effectiveSubtitleData.sourceLang;
-      console.log(`[service-worker-v4] 使用字幕数据中的源语言: ${sourceLang}`);
+    if (effectiveSubtitleData.sourceLang && sourceLanguageName === 'auto') {
+      sourceLanguageName = effectiveSubtitleData.sourceLang;
+      console.log(`[service-worker-v4] 使用字幕数据中的源语言: ${sourceLanguageName}`);
     }
     
     // ========== Stage 4: 执行翻译 ==========
@@ -495,6 +513,7 @@ export async function handleToggleTranslateV4(
           return await translator.translateUrgent(
             effectiveSubtitleData.subtitles,
             effectiveSubtitleData.currentTime || 0,
+            sourceLanguageName,  // ✅ 传递源语言name
             preferences,
             signal
           );
@@ -632,6 +651,7 @@ export async function handleToggleTranslateV4(
         return await translator.translateBatch(
           effectiveSubtitleData.subtitles,
           urgentResults,
+          sourceLanguageName,  // ✅ 传递源语言name
           preferences,
           signal
         );
@@ -700,8 +720,8 @@ export async function handleToggleTranslateV4(
     // 异步保存缓存（使用VTT格式）
     saveTranslationCacheAsync(
       videoId,
-      sourceLang,
-      sourceKind,       // 传递sourceKind
+      sourceLanguageName,  // ✅ 缓存键使用name
+      sourceKind as 'asr' | 'forced' | undefined,  // 传递sourceKind
       preferences,
       originalVtt,      // VTT格式
       translatedVtt,    // VTT格式

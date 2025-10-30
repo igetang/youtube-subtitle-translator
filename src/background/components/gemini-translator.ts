@@ -81,6 +81,7 @@ const MODEL_CONFIGS: Record<string, {
  * Gemini翻译器类 - V4架构
  */
 import { handleFetchError, TranslationError } from '@shared/types/translation-errors';
+import { LanguageCodeMapper } from '@shared/utils/language-code-mapper';
 
 export class GeminiTranslator {
   private apiKey: string;
@@ -276,8 +277,12 @@ export class GeminiTranslator {
     sourceLang: string,
     targetLang: string
   ): string {
+    // 转换目标语言代码为英文名称（Chat API要求）
+    const targetLangName = LanguageCodeMapper.toEnglishName(targetLang);
+    console.log(`[GeminiTranslator] 📝 翻译语言参数: ${sourceLang} → ${targetLangName}`);
+
     return `You are a professional subtitle translator.
-Translate from ${sourceLang} to ${targetLang}.
+Translate from ${sourceLang} to ${targetLangName}.
 
 INPUT FORMAT: YAML containing ${count} subtitle items (id + text)
 OUTPUT FORMAT: YAML with EXACTLY ${count} translated items (keep the same id numbers!)

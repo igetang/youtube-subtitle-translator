@@ -118,6 +118,10 @@
 - [x] 修复popup源语言下拉框中英混合显示问题
 - [x] 修改vite构建配置，从 `_locales` 复制i18n文件
 - [x] 删除 `public/_locales` 避免vite默认复制覆盖
+- [x] 实现语言代码映射修复方案（`docs/language-mapping-fix.md`）
+- [x] 修复源语言数据流（从'auto'到实际语言名称如'English'）
+- [x] 优化OpenAI翻译器Prompt（精简+明确输入输出格式）
+- [x] 精简OpenAI翻译器错误日志（删除重复日志）
 
 ## 📋 最近3天的重要改动
 
@@ -125,6 +129,15 @@
 - **修复popup语言显示bug**：解决源语言下拉框中英混合问题
 - **优化构建配置**：改用 `_locales` 作为单一i18n数据源
 - **删除冗余目录**：移除 `public/_locales` 避免文件不同步
+- **✅ 实现语言代码映射修复**：完成 `docs/language-mapping-fix.md` 方案
+  - 创建 `LanguageCodeMapper` 工具类（使用浏览器内置Intl.DisplayNames API）
+  - 修复源语言数据流：统一使用YouTube API的 `languageCode` + `name` 字段
+  - 优化Chat API Prompt：从"zh-CN to ru"改为"Chinese to Russian"
+  - 修改文件：handle-toggle-translate-v4.ts, openai-translator.ts, deepseek-translator.ts, gemini-translator.ts
+- **优化OpenAI翻译器**：
+  - 精简Prompt（21行→14行），明确INPUT/OUTPUT格式
+  - 精简错误日志（5条→3条），删除重复信息
+  - 合并初始化日志为单行
 
 ### 2025-10-27
 - **Popup UI布局修复**：解决API密钥输入框右边比其他框短的问题（根本原因：flex布局的align-items）
@@ -184,13 +197,32 @@
 
 ## 🐛 已知问题
 
-1. **用户偏好重复获取**（优先级：低）
+1. **OpenAI翻译数量不匹配**（优先级：高）
+   - 现象：15条字幕输入，返回13-14条翻译
+   - 影响：翻译失败，用户无法看到字幕
+   - 原因分析：GPT-5模型可能"智能"合并重复字幕内容
+   - 解决尝试：
+     - ✅ 已强化Prompt（明确INPUT/OUTPUT格式、禁止合并duplicate items）
+     - ⏳ 观察新Prompt效果
+   - 状态：持续监控中
+
+2. **用户偏好重复获取**（优先级：低）
    - 现象：user-preferences-manager被调用2次
    - 影响：轻微性能损耗
    - 原因：getAllState和handleToggleTranslateV4都在获取
 
 ## ✅ 本周完成
 
+- **语言代码映射修复**（2025-10-30）
+  - 创建LanguageCodeMapper工具类
+  - 修复源语言数据流（auto→实际语言名）
+  - 优化Chat API Prompt（代码→英文名称）
+- **OpenAI翻译器优化**（2025-10-30）
+  - Prompt精简（21行→14行）
+  - 错误日志优化（删除重复）
+- **Popup UI修复**（2025-10-27/10-30）
+  - API密钥输入框对齐
+  - 源语言下拉框中英混合问题
 - AbortController替代SimpleWatchdog
 - 时间间隔断句替代语言规则（1000行→200行）
 - Google免费翻译API集成
@@ -199,8 +231,10 @@
 
 ## 📝 下一步计划
 
-1. **立即**：完成文档与归档目录的审阅标注，形成处理清单
-2. **本周**：根据审阅结果合并/更新核心文档，清理过期调试脚本与截图
+1. **立即**：监控OpenAI翻译数量不匹配问题，评估新Prompt效果
+2. **本周**：
+   - 如果数量不匹配问题持续，考虑减小批次大小（20→10）
+   - 完成文档与归档目录的审阅标注
 3. **下周**：评估翻译流程性能（减少重复调用与日志开销），补充缺失的自动化测试
 4. **待定**：扩展额外翻译服务支持（保持架构兼容）
 
@@ -211,6 +245,8 @@
 - **为什么用特殊分隔符**：避免Google API插入的换行符干扰（已验证有效）
 - **为什么批量翻译不合并紧急结果**：简化逻辑，批量翻译包含全部字幕且质量更高（2025-09-22）
 - **为什么每批次前都延迟200ms**：避免API限流，包括第一批（2025-09-22）
+- **为什么使用Intl.DisplayNames**：浏览器内置API，零维护成本，支持8000+语言组合（2025-10-30）
+- **为什么Chat API用英文名称**：官方最佳实践，避免AI误解语言代码（2025-10-30）
 
 ---
 *提示：这个文件应该每天更新，保持信息实时性*

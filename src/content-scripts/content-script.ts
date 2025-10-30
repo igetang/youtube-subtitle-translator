@@ -604,9 +604,15 @@ function setupMessageHandlers(): void {
     if (messageType === 'TRIGGER_SUBTITLE_LOAD') {
       console.log('[content-script] 收到触发字幕加载请求');
 
-      // 提取sourceLang、sourceKind和originalSubtitleState参数
-      const { sourceLang, sourceKind, originalSubtitleState } = message;
-      console.debug(`[debug][content-script] 收到源语言: ${sourceLang}, 字幕类型: ${sourceKind}`);
+      // ✅ 提取 sourceLanguageCode, sourceLanguageName, sourceKind 和 originalSubtitleState 参数
+      const { sourceLanguageCode, sourceLanguageName, sourceKind, originalSubtitleState } = message;
+      console.debug(`[debug][content-script] 收到源语言: ${sourceLanguageName} [${sourceLanguageCode}], 字幕类型: ${sourceKind}`);
+
+      // ✅ 保存源语言name到capturedSourceLang（用于后续SUBTITLE_DATA消息）
+      if (sourceLanguageName) {
+        capturedSourceLang = sourceLanguageName;
+        console.debug(`[debug][content-script] 保存源语言name: ${capturedSourceLang}`);
+      }
 
       // 使用传递过来的原始状态，而不是重新读取
       if (originalSubtitleState !== undefined) {
@@ -622,7 +628,8 @@ function setupMessageHandlers(): void {
       window.postMessage({
         source: 'content-script',
         type: 'REQUEST_SUBTITLE_CAPTURE',
-        sourceLang: sourceLang,
+        sourceLanguageCode: sourceLanguageCode,  // ✅ 传递code（保留，暂时未使用）
+        sourceLanguageName: sourceLanguageName,  // ✅ 传递name
         sourceKind: sourceKind,
         originalSubtitleState: originalSubtitleState  // 传递原始状态
       }, '*');

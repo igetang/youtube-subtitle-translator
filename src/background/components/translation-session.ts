@@ -163,14 +163,14 @@ export class TranslationSession {
         throw new SessionAbortError(this.sessionId, stage, '用户取消操作');
         
       } else {
-        // 其他错误
-        console.error(`[TranslationSession] ✗ ${stage} 失败，耗时: ${elapsed}ms，错误:`, error);
-        
+        // 其他错误 - 改为debug（避免重复打印，真正的错误已在底层打印）
+        console.debug(`[debug][TranslationSession] ${stage} 失败，耗时: ${elapsed}ms`);
+
         if (fallback !== undefined && !critical) {
           console.log(`[TranslationSession] → 使用降级方案处理错误: ${stage}`);
           return fallback;
         }
-        
+
         throw error;
       }
     }

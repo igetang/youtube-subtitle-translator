@@ -1,5 +1,9 @@
 # 语言代码映射修复方案
 
+> **✅ 状态：已实现**
+> **实现日期：** 2025-10-30
+> **实现版本：** v4.3.2
+
 ## 📋 问题描述
 
 ### 现象
@@ -457,6 +461,53 @@ npm run build
 
 ---
 
+## ✅ 实现记录
+
+### 实现内容（2025-10-30）
+
+1. **✅ 创建映射工具**
+   - 文件：`src/shared/utils/language-code-mapper.ts`
+   - 实现：使用 `Intl.DisplayNames` API 转换语言代码为英文名称
+   - 特性：单例模式、零维护成本、支持8000+语言组合
+
+2. **✅ 修改源语言数据流**
+   - 文件：`src/background/handle-toggle-translate-v4.ts`
+   - 改动：使用双变量 `sourceLanguageCode` + `sourceLanguageName`
+   - 原因：YouTube API返回包含code和name，分别用于不同场景
+
+3. **✅ 修改OpenAI翻译器**
+   - 文件：`src/background/components/openai-translator.ts`
+   - 改动：使用 `LanguageCodeMapper.toEnglishName(targetLang)` 转换目标语言
+   - Prompt：从 `"Translate from zh-CN to ru"` 改为 `"Translate from Chinese to Russian"`
+
+4. **✅ 修改DeepSeek翻译器**
+   - 文件：`src/background/components/deepseek-translator.ts`
+   - 改动：同OpenAI，使用英文名称生成Prompt
+
+5. **✅ 修改Gemini翻译器**
+   - 文件：`src/background/components/gemini-translator.ts`
+   - 改动：同OpenAI，使用英文名称生成Prompt
+
+6. **✅ 额外优化**
+   - 统一字段命名：YouTube API原始字段 `languageCode` + `name`
+   - 修复数据流：从轨道选择到翻译API调用，完整传递源语言信息
+   - 日志优化：合并OpenAI翻译器初始化日志，精简错误日志
+
+### 测试验证
+
+- ✅ 中文 → 俄语（OpenAI）- Prompt使用 "Chinese to Russian"
+- ✅ 源语言正确传递：从 'auto' 修复为实际语言名称（如 'English'）
+- ✅ 目标语言正确转换：从代码（'ru'）转换为名称（'Russian'）
+
+### 已知问题
+
+- ⚠️ OpenAI翻译数量不匹配：15条输入返回13-14条输出
+  - 原因分析：GPT-5模型可能"智能"合并重复字幕
+  - 解决尝试：强化Prompt（明确输入输出格式、禁止合并重复项）
+  - 状态：持续观察中
+
+---
+
 ## 📝 相关文档
 
 - **架构文档：** `docs/architecture/01-design-principles.md`
@@ -465,6 +516,6 @@ npm run build
 
 ---
 
-**文档版本：** 1.0
+**文档版本：** 2.0
 **创建日期：** 2025-10-30
-**最后更新：** 2025-10-30
+**最后更新：** 2025-10-30（已实现）

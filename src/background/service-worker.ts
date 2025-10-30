@@ -2155,9 +2155,9 @@ function selectBestSourceLanguage(
   tracks: Array<{ languageCode: string; name: string; kind?: 'asr' | 'forced' }>,
   targetLang: string,
   lastSelectedTrack?: { languageCode: string; kind?: 'asr' | 'forced' }
-): { languageCode: string; kind?: 'asr' | 'forced' } {
+): { languageCode: string; name: string; kind?: 'asr' | 'forced' } {
   if (!tracks || tracks.length === 0) {
-    return { languageCode: 'en' }; // 默认返回英语
+    return { languageCode: 'en', name: 'English' }; // 默认返回英语
   }
 
   // 规则1: 用户历史选择优先
@@ -2171,7 +2171,11 @@ function selectBestSourceLanguage(
       const matchedTrack = exactKind || candidates[0];
       console.debug(`[debug][service-worker] 使用用户历史选择: ${matchedTrack.languageCode}` +
         (matchedTrack.kind ? ` (${matchedTrack.kind})` : ''));
-      return { languageCode: matchedTrack.languageCode, kind: matchedTrack.kind };
+      return {
+        languageCode: matchedTrack.languageCode,
+        name: matchedTrack.name,
+        kind: matchedTrack.kind
+      };
     }
   }
 
@@ -2186,26 +2190,43 @@ function selectBestSourceLanguage(
     const englishManual = manualTracks.find(t => t.languageCode.startsWith('en'));
     if (englishManual) {
       console.debug(`[debug][service-worker] 选择英语手动字幕: ${englishManual.languageCode}`);
-      return { languageCode: englishManual.languageCode, kind: englishManual.kind };
+      return {
+        languageCode: englishManual.languageCode,
+        name: englishManual.name,
+        kind: englishManual.kind
+      };
     }
 
     const englishAsr = asrTracks.find(t => t.languageCode.startsWith('en'));
     if (englishAsr) {
       console.debug(`[debug][service-worker] 选择英语ASR字幕: ${englishAsr.languageCode}`);
-      return { languageCode: englishAsr.languageCode, kind: englishAsr.kind };
+      return {
+        languageCode: englishAsr.languageCode,
+        name: englishAsr.name,
+        kind: englishAsr.kind
+      };
     }
   }
 
   // 规则3: 手动字幕优先（非英语或目标为英语时）
   if (manualTracks.length > 0) {
-    console.debug(`[debug][service-worker] 选择手动字幕: ${manualTracks[0].languageCode}`);
-    return { languageCode: manualTracks[0].languageCode, kind: manualTracks[0].kind };
+    const selected = manualTracks[0];
+    console.debug(`[debug][service-worker] 选择手动字幕: ${selected.languageCode}`);
+    return {
+      languageCode: selected.languageCode,
+      name: selected.name,
+      kind: selected.kind
+    };
   }
 
   // 规则4: 降级策略 - 使用第一个可用轨道
   const selected = tracks[0];
   console.debug(`[debug][service-worker] 使用默认轨道: ${selected.languageCode} (${selected.kind === 'asr' ? 'ASR' : '手动'})`);
-  return { languageCode: selected.languageCode, kind: selected.kind };
+  return {
+    languageCode: selected.languageCode,
+    name: selected.name,
+    kind: selected.kind
+  };
 }
 
 /**
