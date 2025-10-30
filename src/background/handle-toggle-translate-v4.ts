@@ -533,20 +533,8 @@ export async function handleToggleTranslateV4(
     // 检查紧急翻译是否失败
     if (urgentResults.length === 0) {
       console.log('[service-worker-v4] ⚠️ 紧急翻译失败，继续批量翻译');
-
-      // 发送警告消息给用户
-      try {
-        await chrome.tabs.sendMessage(tabId, {
-          type: 'SHOW_WARNING_MESSAGE',
-          data: {
-            message: '快速翻译失败，正在执行完整翻译...',
-            level: 'warning',
-            duration: ERROR_MESSAGE_DURATION
-          }
-        });
-      } catch (err) {
-        console.error('[service-worker-v4] 发送警告消息失败:', err);
-      }
+      // retryable错误静默处理，批量翻译将覆盖全部内容
+      // fatal错误已在上面抛出，不会执行到这里
     } else {
       // 立即发送紧急翻译结果到content-script显示
       console.log('[service-worker-v4] → 发送紧急翻译结果到前端显示');

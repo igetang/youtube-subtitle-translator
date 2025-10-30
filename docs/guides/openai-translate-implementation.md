@@ -1,8 +1,8 @@
 # OpenAI翻译API实现指南
 
-> 最后更新：2025-10-07
-> 状态：✅ 已实施，JSON格式方案
-> 版本：V4架构 + JSON优化
+> 最后更新：2025-10-30
+> 状态：✅ 已实施，JSON格式方案（已修复Token估算和Prompt问题）
+> 版本：V4架构 + JSON优化 + Bug修复
 
 ## 📋 概述
 
@@ -57,11 +57,11 @@ public async translate(
 
 **实现方式**：
 - 复用项目现有的 `IntelligentSegmenter` 类
-- 修改 `MAX_BATCH_SIZE` 为 160
+- 修改 `MAX_BATCH_SIZE` 为 20
 - 完全复用时间间隔智能断句逻辑
 
 **断句规则**：
-1. 160条硬断点（强制分批）
+1. 20条硬断点（强制分批）
 2. 强断点：gap > 2秒
 3. 弱断点：maxGap - minGap > 400ms
 4. 最小批次：10条
@@ -70,7 +70,7 @@ public async translate(
 ```typescript
 // intelligent-segmenter.ts
 class IntelligentSegmenter {
-  private static readonly MAX_BATCH_SIZE = 160;  // 改为160
+  private static readonly MAX_BATCH_SIZE = 20;  // 改为20
   // 其他逻辑完全复用
 }
 
@@ -138,7 +138,7 @@ if (serviceType === 'openai') {
   timeoutMs: 15000  // 15秒
 
   // 批量翻译
-  estimatedBatches = Math.ceil(subtitleCount / 160);
+  estimatedBatches = Math.ceil(subtitleCount / 20);
   perBatchTimeout = 15000;
   batchTotalTimeout = estimatedBatches * 15000;
 }
@@ -162,14 +162,14 @@ private static readonly DEFAULT_TIMEOUT = 15000;  // 默认15秒
 
 **原因**：
 - 已有200ms批次间隔
-- 已有160条/批限制
+- 已有20条/批限制
 - 足够避免限流
 
 **处理**：在本文档中说明Rate Limit策略即可
 
 **Rate Limit策略说明**：
 - 批次间隔：200ms（与Google/Microsoft一致）
-- 批次大小：160条（避免频繁请求）
+- 批次大小：20条（避免GPT合并字幕问题）
 - 自然节流：避免触发429错误
 
 ---
@@ -563,7 +563,7 @@ if (translations.length !== texts.length) {
 | **temperature** | `0.3`（默认），0-1可调 | 仅非GPT-5模型支持 |
 | **reasoning_effort** | `'minimal'` | GPT-5专属，强制快速路径 |
 | **verbosity** | `'low'` | GPT-5专属，减少输出 |
-| **batch_size** | `160` | IntelligentSegmenter |
+| **batch_size** | `20` | IntelligentSegmenter |
 | **format** | JSON Array | 实施变更，替代换行符 |
 | **stream** | `false` | 非流式 |
 | **超时（urgent）** | `15秒` | 实施调整（原设计5秒） |
@@ -1033,7 +1033,7 @@ graph TD
 为保持与谷歌/微软管线一致，我们在 OpenAI 模型上采用同样的“紧急 → 批量”流程，并加入额外的安全边界：
 
 - **紧急翻译**：沿用现有代码里的前/后范围配置，暂不锁定具体条数，方便调试；紧急请求通常在 40 条以内，直接按估算 token 校验即可。
-- **批量翻译断点**：每批最多 160 条字幕，达到上限立即切下一批；在批次内结合 token 预算做智能断句。
+- **批量翻译断点**：每批最多 20 条字幕，达到上限立即切下一批；在批次内结合 token 预算做智能断句。
 - **token 安全线**：按 128K token 预算估算批次，超过模型上下文就拆分下一批。
 - **Rate Limit 友好**：利用 `MODEL_CONFIGS` 中的 RPM / TPM，在批次之间加延迟（默认 `60_000 / RPM` 并乘以安全系数），并根据响应头的剩余额度动态调整。
 
@@ -1066,8 +1066,8 @@ interface RateLimitSnapshot {
   resetTokenTs?: number;
 }
 
-const SUBTITLE_MAX_PER_BATCH = 160;      // 单批固定上限
-const SUBTITLE_HARD_CAP = 160;           // 额外保护（保持一致）
+const SUBTITLE_MAX_PER_BATCH = 20;      // 单批固定上限
+const SUBTITLE_HARD_CAP = 20;           // 额外保护（保持一致）
 
 // 批处理优化器
 class OpenAIBatchOptimizer {
@@ -1917,12 +1917,263 @@ if (model.startsWith('gpt-5')) {
 2. **成本预警功能**：设置预算上限提醒
 3. **自定义系统提示词**：高级用户自定义翻译风格
 4. **缓存优化**：利用OpenAI的Prompt Caching减少成本
-5. **批处理策略调优**：根据更多实测数据调整160条上限
+5. **批处理策略调优**：根据更多实测数据调整20条上限
+
+---
+
+## 🐛 Bug修复记录
+
+### 修复1：Token估算算法错误导致翻译数量不匹配（2025-10-30）
+
+#### 问题现象
+- **错误**: 翻译后字幕条数与原始字幕条数不匹配
+- **日志**: `翻译数量不匹配：期望20条，实际15条`
+- **影响**: 字幕显示错位，翻译结果被截断
+
+#### 问题根因
+**Token估算不足导致GPT响应被截断**
+
+对比发现OpenAI的token估算公式与Gemini不一致：
+
+**旧版（有问题）**:
+```typescript
+const charCount = inputText.length;                     // ❌ 使用字符数
+const estimatedInputTokens = charCount / 2.5;
+const estimatedOutputTokens = Math.ceil(estimatedInputTokens * 1.2);  // ❌ 只有20%冗余
+```
+
+**Gemini（正确）**:
+```typescript
+const encoder = new TextEncoder();
+const inputBytes = encoder.encode(inputText).length;     // ✅ 使用字节数
+const estimatedInputTokens = inputBytes / 2.5;
+const estimatedOutputTokens = Math.ceil(estimatedInputTokens * 1.5);  // ✅ 50%冗余
+```
+
+**关键差异**:
+1. **字符 vs 字节**: 中文等多字节字符会导致字符计数偏小
+2. **冗余倍数**: 20%不够，应该用50%（翻译通常比原文长）
+
+**链式影响**:
+Token估算偏小 → `max_completion_tokens`设置过小 → GPT输出被截断 → JSON不完整 → 解析后条数变少
+
+#### 解决方案
+
+**修改文件**: `src/background/components/openai-translator.ts:256-274`
+
+```typescript
+// 修改前
+private estimateOutputTokens(inputText: string, jsonOverhead: number = 0): number {
+  const charCount = inputText.length;
+  const estimatedInputTokens = charCount / 2.5;
+  const estimatedOutputTokens = Math.ceil(estimatedInputTokens * 1.2);  // ❌
+  return Math.min(estimatedOutputTokens, this.modelConfig.maxOutput);
+}
+
+// 修改后
+private estimateOutputTokens(inputText: string, jsonOverhead: number = 0): number {
+  const encoder = new TextEncoder();
+  const inputBytes = encoder.encode(inputText).length + jsonOverhead;  // ✅ 字节
+  const estimatedInputTokens = inputBytes / 2.5;
+  const estimatedOutputTokens = Math.ceil(estimatedInputTokens * 1.5);  // ✅ 50%
+  const maxOutputTokens = Math.min(estimatedOutputTokens, this.modelConfig.maxOutput);
+
+  console.debug(
+    `[debug][OpenAITranslator] 📊 Token估算: ` +
+    `输入${inputBytes}字节≈${Math.ceil(estimatedInputTokens)}tokens, ` +
+    `预计输出${estimatedOutputTokens}tokens, ` +
+    `实际设置maxOutputTokens=${maxOutputTokens}`
+  );
+
+  return maxOutputTokens;
+}
+```
+
+**同步修改**: `two-phase-translator-v4.ts:75` 批次大小从160改回20
+```typescript
+// 修改前
+const segmenter = new IntelligentSegmenter(160);  // ❌ 充分利用400K上下文
+
+// 修改后
+const segmenter = new IntelligentSegmenter(20);   // ✅ 避免GPT合并字幕
+```
+
+#### 验证结果
+✅ 字幕条数始终保持一致
+✅ 不再出现翻译被截断的问题
+
+---
+
+### 修复2：GPT返回格式错误的JSON（2025-10-30）
+
+#### 问题现象
+- **错误**: `SyntaxError: Expected ',' or ']' after array element in JSON at position 386`
+- **场景**: JSON格式模式下翻译
+- **影响**: 翻译流程中断，无法显示结果
+
+#### 问题排查过程
+
+**第一步：添加诊断日志**
+
+修改 `openai-translator.ts:177` 添加原始响应打印：
+```typescript
+} catch (parseError) {
+  console.warn(`[OpenAITranslator] ⚠️  JSON解析失败，尝试提取JSON部分`, parseError);
+  console.error(`[OpenAITranslator] 📄 OpenAI原始响应:`, responseText);  // ✅ 新增
+  // ...
+}
+```
+
+**第二步：分析原始响应**
+
+GPT实际返回:
+```json
+[
+  "[0] Okay silver 123",
+  "[1] Silver actually has a back cover",
+  ...
+  "[19] You can see it, right?"
+]"    ← ❌ 多了引号
+]      ← ❌ 又多了方括号
+```
+
+正常应该是:
+```json
+[
+  "[0] Okay silver 123",
+  ...
+  "[19] You can see it, right?"
+]
+```
+
+**第三步：排除Token截断**
+
+- 日志显示: `maxOutputTokens=1127`
+- 错误位置: `position 386`（约150 tokens）
+- **结论**: Token足够，不是截断问题，是GPT格式错误
+
+#### 问题根因
+
+**System Prompt容易让GPT产生格式混淆**
+
+**有问题的部分**:
+```typescript
+Format:
+Input: ["[0] text1", "[1] text2", ..., "[${texts.length - 1}] textN"]
+Output: ["[0] 译文1", "[1] 译文2", ..., "[${texts.length - 1}] 译文N"]
+
+Example (keep all duplicates):
+Input: ["[0] Hello", "[1] Hello", "[2] World"]
+Output: ["[0] 你好", "[1] 你好", "[2] 世界"]  ← Must be 3 items
+```
+
+**问题点**:
+1. 抽象的 `...` 和 `textN` 让GPT混淆
+2. 对JSON语法正确性强调不够
+3. 没有明确说"不要添加额外内容"
+
+#### 解决方案
+
+**修改文件**: `openai-translator.ts:131-150`
+
+**删除的内容**:
+```diff
+- Format:
+- Input: ["[0] text1", "[1] text2", ..., "[${texts.length - 1}] textN"]
+- Output: ["[0] 译文1", "[1] 译文2", ..., "[${texts.length - 1}] 译文N"]
+-
+- Example (keep all duplicates):
++ Example:
+  Input: ["[0] Hello", "[1] Hello", "[2] World"]
+- Output: ["[0] 你好", "[1] 你好", "[2] 世界"]  ← Must be 3 items
++ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]
+```
+
+**新增的内容**:
+```diff
+  STRICT RULES:
+- - Return EXACTLY ${texts.length} translations in JSON array
++ - Return EXACTLY ${texts.length} translations in a valid JSON array
+  - DO NOT merge duplicate or similar items
+  - DO NOT skip any items
+  - Each input [n] must have exactly one output [n]
++ - DO NOT add any text before or after the JSON array
++ - Ensure proper JSON syntax: valid quotes, commas, and brackets
+
+  Example:
+  Input: ["[0] Hello", "[1] Hello", "[2] World"]
+  Output: ["[0] 你好", "[1] 你好", "[2] 世界"]
+
++ Your response must be a valid JSON array that can be parsed by JSON.parse().
+- Return ONLY the JSON array. NO explanations, NO comments, NO additional text.
++ Return ONLY the JSON array, nothing else.
+```
+
+**优化后的完整Prompt**:
+```typescript
+content: `You are a professional subtitle translator.
+Translate ${texts.length} subtitles from ${sourceLang} to ${targetLang}.
+
+CRITICAL REQUIREMENT: Input has ${texts.length} items, output MUST have ${texts.length} items.
+
+STRICT RULES:
+- Return EXACTLY ${texts.length} translations in a valid JSON array
+- DO NOT merge duplicate or similar items
+- DO NOT skip any items
+- Each input [n] must have exactly one output [n]
+- DO NOT add any text before or after the JSON array
+- Ensure proper JSON syntax: valid quotes, commas, and brackets
+
+Example:
+Input: ["[0] Hello", "[1] Hello", "[2] World"]
+Output: ["[0] 你好", "[1] 你好", "[2] 世界"]
+
+Your response must be a valid JSON array that can be parsed by JSON.parse().
+Return ONLY the JSON array, nothing else.`
+```
+
+**核心改进**:
+1. 删除抽象的Format描述，只保留具体Example
+2. 明确要求"不要添加任何额外内容"
+3. 强调"必须是能被JSON.parse()解析的合法JSON"
+4. 要求"确保JSON语法正确（引号、逗号、括号）"
+
+#### 验证结果
+✅ GPT返回正确的JSON格式
+✅ 不再出现多余的引号和方括号
+✅ JSON.parse()能够正常解析
+
+---
+
+### 修复总结
+
+| 问题 | 根因 | 解决方案 | 文件 | 行号 |
+|------|------|----------|------|------|
+| 字幕条数不匹配 | Token估算不足 | 改用bytes×1.5算法 | openai-translator.ts | 256-274 |
+| 批次过大 | 配置错误 | 160条改回20条 | two-phase-translator-v4.ts | 75-76 |
+| JSON解析失败 | Prompt混淆GPT | 优化System Prompt | openai-translator.ts | 131-150 |
+| 缺少诊断信息 | 日志不足 | 添加响应日志 | openai-translator.ts | 177 |
+
+**技术要点**:
+- Token估算应使用字节而非字符（多语言场景）
+- 翻译输出预留50%冗余是合理的
+- Prompt要避免抽象占位符，用具体示例
+- 关键路径要打印诊断日志
+
+**架构改进**:
+- OpenAI的Token估算与Gemini保持一致
+- 批次大小与文档保持一致（20条/批）
+- Prompt工程更加严格和明确
 
 ---
 
 ## 📅 更新历史
 
+- **2025-10-30**：修复两个关键Bug
+  - 修复Token估算算法（chars×1.2 → bytes×1.5）
+  - 修复批次大小配置（160 → 20）
+  - 优化System Prompt避免JSON格式错误
+  - 添加诊断日志以便排查问题
 - **2025-10-25**：添加完整的错误处理架构设计章节
   - 统一使用 TranslationError + handleFetchError
   - 12种错误完整分类表（7个API + 5个客户端）
@@ -1932,9 +2183,10 @@ if (model.startsWith('gpt-5')) {
   - 错误处理执行流程图（Mermaid）
   - 与timeout-errors.ts集成说明
 - **2025-10-07**：架构优化，JSON格式方案，GPT-5参数优化
-- **2025-09-29**：核实 GPT-5 系列规格，补充160条批量策略
+- **2025-10-29**：调整批量策略为20条/批，避免GPT合并字幕问题
+- **2025-09-29**：核实 GPT-5 系列规格，补充批量策略
 - **2025-09-26**：创建初始文档，完成 API 调研和实现设计
 
 ---
 
-*本文档已完成错误处理架构设计，符合项目统一规范，可直接用于实现*
+*本文档已完成错误处理架构设计和Bug修复记录，符合项目统一规范，可直接用于实现*

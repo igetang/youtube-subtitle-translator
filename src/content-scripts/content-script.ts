@@ -764,35 +764,57 @@ function handleGetSubtitleTracksAPI(sendResponse: (response: any) => void): void
 }
 
 /**
- * 处理通过Player API设置字幕语言（使用ISO 639-1标准）
+ * 设置字幕语言API（Promise版本，供内部调用）
+ * @param langCode 语言代码（ISO 639-1标准）
+ * @param kind 字幕类型（如 'asr'）
+ * @returns Promise，包含成功状态和错误信息
  */
-function handleSetSubtitleTrackAPI(langCode: string, kind: string | undefined, sendResponse: (response: any) => void): void {
+async function setSubtitleTrackAPI(
+  langCode: string,
+  kind: string | undefined
+): Promise<{ success: boolean; error?: string; langCode?: string; kind?: string }> {
   console.debug(`[debug][content-script] 通过API设置字幕语言: ${langCode}` + (kind ? ` (${kind})` : ''));
 
-  const requestId = `api_set_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  return new Promise((resolve) => {
+    const requestId = `api_set_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-  const timeout = setTimeout(() => {
-    apiResponseHandlers.delete(requestId);
-    sendResponse({
-      success: false,
-      error: 'API设置字幕语言超时'
+    const timeout = setTimeout(() => {
+      apiResponseHandlers.delete(requestId);
+      resolve({
+        success: false,
+        error: 'API设置字幕语言超时'
+      });
+    }, 5000);
+
+    // 设置响应处理器
+    apiResponseHandlers.set(requestId, (response) => {
+      clearTimeout(timeout);
+      resolve(response);
     });
-  }, 5000);
 
-  // 设置响应处理器
-  apiResponseHandlers.set(requestId, (response) => {
-    clearTimeout(timeout);
-    sendResponse(response);
+    // 发送消息到main-world
+    window.postMessage({
+      source: 'content-script',
+      type: 'SET_SUBTITLE_TRACK_API',
+      langCode: langCode,  // ISO 639-1语言代码
+      kind: kind,           // 字幕类型（如 asr）
+      _requestId: requestId
+    }, '*');
   });
+}
 
-  // 发送消息到main-world
-  window.postMessage({
-    source: 'content-script',
-    type: 'SET_SUBTITLE_TRACK_API',
-    langCode: langCode,  // ISO 639-1语言代码
-    kind: kind,           // 字幕类型（如 asr）
-    _requestId: requestId
-  }, '*');
+/**
+ * 处理通过Player API设置字幕语言（Chrome消息处理器）
+ * @param langCode 语言代码（ISO 639-1标准）
+ * @param kind 字幕类型（如 'asr'）
+ * @param sendResponse Chrome消息响应回调
+ */
+function handleSetSubtitleTrackAPI(
+  langCode: string,
+  kind: string | undefined,
+  sendResponse: (response: any) => void
+): void {
+  setSubtitleTrackAPI(langCode, kind).then(sendResponse);
 }
 
 /**
@@ -1503,7 +1525,7 @@ async function handleSourceLanguageChange(newSourceLang: string, newSourceKind?:
       console.log('[content-script] 使用缓存的翻译结果');
 
       // 🔧 修复：缓存命中后也要切换YouTube字幕轨道
-      const setResult = await handleSetSubtitleTrackAPI(newSourceLang, newSourceKind);
+      const setResult = await setSubtitleTrackAPI(newSourceLang, newSourceKind);
       if (setResult.success) {
         console.log(`[content-script] ✓ 已切换YouTube字幕轨道: ${newSourceLang}${newSourceKind ? ` (${newSourceKind})` : ''}`);
       } else {

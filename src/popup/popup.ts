@@ -1054,6 +1054,10 @@ let deeplModelSelect: HTMLSelectElement | null = null;
 let deeplTierFree: HTMLInputElement | null = null;
 let deeplTierPaid: HTMLInputElement | null = null;
 
+// === OpenAI格式开关（实验性功能） ===
+let useImmersiveFormatCheckbox: HTMLInputElement | null = null;
+let openaiFormatSwitchContainer: HTMLDivElement | null = null;
+
 /**
  * 初始化DOM元素引用（仅在YouTube页面调用）
  */
@@ -1102,6 +1106,10 @@ function initializeDOMElements(): void {
   deeplTierFree = document.getElementById('deepl-tier-free') as HTMLInputElement;
   deeplTierPaid = document.getElementById('deepl-tier-paid') as HTMLInputElement;
 
+  // === OpenAI格式开关 ===
+  useImmersiveFormatCheckbox = document.getElementById('use-immersive-format') as HTMLInputElement;
+  openaiFormatSwitchContainer = document.getElementById('openai-format-switch') as HTMLDivElement;
+
 }
 
 /**
@@ -1124,6 +1132,11 @@ function updateApiPanels(apiType: string): void {
   apiKeyPanel?.classList.remove('hidden-but-occupy');
   unifiedModelPanel?.classList.remove('hidden-but-occupy');
   unifiedTierPanel?.classList.remove('hidden-but-occupy');
+
+  // 默认隐藏OpenAI格式开关（仅OpenAI服务时显示）
+  if (openaiFormatSwitchContainer) {
+    openaiFormatSwitchContainer.style.display = 'none';
+  }
 
   // 根据API类型显示相应面板
   const apiInfo = apiInfoMap[apiType];
@@ -1166,6 +1179,11 @@ function updateApiPanels(apiType: string): void {
     const openaiModelSelect = document.getElementById('openai-model');
     openaiModelSelect?.classList.add('active');
     unifiedTierPanel?.classList.add('hidden-but-occupy');
+
+    // 显示OpenAI格式开关
+    if (openaiFormatSwitchContainer) {
+      openaiFormatSwitchContainer.style.display = 'block';
+    }
 
     // 更新API密钥提示链接
     if (apiInfoLink && apiInfo.infoUrl) {
@@ -1637,6 +1655,12 @@ async function updateUserPreferencesUI(userPreferences: UserPreferences): Promis
           console.log('[popup] DeepL tier已设置:', service.tier);
         }
       }
+
+      // 设置OpenAI格式开关（实验性功能）
+      if (service.type === 'openai' && useImmersiveFormatCheckbox) {
+        useImmersiveFormatCheckbox.checked = service.useImmersiveFormat || false;
+        console.log('[popup] OpenAI格式开关已设置:', service.useImmersiveFormat);
+      }
     }
 
     // 填充目标语言列表
@@ -2082,6 +2106,7 @@ function setupUnifiedSettingsListener(): void {
       case 'deepl-model':
       case 'deepl-tier-free':
       case 'deepl-tier-paid':
+      case 'use-immersive-format':
         await handleTranslationServiceChange();
         break;
 
@@ -2192,6 +2217,9 @@ async function handleTranslationServiceChange(): Promise<void> {
     const deeplTierFree = document.getElementById('deepl-tier-free') as HTMLInputElement;
     const deeplTierPaid = document.getElementById('deepl-tier-paid') as HTMLInputElement;
 
+    // OpenAI格式开关
+    const useImmersiveFormatCheckbox = document.getElementById('use-immersive-format') as HTMLInputElement;
+
     const newType = (translationApiSelect?.value as TranslationServiceType);
     const newApiKey = apiKeyInput?.value;
     const newModel = modelSelect?.value;
@@ -2203,6 +2231,9 @@ async function handleTranslationServiceChange(): Promise<void> {
     // DeepL相关值
     const newDeeplModel = deeplModelSelect?.value;
     const newDeeplTier = deeplTierPaid?.checked ? 'pro' : 'free';
+
+    // OpenAI格式值
+    const newUseImmersiveFormat = useImmersiveFormatCheckbox?.checked || false;
 
     // 获取当前用户设置
     const userPreferences = await userPreferencesManager.getUserPreferences();
@@ -2249,13 +2280,23 @@ async function handleTranslationServiceChange(): Promise<void> {
         updatedService.batchDelay = batchDelay;
         updatedService.model = newDeeplModel;
       }
+
+      // OpenAI特殊处理：更新useImmersiveFormat
+      if (newType === 'openai') {
+        updatedService.useImmersiveFormat = newUseImmersiveFormat;
+      }
     } else {
-      // 场景3：只修改apiKey → 保留原配置
-      console.log('[popup] 只修改apiKey，保留原配置');
+      // 场景3：只修改apiKey或格式开关 → 保留原配置
+      console.log('[popup] 只修改apiKey/格式开关，保留原配置');
       updatedService = {
         ...oldConfig,
         apiKey: newApiKey || oldConfig.apiKey || undefined
       };
+
+      // OpenAI特殊处理：更新useImmersiveFormat
+      if (newType === 'openai') {
+        updatedService.useImmersiveFormat = newUseImmersiveFormat;
+      }
     }
 
     // 一次性更新整个翻译服务配置

@@ -266,7 +266,7 @@ console.debug('[debug][user-preferences-manager] 🔧 translationService字段�
 
 ```javascript
 // ✓ 正确示例：合并为1行
-console.log(`[TwoPhaseTranslatorV4] → 批量翻译: 100条 | OpenAI | 160条/批`);
+console.log(`[TwoPhaseTranslatorV4] → 批量翻译: 100条 | OpenAI | 20条/批`);
 
 // ✗ 错误示例：拆分成7行
 console.log('[service-worker-v4] Stage 3: 获取字幕轨道');

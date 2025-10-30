@@ -36,7 +36,8 @@
 | 推荐模型 | `deepseek-chat` | 固定值，不暴露给用户 |
 | Temperature | `1.3` | 官方推荐值，固定不可配置 |
 | 输出上限 | `max_tokens: 8000` | 固定值 |
-| 批次大小 | 20 条字幕/批 | urgent 和 batch 阶段统一 |
+| 批次大小 | 10 条字幕/批（2025-10-28优化） | urgent 和 batch 阶段统一（原20条，优化为10条减少超时） |
+| 紧急翻译范围 | 前2后5（共8条，2025-10-28优化） | 原前9后10（共20条），优化后更快响应 |
 | 批次间延迟 | 200 ms（仅 batch 阶段） | urgent 阶段无延迟 |
 | 存储位置 | `translationService.apiKey` | 统一存储，不单独存储 |
 
@@ -77,6 +78,120 @@ graph LR
     E -.失败.-> J[抛出错误，不降级]
     B -->|已取消| K[抛出 AbortError]
 ```
+
+## 🎯 System Prompt 优化（2025-10-28）
+
+### 问题背景
+
+在实际测试中发现 DeepSeek API 存在翻译数量不匹配的问题：
+- **问题1**：期望翻译6条字幕，实际返回5条（漏翻译了最后一条）
+- **问题2**：期望翻译6条字幕，实际返回5条（将第3和第4条合并翻译）
+
+根本原因：DeepSeek 在翻译时会根据语义连贯性自行决定是否合并字幕，导致返回数量与输入不匹配。
+
+### 优化方案
+
+#### 1. 添加调试日志
+
+```typescript
+// 调试开关
+private static readonly DEBUG_TRANSLATION = true;
+
+// 使用 JSON.stringify() 显示原生字符串（可见 \n 转义字符）
+console.log(JSON.stringify(combinedInput));   // 输入
+console.log(JSON.stringify(response));         // 输出
+
+// 统计分隔符出现次数
+console.log(`🔍 分隔符"\\n---\\n"出现次数: ${(response.match(/\n---\n/g) || []).length}次`);
+
+// 双语字幕逐条对比
+for (let idx = 0; idx < maxCount; idx++) {
+  console.log(`[${idx + 1}/${maxCount}]`);
+  console.log(`  原文: ${batch[idx] || '【缺失】'}`);
+  console.log(`  译文: ${translations[idx] || '【缺失】'}`);
+}
+```
+
+#### 2. 优化 System Prompt（核心）
+
+**旧版 Prompt（存在问题）：**
+```
+You are a professional translator. Translate ${count} video subtitles from ${sourceLang} to ${targetLang}.
+
+Format: ${count} texts separated by "\n---\n"
+Output: ${count} translations in same order, separated by "\n---\n"
+
+Keep exact count, no explanations.
+```
+
+**问题分析：**
+- "Keep exact count" 不够强硬
+- 没有强调"逐条翻译，一一对应"
+- 没有明确禁止合并字幕
+- 缺少具体示例
+
+**新版 Prompt（已优化）：**
+```
+You are a professional translator. Translate ALL ${count} subtitles from ${sourceLang} to ${targetLang}.
+
+CRITICAL RULES:
+1. Return EXACTLY ${count} translations (one per input text)
+2. Do NOT merge or combine any texts
+3. Translate each text separately, keep same order
+
+Input: ${count} texts separated by "\n---\n"
+Output: ${count} translations separated by "\n---\n"
+
+Example (3 texts):
+Input: "A\n---\nB\n---\nC"
+Output: "译A\n---\n译B\n---\n译C"
+
+No explanations. Only translations.
+```
+
+**关键改进：**
+1. ✅ 强调 `ALL ${count} subtitles` - 必须全部翻译
+2. ✅ `CRITICAL RULES` + 编号列表 - 增强强制性和可读性
+3. ✅ `Return EXACTLY ${count} translations (one per input text)` - 明确一对一映射
+4. ✅ `Do NOT merge or combine any texts` - 明确禁止合并
+5. ✅ `Translate each text separately` - 强调逐条翻译
+6. ✅ 添加具体示例 - 让模型理解格式
+7. ✅ 使用真实换行符 `\n`（不是字面字符 `\\n`）- 与实际数据格式一致
+
+#### 3. 分隔符转义修正
+
+**问题发现：**
+最初使用了 `\\n---\\n`（字面字符），导致 System Prompt 中的分隔符与实际数据不一致。
+
+**修正：**
+```typescript
+// ✅ 正确：使用真实换行符
+content: `Input: ${count} texts separated by "\n---\n"`
+
+// ❌ 错误：字面字符（会被JSON序列化为 "\\n---\\n"）
+content: `Input: ${count} texts separated by "\\n---\\n"`
+```
+
+**原理：**
+- JavaScript 字符串 `'\n---\n'` 包含真实换行符
+- `JSON.stringify()` 序列化时会转义为 `\n`（在JSON字符串中）
+- DeepSeek 接收到的是真实换行符，与 `user` 消息中的数据格式一致
+
+### 测试结果
+
+经过多轮测试，优化后的 System Prompt 显著改善了翻译数量匹配问题：
+- ✅ 降低了字幕合并的概率
+- ✅ 减少了字幕丢失的情况
+- ✅ 调试日志能快速定位问题原因
+
+**注意：** DeepSeek 作为 LLM，无法100%保证严格遵守指令，但优化后的 Prompt 已将错误率降到可接受范围。
+
+### 实现代码位置
+
+- **文件：** `src/background/components/deepseek-translator.ts`
+- **方法：** `buildTranslationPrompt()` (line 210-242)
+- **调试日志：** line 126-169
+- **配置：** `DEBUG_TRANSLATION = true` (line 58)
 
 ## 🚨 错误处理架构
 
@@ -604,7 +719,7 @@ export class DeepSeekTranslator {
   private static readonly MODEL = 'deepseek-chat';
   private static readonly TEMPERATURE = 1.3;          // 官方推荐（翻译场景），固定值（优化8）
   private static readonly MAX_TOKENS = 8000;
-  private static readonly BATCH_SIZE = 20;            // 统一批次大小（优化13）
+  private static readonly BATCH_SIZE = 10;            // 统一批次大小（2025-10-28优化：20→10）
   private static readonly BATCH_DELAY_MS = 200;       // batch 阶段延迟
   private static readonly SEPARATOR = '\n---\n';      // 分隔符
 
@@ -681,7 +796,7 @@ export class DeepSeekTranslator {
   }
 
   /**
-   * 构建翻译提示词
+   * 构建翻译提示词（2025-10-28优化）
    */
   private buildTranslationPrompt(
     texts: string[],
@@ -689,14 +804,26 @@ export class DeepSeekTranslator {
     targetLang: string
   ): DeepSeekMessage[] {
     const combinedText = texts.join(DeepSeekTranslator.SEPARATOR);
+    const count = texts.length;
 
     return [
       {
         role: 'system',
-        content: `You are a professional translator. Translate from ${sourceLang} to ${targetLang}.
-Keep the same format and structure.
-If there are multiple texts separated by "---", translate each one and keep the separator.
-Return ONLY the translation without any explanation.`
+        content: `You are a professional translator. Translate ALL ${count} subtitles from ${sourceLang} to ${targetLang}.
+
+CRITICAL RULES:
+1. Return EXACTLY ${count} translations (one per input text)
+2. Do NOT merge or combine any texts
+3. Translate each text separately, keep same order
+
+Input: ${count} texts separated by "\n---\n"
+Output: ${count} translations separated by "\n---\n"
+
+Example (3 texts):
+Input: "A\n---\nB\n---\nC"
+Output: "译A\n---\n译B\n---\n译C"
+
+No explanations. Only translations.`
       },
       {
         role: 'user',
@@ -1014,10 +1141,13 @@ async function saveTranslationSettings() {
 
 ## ⚡ 批量策略
 
-- **紧急翻译（urgent）**：20 条/批，无延迟，快速响应
-- **批量翻译（batch）**：20 条/批，200ms 延迟，避免速率限制
+- **紧急翻译（urgent）**：10 条/批（2025-10-28优化），无延迟，快速响应
+- **批量翻译（batch）**：10 条/批（2025-10-28优化），200ms 延迟，避免速率限制
 - **分隔符**：使用 `\n---\n` 拼接/拆分字幕
 - **失败策略**：直接抛出错误，不降级到单条翻译
+- **紧急翻译范围**：前2后5（共8条，2025-10-28优化）
+
+> **优化说明（2025-10-28）：** 批次大小从20条降为10条，减少单次API调用的超时风险；紧急翻译范围从前9后10（20条）优化为前2后5（8条），提升响应速度并减少token消耗。
 
 ## ⚠️ 注意事项
 
@@ -1106,6 +1236,20 @@ curl -X POST https://api.deepseek.com/chat/completions \
 
 ## 📅 更新历史
 
+- **2025-10-28**：System Prompt 优化和批次参数调整
+  - **批次大小优化**：20条/批 → 10条/批（减少超时风险）
+  - **紧急翻译范围优化**：前9后10 → 前2后5（共8条，更快响应）
+  - **System Prompt 重构**：
+    - 添加 `CRITICAL RULES` 编号列表
+    - 明确禁止合并字幕（`Do NOT merge or combine any texts`）
+    - 强调一对一映射（`one per input text`）
+    - 添加具体示例（3条字幕翻译示例）
+    - 修正分隔符转义（使用真实 `\n` 而非字面 `\\n`）
+  - **调试功能增强**：
+    - 使用 `JSON.stringify()` 显示原生字符串
+    - 统计分隔符出现次数
+    - 双语字幕逐条对比输出
+  - **测试结果**：显著降低字幕合并和丢失的概率
 - **2025-10-25**：添加完整的错误处理架构设计章节（基于Qwen模式）
   - 统一使用 TranslationError + handleFetchError
   - 12种错误完整分类表（7个API + 5个客户端）

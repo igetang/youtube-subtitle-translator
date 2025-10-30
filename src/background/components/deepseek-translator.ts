@@ -54,12 +54,15 @@ interface DeepSeekResponse {
  * 支持 V4 架构规范：AbortSignal、两阶段翻译、批量处理
  */
 export class DeepSeekTranslator {
+  // ========== 调试开关 ==========
+  private static readonly DEBUG_TRANSLATION = true;   // 🔧 调试开关：打印翻译前后的详细信息
+
   // ========== 常量配置 ==========
   private static readonly ENDPOINT = 'https://api.deepseek.com/chat/completions';
   private static readonly MODEL = 'deepseek-chat';
   private static readonly TEMPERATURE = 1.3;          // 官方推荐值（翻译场景）
   private static readonly MAX_TOKENS = 8000;          // 支持更长输出
-  private static readonly BATCH_SIZE = 20;            // 统一批次大小
+  private static readonly BATCH_SIZE = 10;            // 批量翻译批次大小（优化：20→10，减少超时风险）
   private static readonly BATCH_DELAY_MS = 200;       // batch 阶段延迟
   private static readonly SEPARATOR = '\n---\n';      // 字幕分隔符
 
@@ -120,6 +123,15 @@ export class DeepSeekTranslator {
         `${batch.length} 条字幕 (${stage}阶段)`
       );
 
+      // 🔧 调试日志：打印输入字幕（完整拼接字符串）
+      const combinedInput = batch.join(DeepSeekTranslator.SEPARATOR);
+      if (DeepSeekTranslator.DEBUG_TRANSLATION) {
+        console.log(`\n========== [DeepSeekTranslator] 批次${batchNumber}/${totalBatches} (${stage}阶段) ==========`);
+        console.log(`📥 原文拼接字符串 (共${batch.length}条):`);
+        console.log(JSON.stringify(combinedInput));
+        console.log(`${'='.repeat(60)}`);
+      }
+
       // 构建提示词并调用 API
       const messages = this.buildTranslationPrompt(
         batch,
@@ -129,14 +141,45 @@ export class DeepSeekTranslator {
 
       const response = await this.callAPI(messages, signal);
 
+      // 🔧 调试日志：打印API返回的原始响应（完整字符串）
+      if (DeepSeekTranslator.DEBUG_TRANSLATION) {
+        console.log(`\n🔄 译文返回字符串:`);
+        console.log(JSON.stringify(response));
+        console.log(`${'='.repeat(60)}`);
+        console.log(`🔍 响应长度: ${response.length}字符`);
+        console.log(`🔍 分隔符"\\n---\\n"出现次数: ${(response.match(/\n---\n/g) || []).length}次 (期望${batch.length - 1}次)`);
+        console.log(`${'='.repeat(60)}`);
+      }
+
       // 解析响应
       const translations = response.split(DeepSeekTranslator.SEPARATOR);
+
+      // 🔧 调试日志：打印双语对比
+      if (DeepSeekTranslator.DEBUG_TRANSLATION) {
+        console.log(`\n📋 双语字幕对比 (原文${batch.length}条 vs 译文${translations.length}条):`);
+        const maxCount = Math.max(batch.length, translations.length);
+        for (let idx = 0; idx < maxCount; idx++) {
+          const original = batch[idx] || '【缺失】';
+          const translated = translations[idx] || '【缺失】';
+          console.log(`\n[${idx + 1}/${maxCount}]`);
+          console.log(`  原文: ${original}`);
+          console.log(`  译文: ${translated}`);
+        }
+        console.log(`${'='.repeat(60)}\n`);
+      }
 
       // 验证数量匹配
       if (translations.length !== batch.length) {
         console.error(
-          `[DeepSeekTranslator] 批次翻译数量不匹配: 期望${batch.length}, 实际${translations.length}`
+          `[DeepSeekTranslator] ❌ 批次翻译数量不匹配: 期望${batch.length}, 实际${translations.length}`
         );
+        // 🔧 详细错误信息
+        if (DeepSeekTranslator.DEBUG_TRANSLATION) {
+          console.error(`[DeepSeekTranslator] 🔍 详细对比:`);
+          console.error(`  期望输入: ${batch.length}条`);
+          console.error(`  实际输出: ${translations.length}条`);
+          console.error(`  差异: ${translations.length - batch.length}条`);
+        }
         throw new TranslationError(
           `DeepSeek 翻译数量不匹配: 期望 ${batch.length} 条，实际返回 ${translations.length} 条`,
           'retryable',
@@ -170,14 +213,26 @@ export class DeepSeekTranslator {
     targetLang: string
   ): DeepSeekMessage[] {
     const combinedText = texts.join(DeepSeekTranslator.SEPARATOR);
+    const count = texts.length;
 
     return [
       {
         role: 'system',
-        content: `You are a professional translator. Translate from ${sourceLang} to ${targetLang}.
-Keep the same format and structure.
-If there are multiple texts separated by "---", translate each one and keep the separator.
-Return ONLY the translation without any explanation.`
+        content: `You are a professional translator. Translate ALL ${count} subtitles from ${sourceLang} to ${targetLang}.
+
+CRITICAL RULES:
+1. Return EXACTLY ${count} translations (one per input text)
+2. Do NOT merge or combine any texts
+3. Translate each text separately, keep same order
+
+Input: ${count} texts separated by "\n---\n"
+Output: ${count} translations separated by "\n---\n"
+
+Example (3 texts):
+Input: "A\n---\nB\n---\nC"
+Output: "译A\n---\n译B\n---\n译C"
+
+No explanations. Only translations.`
       },
       {
         role: 'user',

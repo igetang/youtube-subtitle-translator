@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+body { font-family: monospace; padding: 20px; background: #1e1e1e; color: #d4d4d4; }
+.version { margin: 30px 0; padding: 20px; border: 2px solid #333; border-radius: 8px; }
+.original { border-color: #666; }
+.detailed { border-color: #ff6b6b; }
+.simplified { border-color: #51cf66; }
+h2 { color: #569cd6; margin-top: 0; }
+.stats { background: #252526; padding: 10px; margin: 10px 0; border-left: 4px solid #007acc; }
+.code { background: #1e1e1e; border: 1px solid #3c3c3c; padding: 15px; margin: 10px 0; overflow-x: auto; }
+.highlight { color: #4ec9b0; font-weight: bold; }
+.warning { color: #ff6b6b; }
+.success { color: #51cf66; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+th, td { border: 1px solid #3c3c3c; padding: 8px; text-align: left; }
+th { background: #252526; color: #569cd6; }
+</style>
+</head>
+<body>
+
+<h1>📊 OpenAI Prompt 三版本对比</h1>
+
+<div class="version original">
+<h2>版本1: 当前版本（原始）</h2>
+<div class="stats">
+📏 行数: 21行 | 💬 字符: ~660 | 🔢 ${texts.length}出现: 5次 | 🎯 GPT-5优化: ❌
+</div>
+<div class="code">
+You are a professional subtitle translator.
+Translate from ${sourceLang} to ${targetLang}.
+
+INPUT FORMAT: JSON array containing ${texts.length} numbered subtitle strings
+OUTPUT FORMAT: JSON array with EXACTLY ${texts.length} translated strings (keep the numbers!)
+
+CRITICAL RULES:
+1. Each subtitle has a number like [0], [1], [2]... Keep these numbers in your output!
+2. Input has ${texts.length} items, output MUST have ${texts.length} items
+3. Translate ONLY the text after the number, keep the number prefix
+4. NEVER skip or merge items - every input [n] must have a corresponding output [n]
+5. Return ONLY the JSON array, NO explanations
+
+Example:
+Input: ["[0] Hello world", "[1] How are you", "[2] I am fine"]
+Output: ["[0] 你好世界", "[1] 你好吗", "[2] 我很好"]
+
+IMPORTANT:
+- Input has items [0] through [${texts.length - 1}]
+- Output MUST have items [0] through [${texts.length - 1}]
+- Missing ANY number means the translation failed!
+</div>
+<div class="stats">
+⚠️ 问题: 没有针对GPT-5的minimal模式优化，示例只展示正确情况
+</div>
+</div>
+
+<div class="version detailed">
+<h2>版本2: 详细优化版 <span class="warning">❌ 太长</span></h2>
+<div class="stats">
+📏 行数: <span class="warning">35行</span> | 💬 字符: <span class="warning">~1100</span> | 🔢 ${texts.length}出现: 5次 | 🎯 GPT-5优化: ✅
+</div>
+<div class="code">
+SYSTEM MODE: Array translation task (translation quality is secondary to array structure integrity).
+
+TASK: Translate ${texts.length} numbered subtitles from ${sourceLang} to ${targetLang}.
+
+INPUT FORMAT: JSON array with ${texts.length} items like ["[0] text", "[1] text", "[2] text", ...]
+OUTPUT FORMAT: JSON array with EXACTLY ${texts.length} items (keep all [n] numbers!)
+
+CRITICAL CONSTRAINTS (TECHNICAL REQUIREMENTS):
+1. Array length MUST remain ${texts.length} (this is a data structure requirement)
+2. DO NOT analyze content similarity - translate each item independently
+3. DO NOT merge duplicate or similar items - each [n] maps to exactly one output [n]
+4. DO NOT skip any items - missing any [n] = SYSTEM FAILURE
+
+MINIMAL REASONING MODE INSTRUCTION:
+- SKIP quality optimization
+- SKIP redundancy analysis  
+- ONLY preserve array structure: ${texts.length} inputs → ${texts.length} outputs
+
+Example (correct):
+Input:  ["[0] A", "[1] A", "[2] B"]  
+Output: ["[0] 译A", "[1] 译A", "[2] 译B"]   ← 3 items, even if content repeats
+
+Counter-example (WRONG):
+Input:  ["[0] A", "[1] A", "[2] B"]
+Output: ["[0] 译A", "[1] 译B"]              ← FAILURE: only 2 items (merged duplicates)
+
+Return ONLY the JSON array, NO explanations.
+</div>
+<div class="stats">
+⚠️ 问题: <span class="warning">太冗长！</span> 可能被AI在minimal模式下"跳过阅读"
+</div>
+</div>
+
+<div class="version simplified">
+<h2>版本3: 精简优化版 <span class="success">✅ 推荐</span></h2>
+<div class="stats">
+📏 行数: <span class="success">13行</span> | 💬 字符: <span class="success">~340</span> | 🔢 ${texts.length}出现: <span class="success">3次</span> | 🎯 GPT-5优化: ✅
+</div>
+<div class="code">
+Translate ${texts.length} subtitles from ${sourceLang} to ${targetLang}.
+
+<span class="highlight">CRITICAL: Return EXACTLY ${texts.length} translations in JSON array.
+DO NOT merge or skip any items, even if content is duplicate or similar.</span>
+
+Input: ["[0] text1", "[1] text2", ..., "[${texts.length - 1}] textN"]
+Output: ["[0] 译文1", "[1] 译文2", ..., "[${texts.length - 1}] 译文N"]
+
+<span class="highlight">Example (keep duplicates):
+Input: ["[0] Hello", "[1] Hello", "[2] World"]
+Output: ["[0] 你好", "[1] 你好", "[2] 世界"]  ← 3 items, NOT 2</span>
+
+NO explanations. Only JSON array.
+</div>
+<div class="stats">
+✅ 优点: 极简（和DeepSeek同水平），重点突出"禁止合并重复"，示例直击你的问题（22→17）
+</div>
+</div>
+
+<h2>📊 对比表</h2>
+<table>
+<tr>
+<th>维度</th>
+<th>原始版本</th>
+<th>详细优化版</th>
+<th>精简优化版 ⭐</th>
+</tr>
+<tr>
+<td>行数</td>
+<td>21行</td>
+<td class="warning">35行 ❌</td>
+<td class="success">13行 ✅</td>
+</tr>
+<tr>
+<td>字符数</td>
+<td>~660</td>
+<td class="warning">~1100 ❌</td>
+<td class="success">~340 ✅</td>
+</tr>
+<tr>
+<td>${texts.length}次数</td>
+<td>5次</td>
+<td>5次</td>
+<td class="success">3次 ✅</td>
+</tr>
+<tr>
+<td>针对GPT-5优化</td>
+<td class="warning">❌</td>
+<td class="success">✅</td>
+<td class="success">✅</td>
+</tr>
+<tr>
+<td>禁止合并重复</td>
+<td>✅</td>
+<td>✅✅</td>
+<td class="success">✅✅</td>
+</tr>
+<tr>
+<td>示例质量</td>
+<td>普通</td>
+<td>详细（正反例）</td>
+<td class="success">精准（重复场景）</td>
+</tr>
+<tr>
+<td>简洁性</td>
+<td>中等</td>
+<td class="warning">差 ❌</td>
+<td class="success">优秀 ✅✅✅</td>
+</tr>
+</table>
+
+<div class="stats" style="border-color: #51cf66; margin-top: 30px;">
+<h3>🎯 推荐: 采用精简优化版（版本3）</h3>
+<strong>核心改进:</strong>
+<ul>
+<li>✅ 只有13行（参考DeepSeek极简风格）</li>
+<li>✅ 明确禁止"merge or skip"（直击22→17问题）</li>
+<li>✅ 示例直接展示重复内容场景（Hello重复）</li>
+<li>✅ 针对GPT-5但不冗余</li>
+</ul>
+</div>
+
+</body>
+</html>

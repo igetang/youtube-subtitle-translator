@@ -1,17 +1,25 @@
 /**
  * @file openai-translator.ts
  * @description OpenAI翻译器 - V4架构适配版本
- * @version 4.1.0
+ * @version 4.3.2
  *
  * 核心特性：
  * - 支持stage ('urgent' | 'batch') 和 AbortSignal
  * - 非流式响应（stream: false）
- * - 批次大小160（配合IntelligentSegmenter）
- * - 文本清理 + JSON格式
+ * - 批次大小20（配合IntelligentSegmenter，避免GPT合并字幕）
+ * - 文本清理 + JSON格式/\n\n分隔格式（可切换）
  * - 编号标记系统（解决数量不匹配问题）
+ * - 强化Prompt（数量约束前置，列表式规则，禁止额外输出）
+ * - GPT-5参数优化（verbosity=medium，提高输出完整性）
+ * - temperature参数支持（默认1.0，GPT-5系列会忽略但保留用于测试）
  * - 细化错误处理
  *
  * 更新记录：
+ * - v4.3.2: 恢复temperature参数支持（默认1.0，用于测试，GPT-5会忽略）
+ * - v4.3.1: 强化Prompt禁止额外文本，恢复Token估算对比日志
+ * - v4.3.0: 精简callOpenAIAPI函数，删除无用判断，verbosity改为medium
+ * - v4.2.1: 优化Prompt顺序（角色→任务→约束），强化数量要求，改用列表式规则
+ * - v4.2.0: 针对GPT-5系列优化Prompt，精简至14行，重点防止AI合并重复字幕
  * - v4.1.0: 添加编号标记系统，每条字幕加[n]前缀，强制保持一对一对应
  */
 
@@ -69,15 +77,15 @@ export class OpenAITranslator {
    * 构造函数
    * @param apiKey OpenAI API密钥
    * @param model 模型名称
-   * @param temperature 温度参数 (0-1)
+   * @param temperature 温度参数（GPT-5系列固定为1，此参数保留用于测试）
    */
-  constructor(apiKey: string, model: string, temperature: number) {
+  constructor(apiKey: string, model: string, temperature: number = 1.0) {
     this.apiKey = apiKey;
     this.model = model;
     this.temperature = temperature;
     this.modelConfig = MODEL_CONFIGS[model] || MODEL_CONFIGS['gpt-5-mini'];
 
-    console.debug(`[debug][OpenAITranslator] 初始化: 模型=${model}, temperature=${temperature}, 上下文=${this.modelConfig.contextWindow} tokens, 最大输出=${this.modelConfig.maxOutput} tokens`);
+    console.log(`[OpenAITranslator] 初始化: 模型=${model}, temperature=${temperature}, 上下文=${this.modelConfig.contextWindow} tokens, 最大输出=${this.modelConfig.maxOutput} tokens`);
   }
 
   /**
@@ -117,31 +125,29 @@ export class OpenAITranslator {
       const jsonInput = JSON.stringify(numberedTexts);
       console.debug(`[debug][OpenAITranslator] JSON输入长度: ${jsonInput.length}字符, ${numberedTexts.length}条带编号字幕`);
 
-      // 3. 构建messages（JSON格式）
+      // 3. 构建messages（强化版Prompt，数量约束前置）
       const messages = [
         {
           role: "system",
           content: `You are a professional subtitle translator.
-Translate from ${sourceLang} to ${targetLang}.
+Translate ${texts.length} subtitles from ${sourceLang} to ${targetLang}.
 
-INPUT FORMAT: JSON array containing ${texts.length} numbered subtitle strings
-OUTPUT FORMAT: JSON array with EXACTLY ${texts.length} translated strings (keep the numbers!)
+CRITICAL REQUIREMENT: Input has ${texts.length} items, output MUST have ${texts.length} items.
 
-CRITICAL RULES:
-1. Each subtitle has a number like [0], [1], [2]... Keep these numbers in your output!
-2. Input has ${texts.length} items, output MUST have ${texts.length} items
-3. Translate ONLY the text after the number, keep the number prefix
-4. NEVER skip or merge items - every input [n] must have a corresponding output [n]
-5. Return ONLY the JSON array, NO explanations
+STRICT RULES:
+- Return EXACTLY ${texts.length} translations in a valid JSON array
+- DO NOT merge duplicate or similar items
+- DO NOT skip any items
+- Each input [n] must have exactly one output [n]
+- DO NOT add any text before or after the JSON array
+- Ensure proper JSON syntax: valid quotes, commas, and brackets
 
 Example:
-Input: ["[0] Hello world", "[1] How are you", "[2] I am fine"]
-Output: ["[0] 你好世界", "[1] 你好吗", "[2] 我很好"]
+Input: ["[0] Hello", "[1] Hello", "[2] World"]
+Output: ["[0] 你好", "[1] 你好", "[2] 世界"]
 
-IMPORTANT:
-- Input has items [0] through [${texts.length - 1}]
-- Output MUST have items [0] through [${texts.length - 1}]
-- Missing ANY number means the translation failed!`
+Your response must be a valid JSON array that can be parsed by JSON.parse().
+Return ONLY the JSON array, nothing else.`
         },
         {
           role: "user",
@@ -167,6 +173,7 @@ IMPORTANT:
         console.debug(`[debug][OpenAITranslator] ✓ JSON解析成功，收到${numberedTranslations.length}条带编号翻译`);
       } catch (parseError) {
         console.warn(`[OpenAITranslator] ⚠️  JSON解析失败，尝试提取JSON部分`, parseError);
+        console.error(`[OpenAITranslator] 📄 OpenAI原始响应:`, responseText);
 
         // 容错：提取JSON数组部分（AI可能返回了额外文字）
         const jsonMatch = responseText.match(/\[[\s\S]*\]/);
@@ -242,27 +249,28 @@ IMPORTANT:
   /**
    * 估算输出token数（基于输入长度）
    * 根据OpenAI最佳实践：设置合理的max_completion_tokens可以显著降低延迟
-   * @param inputText 输入文本（JSON格式）
+   * @param inputText 输入文本（JSON格式或\n\n分隔）
    * @param jsonOverhead JSON格式额外字符数
    * @returns 估算的输出token数
    */
   private estimateOutputTokens(inputText: string, jsonOverhead: number = 0): number {
-    // 估算逻辑（基于最新实测数据优化）：
-    // 实测数据（从截图）：
-    //   - 案例1: 1067字符 → 输入487 tokens, 输出265 tokens
-    //   - 案例2: 1922字符 → 输入600 tokens, 输出477 tokens
-    //   - 字符→token比例: 约2.5字符/token
-    //   - 输出/输入比例: 约0.5-0.8倍（输出比输入少）
-    //
-    // 新公式（保守估算）：
-    // 1. 字符数 → 估算输入tokens: 字符数 ÷ 2.5
-    // 2. 输入tokens → 估算输出tokens: 输入tokens × 1.2（20%余量）
-    const totalChars = inputText.length + jsonOverhead;
-    const estimatedInputTokens = totalChars / 2.5;  // 字符→输入tokens
-    const estimatedOutputTokens = Math.ceil(estimatedInputTokens * 1.2);  // 输出≈输入+20%余量
+    // 估算逻辑（与Gemini保持一致）：
+    // 1. 字符数 → UTF-8字节数（中文3字节，英文1字节）
+    // 2. 字节数 ÷ 2.5 = 输入tokens
+    // 3. 输入tokens × 1.5 = 输出tokens（50%余量，保证充足空间）
+    const encoder = new TextEncoder();
+    const inputBytes = encoder.encode(inputText).length + jsonOverhead;
+    const estimatedInputTokens = inputBytes / 2.5;
+    const estimatedOutputTokens = Math.ceil(estimatedInputTokens * 1.5);  // 50%余量
 
-    console.debug(`[debug][OpenAITranslator] 📊 估算: ${totalChars}字符 → 输入~${Math.round(estimatedInputTokens)}tokens → 输出~${estimatedOutputTokens}tokens`);
-    return estimatedOutputTokens;
+    // 限制上限（避免超过模型最大输出）
+    const maxOutputTokens = Math.min(estimatedOutputTokens, this.modelConfig.maxOutput);
+
+    console.debug(
+      `[debug][OpenAITranslator] 📊 估算: ${inputBytes}字节 → 输入~${Math.round(estimatedInputTokens)}tokens → ` +
+      `输出~${estimatedOutputTokens}tokens (上限${this.modelConfig.maxOutput})`
+    );
+    return maxOutputTokens;
   }
 
   /**
@@ -279,22 +287,19 @@ IMPORTANT:
   ): Promise<string> {
     const url = 'https://api.openai.com/v1/chat/completions';
 
-    // GPT-5系列模型不支持自定义temperature，只能使用默认值1
-    const isGPT5 = this.model.startsWith('gpt-5');
-    const requestBody: Record<string, unknown> = {
+    // 构建请求体
+    // 注意：GPT-5系列会忽略temperature参数（固定为1），但保留用于测试
+    const requestBody = {
       model: this.model,
       messages,
       max_completion_tokens: maxCompletionTokens,
       stream: false,
+      temperature: this.temperature,      // GPT-5系列会忽略此参数
+      reasoning_effort: 'minimal',        // 保持最快速度
+      verbosity: 'low'                 // 提高输出完整性
     };
 
-    if (isGPT5) {
-      requestBody.reasoning_effort = 'minimal';
-      requestBody.verbosity = 'low';
-      console.debug('[debug][OpenAITranslator] GPT-5优化: reasoning_effort=minimal, verbosity=low');
-    } else {
-      requestBody.temperature = this.temperature;
-    }
+    console.log(`[OpenAITranslator] 🔧 API参数: temperature=${this.temperature}, reasoning_effort=minimal, verbosity=lowni`);
 
     let response: Response;
 
@@ -338,17 +343,17 @@ IMPORTANT:
       );
     }
 
+    // Token使用统计（含估算对比）
     if (data.usage) {
       const actualInput = data.usage.prompt_tokens;
       const actualOutput = data.usage.completion_tokens;
       const actualTotal = data.usage.total_tokens;
       const estimatedOutput = maxCompletionTokens;
       const diff = estimatedOutput - actualOutput;
-      const diffPercent = actualOutput === 0 ? '0.0' : ((diff / actualOutput) * 100).toFixed(1);
 
-      console.debug(
-        `[debug][OpenAITranslator] 📊 Token实际用量: 输入${actualInput}, 输出${actualOutput}, 总计${actualTotal} | ` +
-        `估算${estimatedOutput} vs 实际${actualOutput} (差距${diff}, ${diffPercent}%)`
+      console.log(
+        `[OpenAITranslator] 📊 Token用量: 输入${actualInput}, ` +
+        `输出${actualOutput} (估算${estimatedOutput}, 差值${diff}), 总计${actualTotal}`
       );
     }
 

@@ -71,13 +71,17 @@ export class TwoPhaseTranslatorV4 {
     // 根据翻译服务类型创建不同配置的IntelligentSegmenter
     const serviceType = service?.type;
     if (serviceType === 'openai') {
-      // OpenAI使用160条/批（充分利用400K上下文窗口）
-      this.segmenter = new IntelligentSegmenter(160);
-      console.debug('[debug][TwoPhaseTranslatorV4] 使用OpenAI配置：160条/批');
-    } else if (serviceType === 'deepseek') {
-      // DeepSeek使用20条/批（单批处理能力有限，避免二次分批）
+      // OpenAI使用20条/批（避免GPT合并字幕问题）
       this.segmenter = new IntelligentSegmenter(20);
-      console.debug('[debug][TwoPhaseTranslatorV4] 使用DeepSeek配置：20条/批');
+      console.debug('[debug][TwoPhaseTranslatorV4] 使用OpenAI配置：20条/批');
+    } else if (serviceType === 'deepseek') {
+      // DeepSeek使用10条/批（优化：减少超时风险，提升响应速度）
+      this.segmenter = new IntelligentSegmenter(10);
+      console.debug('[debug][TwoPhaseTranslatorV4] 使用DeepSeek配置：10条/批');
+    } else if (serviceType === 'gemini') {
+      // Gemini使用80条/批（1M上下文窗口）
+      this.segmenter = new IntelligentSegmenter(80);
+      console.debug('[debug][TwoPhaseTranslatorV4] 使用Gemini配置：80条/批');
     } else if (serviceType === 'deepl') {
       // DeepL使用50条/批（API原生支持最多50条）
       this.segmenter = new IntelligentSegmenter(50);
@@ -860,8 +864,7 @@ export class TwoPhaseTranslatorV4 {
 
           const translator = new OpenAITranslator(
             service.apiKey,
-            service.model || 'gpt-5-mini',
-            service.temperature || 0.3
+            service.model || 'gpt-5-mini'
           );
 
           const stage = options?.stage ?? 'batch';

@@ -1145,4 +1145,152 @@ function checkEventListeners() {
 
 ---
 
-*最后更新: 2025-05-28* 
+## OpenAI翻译问题 (2025-10-30新增)
+
+### 问题1：字幕翻译数量不匹配
+
+**症状**：
+- 错误日志：`翻译数量不匹配：期望20条，实际15条`
+- 翻译后字幕条数少于输入条数
+- 字幕显示错位或不完整
+
+**原因**：
+Token估算不足导致GPT响应被截断，JSON不完整
+
+**诊断步骤**：
+1. 查看Service Worker控制台
+2. 搜索 `[OpenAITranslator]` 日志
+3. 查看Token估算值：`maxOutputTokens=XXX`
+4. 查看实际返回条数
+
+**解决方案**：
+已在 v4.0.1 修复，使用 `bytes × 1.5` Token估算算法
+
+**验证修复**：
+```bash
+# 检查代码版本
+grep -n "TextEncoder" src/background/components/openai-translator.ts
+# 应该看到: const encoder = new TextEncoder();
+
+# 检查冗余倍数
+grep -n "1.5" src/background/components/openai-translator.ts
+# 应该看到: estimatedInputTokens * 1.5
+```
+
+---
+
+### 问题2：JSON解析错误
+
+**症状**：
+- 错误日志：`SyntaxError: Expected ',' or ']' after array element in JSON at position XXX`
+- JSON.parse() 失败
+- 翻译流程中断
+
+**原因**：
+GPT返回的JSON格式错误，多了多余的引号或方括号
+
+**诊断步骤**：
+1. 查看Service Worker控制台
+2. 搜索 `📄 OpenAI原始响应`
+3. 查看GPT返回的原始内容
+4. 检查JSON格式是否正确
+
+**典型错误示例**：
+```json
+[
+  "[0] 翻译1",
+  "[1] 翻译2"
+]"    ← 多了引号
+]      ← 又多了方括号
+```
+
+**解决方案**：
+已在 v4.0.1 修复，优化了System Prompt
+
+**验证修复**：
+```bash
+# 检查Prompt内容
+grep -A 10 "DO NOT add any text" src/background/components/openai-translator.ts
+# 应该看到新的STRICT RULES
+```
+
+---
+
+### 问题3：批次大小配置不一致
+
+**症状**：
+- 日志显示一次性发送50+条字幕
+- 与文档规定的20条/批不符
+- GPT容易合并字幕
+
+**原因**：
+`IntelligentSegmenter` 配置为160而非20
+
+**诊断步骤**：
+```bash
+# 检查批次大小配置
+grep -n "IntelligentSegmenter" src/background/components/two-phase-translator-v4.ts
+# 查看构造函数参数
+```
+
+**解决方案**：
+已在 v4.0.1 修复，恢复为20条/批
+
+**验证修复**：
+```typescript
+// two-phase-translator-v4.ts 应该是:
+const segmenter = new IntelligentSegmenter(20);  // ✅ 正确
+// 而不是:
+const segmenter = new IntelligentSegmenter(160);  // ❌ 错误
+```
+
+---
+
+### 问题4：缺少诊断日志
+
+**症状**：
+- JSON解析失败时看不到OpenAI原始响应
+- 无法判断是token截断还是格式错误
+- 排查问题困难
+
+**解决方案**：
+已在 v4.0.1 添加诊断日志
+
+**如何查看**：
+1. 打开Service Worker控制台
+2. 触发翻译
+3. 如果JSON解析失败，会看到：
+   ```
+   ⚠️ JSON解析失败，尝试提取JSON部分
+   📄 OpenAI原始响应: [完整的GPT返回内容]
+   ```
+
+---
+
+### OpenAI翻译最佳实践
+
+**Token估算**：
+- 使用字节而非字符（支持多语言）
+- 预留50%冗余（翻译通常比原文长）
+- 公式：`bytes / 2.5 * 1.5`
+
+**批次大小**：
+- 固定20条/批（避免GPT合并字幕）
+- 不要盲目增大以"充分利用上下文"
+- 考虑模型行为，而非理论窗口大小
+
+**Prompt工程**：
+- 避免抽象占位符（`...`、`textN`）
+- 用具体示例说明
+- 明确强调JSON语法要求
+- 重复关键规则（明确性 > 简洁性）
+
+**调试技巧**：
+- 关键路径打印原始响应
+- 记录Token估算值和实际使用量
+- 对比期望条数和实际返回条数
+- 保留完整错误上下文
+
+---
+
+*最后更新: 2025-10-30* 

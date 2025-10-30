@@ -1,9 +1,52 @@
 # YouTube字幕翻译助手 - 更新日志
 
 > 📝 **版本更新历史与技术演进记录**
-> **最后更新**: 2025-10-07
-> **当前版本**: v4.0.0
+> **最后更新**: 2025-10-30
+> **当前版本**: v4.0.1
 > **架构状态**: ✅ **AbortController V4 + 两阶段翻译**（紧急翻译 + 批量覆盖）
+
+## [4.0.1] - 2025-10-30
+
+### 🐛 **Bug 修复**
+
+#### 修复1：OpenAI Token估算不足导致翻译数量不匹配
+- **问题**：翻译后字幕条数少于输入条数（如期望20条，实际15条）
+- **根因**：Token估算使用 `chars × 1.2`，对多字节字符不准确且冗余不足
+- **解决**：改用 `bytes × 1.5` 算法，与Gemini保持一致
+- **影响文件**：`src/background/components/openai-translator.ts:256-274`
+- **效果**：字幕条数始终保持一致，翻译不再被截断
+
+#### 修复2：OpenAI批次大小配置错误
+- **问题**：代码使用160条/批，与文档规定的20条/批不一致
+- **根因**：10月10日错误修改为160，试图"充分利用400K上下文"
+- **解决**：恢复为20条/批，避免GPT自动合并字幕
+- **影响文件**：`src/background/components/two-phase-translator-v4.ts:75-76`
+- **效果**：与IntelligentSegmenter配置保持一致，提升稳定性
+
+#### 修复3：GPT返回格式错误的JSON
+- **问题**：JSON解析失败 `Expected ',' or ']' at position 386`
+- **根因**：System Prompt中的抽象占位符（`...`、`textN`）让GPT混淆
+- **解决**：优化Prompt，删除Format部分，强化JSON语法要求
+- **影响文件**：`src/background/components/openai-translator.ts:131-150`
+- **效果**：JSON格式错误率大幅降低，GPT返回更稳定
+
+#### 修复4：缺少诊断日志
+- **问题**：JSON解析失败时无法看到OpenAI原始响应
+- **解决**：添加原始响应日志 `console.error('[OpenAITranslator] 📄 OpenAI原始响应:', responseText)`
+- **影响文件**：`src/background/components/openai-translator.ts:177`
+- **效果**：便于排查和诊断问题
+
+### 📚 **文档更新**
+- 更新 `docs/guides/openai-translate-implementation.md` 添加Bug修复记录章节
+- 更新 `docs/guides/decision-log.md` 添加3个技术决策（#46-48）
+- 更新 `docs/architecture/07-batch-translation-architecture.md` 确认OpenAI批次大小为20
+
+### 🔧 **技术改进**
+- **架构一致性**：OpenAI的Token估算与Gemini保持一致
+- **Prompt工程**：避免抽象占位符，用具体示例+明确规则
+- **代码规范**：关键路径添加诊断日志，便于问题排查
+
+---
 
 ## [4.0.0] - 2025-10-07
 

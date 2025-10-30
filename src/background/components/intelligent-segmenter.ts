@@ -8,13 +8,13 @@ export class IntelligentSegmenter {
   private static readonly DEBUG_SUBTITLE_TIMING = false;  // 设为false关闭调试日志
 
   // 核心参数（基于07文档）
-  private readonly maxBatchSize: number;  // 单批最大字幕数（可配置：DeepSeek用20，Google/Microsoft用40，OpenAI用160）
-  private static readonly URGENT_BEFORE = 9;    // 紧急翻译前向范围
-  private static readonly URGENT_AFTER = 10;    // 紧急翻译后向范围（调试：改为10）
+  private readonly maxBatchSize: number;  // 单批最大字幕数（可配置：DeepSeek用10，OpenAI用20，Google/Microsoft用40）
+  private static readonly URGENT_BEFORE = 2;    // 紧急翻译前向范围（优化：9→2，更快响应）
+  private static readonly URGENT_AFTER = 5;     // 紧急翻译后向范围（优化：10→5，减少token消耗）
 
   /**
    * 构造函数
-   * @param maxBatchSize 单批最大字幕数（DeepSeek用20，Google/Microsoft用40，OpenAI用160）
+   * @param maxBatchSize 单批最大字幕数（DeepSeek用10，OpenAI用20，Google/Microsoft用40）
    */
   constructor(maxBatchSize: number = 40) {
     this.maxBatchSize = maxBatchSize;

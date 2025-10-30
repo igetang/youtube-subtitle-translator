@@ -61,6 +61,9 @@ export interface TranslationServiceComplete {
   splitSentences?: string;                      // 句子分割："0" | "1" | "nonewlines"（字符串类型）
   preserveFormatting?: boolean;                 // 是否保留原始格式
   showBilledCharacters?: boolean;               // 是否显示计费字符数
+
+  // === OpenAI实验性参数 ===
+  useImmersiveFormat?: boolean;                 // 是否使用沉浸式格式（\n\n分隔）而非JSON格式
 }
 
 /**
@@ -108,7 +111,8 @@ export const TRANSLATION_SERVICE_TEMPLATES: Record<TranslationServiceType, Omit<
     temperature: 1,  // GPT-5系列只支持默认值1
     maxTokens: 128000,
     rpm: 60,
-    tpm: 40000
+    tpm: 40000,
+    useImmersiveFormat: false  // 默认使用JSON格式（带编号）
   },
   [TranslationServiceType.GEMINI]: {
     type: TranslationServiceType.GEMINI,

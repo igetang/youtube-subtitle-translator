@@ -6,7 +6,7 @@
  * 核心特性：
  * - 支持 stage ('urgent' | 'batch') 和 AbortSignal
  * - 非流式响应（stream: false）
- * - 批次大小 200（利用1M token上下文窗口）
+ * - 批次大小 80（利用1M token上下文窗口）
  * - YAML格式（id + text结构，强制一对一对应）
  * - Phase 1: 从配置读取 batchDelay（手动选择 tier）
  * - 细化错误处理
@@ -68,12 +68,12 @@ const MODEL_CONFIGS: Record<string, {
   'gemini-2.5-flash': {
     contextWindow: 1_000_000,  // 1M tokens 上下文窗口
     maxOutput: 65_536,         // 64K tokens 最大输出
-    batchSize: 200             // 建议批次大小
+    batchSize: 80              // 建议批次大小
   },
   'gemini-2.5-flash-lite': {
     contextWindow: 1_000_000,  // 1M tokens 上下文窗口
     maxOutput: 65_536,         // 64K tokens 最大输出
-    batchSize: 200             // 建议批次大小
+    batchSize: 80              // 建议批次大小
   }
 };
 
@@ -180,14 +180,17 @@ export class GeminiTranslator {
         const t3 = performance.now();
         console.debug(`[debug][GeminiTranslator] Prompt长度: ${prompt.length}字符`);
 
-        // 3. 估算maxOutputTokens（基于输入字节数 ÷ 2.5 × 1.2）
+        // 3. 估算maxOutputTokens（对比两种算法）
         const encoder = new TextEncoder();
         const inputBytes = encoder.encode(yamlInput).length;
-        const estimatedOutputTokens = Math.ceil((inputBytes / 2.5) * 1.2);  // 字节数 ÷ 2.5 × 1.2
-        const maxOutputTokens = Math.min(estimatedOutputTokens, this.modelConfig.maxOutput);  // 不超过模型上限
+
+        // Token估算：inputBytes ÷ 2.5 × 1.5
+        const estimatedOutputTokens = Math.ceil((inputBytes / 2.5) * 1.5);
+        const maxOutputTokens = Math.min(estimatedOutputTokens, this.modelConfig.maxOutput);
 
         console.log(
-          `[GeminiTranslator] 📊 估算输出: ${inputBytes}字节 (÷2.5×1.2) → ${maxOutputTokens}tokens`
+          `[GeminiTranslator] 🔍 调用API参数: maxOutputTokens=${maxOutputTokens}, temperature=${this.temperature}, ` +
+          `model=${this.model}, thinkingBudget=0`
         );
 
         // 4. 调用Gemini API
@@ -334,10 +337,7 @@ ${yamlInput}`;
       }
     };
 
-    console.log(
-      `[GeminiTranslator] 🔍 调用API参数: maxOutputTokens=${maxOutputTokens}, ` +
-      `temperature=${this.temperature}, model=${this.model}, thinkingBudget=0 (禁用)`
-    );
+    // 日志已在translate方法中输出，这里不重复打印
 
     let response: Response;
 
@@ -406,8 +406,7 @@ ${yamlInput}`;
       const diffPercent = actualOutput === 0 ? '0.0' : ((diff / actualOutput) * 100).toFixed(1);
 
       console.log(
-        `[GeminiTranslator] 📊 Token实际用量: ` +
-        `输入=${actualInput}, 输出=${actualOutput}, thinking=${thoughtsTokens}, 总计=${actualTotal} | ` +
+        `[GeminiTranslator] 📊 Token实际用量: 输入=${actualInput}, 输出=${actualOutput}, thinking=${thoughtsTokens}, 总计=${actualTotal} | ` +
         `估算${estimatedOutput} vs 实际${actualOutput} (差距${diff}, ${diffPercent}%)`
       );
     }
@@ -623,4 +622,5 @@ ${yamlInput}`;
       signal.addEventListener('abort', abortHandler, { once: true });
     });
   }
+
 }

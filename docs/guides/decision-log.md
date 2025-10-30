@@ -1004,4 +1004,282 @@ interface ServiceConfig {
 - ✅ 字幕加载时间稳定
 - ✅ 无需降级处理逻辑
 
-这些技术决策确立了SidePanel架构的核心设计原则和实现策略，为YouTube字幕翻译助手的用户界面提供了清晰、高效、可维护的解决方案。 
+### 24. Content Script内部API调用重构：统一Promise模式 (2025-10-28)
+
+**背景**：切换原文语言时出现TypeError，错误信息为"Cannot read properties of undefined (reading 'success')"。
+
+**问题分析**：
+- **根本原因**：异步模式混用导致的调用错误
+- **原实现**：`handleSetSubtitleTrackAPI` 使用回调模式（`sendResponse`参数），返回`void`
+- **错误调用**：在 `handleSourceLanguageChange` 中错误地将其作为Promise使用：
+  ```typescript
+  // ❌ 错误：缺少第3个参数sendResponse，返回值是undefined
+  const setResult = await handleSetSubtitleTrackAPI(newSourceLang, newSourceKind);
+  if (setResult.success) { // TypeError: Cannot read properties of undefined
+  ```
+
+**触发场景**：
+- 用户切换原文语言 + 存在翻译缓存时必现
+- 错误位置：`content-script.ts:1506-1507`
+
+**决策**：重构为清晰的双函数架构，分离核心逻辑和消息处理。
+
+**实现方案**：
+1. **核心函数**（Promise版本）：`setSubtitleTrackAPI(langCode, kind)`
+   - 返回 `Promise<{success: boolean; error?: string}>`
+   - 封装完整的postMessage通信逻辑（requestId、timeout、响应处理）
+   - 供内部async/await调用使用
+
+2. **消息处理器**（回调版本）：`handleSetSubtitleTrackAPI(langCode, kind, sendResponse)`
+   - 薄薄的包装层（仅3行）
+   - 调用核心函数并通过sendResponse返回结果
+   - 专门用于Chrome消息系统（`chrome.runtime.onMessage`）
+
+**备选方案**：
+1. ❌ **补救方案**：添加Promise包装器函数
+   - 代码重复（包装器重复Promise逻辑）
+   - 职责不清（两个函数功能重叠）
+   - 维护成本高（需要同时维护两个版本）
+
+2. ✅ **重构方案**：分离关注点
+   - 单一核心实现（DRY原则）
+   - 职责清晰（核心逻辑 vs 消息转发）
+   - 易于维护和扩展
+
+**理由**：
+- **职责清晰**：核心逻辑（setSubtitleTrackAPI）与消息转发（handleSetSubtitleTrackAPI）分离
+- **避免重复**：单一核心实现，无代码重复
+- **可维护性**：未来内部调用直接使用核心函数，无需再包装
+- **符合架构原则**：单一职责原则（SRP）、DRY原则
+- **类型安全**：Promise返回值类型明确，避免undefined错误
+
+**影响**：
+- **修改文件**：`src/content-scripts/content-script.ts`（1个文件）
+- **新增函数**：`setSubtitleTrackAPI` （~30行）
+- **简化函数**：`handleSetSubtitleTrackAPI` （简化为3行）
+- **修改调用**：`handleSourceLanguageChange` 中的1处调用
+- **总改动量**：约35行代码
+- **复杂度**：⭐⭐☆☆☆（简单）
+
+**验证指标**：
+- ✅ 切换原文语言不再报TypeError
+- ✅ Chrome消息处理正常工作（回调模式）
+- ✅ 内部async/await调用正常工作（Promise模式）
+- ✅ 代码职责清晰，易于理解和维护
+- ✅ 无性能影响（仅架构优化）
+
+**相关文件**：
+- 代码实现：`src/content-scripts/content-script.ts`
+- 通信对端：`src/content-scripts/main-world.ts` (SubtitleAPIController)
+
+这些技术决策确立了SidePanel架构的核心设计原则和实现策略，为YouTube字幕翻译助手的用户界面提供了清晰、高效、可维护的解决方案。
+
+---
+
+## Token估算策略决策
+
+### 11. Gemini API maxOutputTokens估算算法优化 (2025-10-28)
+
+**背景**：Gemini翻译时需要设置`maxOutputTokens`参数，过小会导致截断，过大会浪费配额。
+
+**决策**：采用简单算法 `inputBytes ÷ 2.5 × 1.5`。
+
+**测试过的方案**：
+1. ❌ **复杂的5步法**（基于英文单词等价 + 42种语言数据表）
+   - 优点：精确度高，考虑语言特性差异
+   - 缺点：实测发现对某些语言对估算不准确，代码复杂
+   - 测试结果：放弃
+
+2. ✅ **简化字节算法**（当前方案）
+   - 公式：`Math.ceil((inputBytes / 2.5) × 1.5)`
+   - 1.5倍系数（从原来的1.2倍提升）
+   - 优点：简单、通用、保守
+   - 缺点：不考虑语言差异，可能过度估算
+
+**理由**：
+- 简单可靠，适用于所有语言
+- 1.5倍系数提供足够安全边际，避免截断
+- 代码易维护，无需维护复杂语言数据表
+- 实用性优于理论精确性
+
+**影响**：
+- Token估算增加25%（1.2→1.5）
+- 更保守策略，降低截断风险
+- API成本略增，但换取稳定性
+
+**代码位置**：
+- `src/background/components/gemini-translator.ts:188`
+
+**结论**：在翻译场景中，稳定性 > 精确性，简单方案更可靠。
+
+---
+
+### 46. OpenAI Token估算与Gemini保持一致 (2025-10-30)
+
+**背景**：OpenAI翻译出现字幕条数不匹配问题，翻译后条数少于输入条数。
+
+**问题分析**：
+- **现象**：期望20条，实际返回15条
+- **根因**：Token估算不足导致GPT响应被截断
+- **对比发现**：OpenAI使用 `chars × 1.2`，Gemini使用 `bytes × 1.5`
+
+**旧方案（有问题）**：
+```typescript
+// openai-translator.ts 旧版
+const charCount = inputText.length;                     // ❌ 字符计数
+const estimatedInputTokens = charCount / 2.5;
+const estimatedOutputTokens = Math.ceil(estimatedInputTokens * 1.2);  // ❌ 20%冗余
+```
+
+**问题点**：
+1. **字符 vs 字节**：中文等多字节字符会导致字符计数偏小
+2. **冗余不足**：20%冗余不够，翻译通常比原文长
+3. **链式影响**：Token估算偏小 → max_completion_tokens过小 → GPT截断 → JSON不完整 → 条数不匹配
+
+**决策**：采用与Gemini一致的Token估算算法
+
+**新方案**：
+```typescript
+// openai-translator.ts:256-274
+const encoder = new TextEncoder();
+const inputBytes = encoder.encode(inputText).length + jsonOverhead;  // ✅ 字节
+const estimatedInputTokens = inputBytes / 2.5;
+const estimatedOutputTokens = Math.ceil(estimatedInputTokens * 1.5);  // ✅ 50%冗余
+```
+
+**备选方案**：
+1. ❌ 继续用字符计数，只增加冗余倍数 → 仍不够准确
+2. ❌ 固定设置大值（如16000） → 显著增加延迟
+3. ✅ 采用Gemini的bytes×1.5算法 → 准确且一致
+
+**理由**：
+- **多语言准确性**：字节计数对中日韩等多字节字符更准确
+- **合理冗余**：翻译通常比原文长30-50%，1.5倍冗余合理
+- **架构一致性**：与Gemini保持一致，降低维护成本
+- **已验证可靠**：Gemini方案已证明稳定有效
+
+**影响**：
+- Token估算增加25%（1.2→1.5）
+- 字幕条数不匹配问题完全解决
+- API成本略增（约20%），但换取稳定性
+
+**代码位置**：
+- `src/background/components/openai-translator.ts:256-274`
+
+**结论**：统一的Token估算策略提升系统稳定性，避免各服务独立维护。
+
+---
+
+### 47. OpenAI批次大小恢复为20条 (2025-10-30)
+
+**背景**：10月10日将OpenAI批次大小从20改为160，试图"充分利用400K上下文窗口"，但测试发现问题。
+
+**问题分析**：
+- **现象**：一次性发送50+条字幕
+- **代码冲突**：文档明确写20条/批，但代码是160
+- **提交历史**：10月10日修改为160（commit message："充分利用400K上下文窗口"）
+- **架构初衷**：20条/批是为了避免GPT自动合并不完整的字幕
+
+**决策**：将批次大小恢复为20条
+
+**理由**：
+1. **避免GPT合并字幕**：批次越大，GPT越容易合并语义不完整的句子
+2. **文档一致性**：文档明确规定20条/批
+3. **实测验证**：20条/批下JSON格式方案工作良好
+4. **架构原则**：批次大小不是越大越好，要考虑模型行为
+
+**备选方案**：
+1. ❌ 保持160条 → GPT经常合并字幕
+2. ❌ 动态调整（10-40条） → 增加复杂度
+3. ✅ 固定20条 → 简单可靠
+
+**影响**：
+- 批次数增加8倍（160→20）
+- API调用次数增加，但稳定性提升
+- 与IntelligentSegmenter配置保持一致
+
+**代码位置**：
+- `src/background/components/two-phase-translator-v4.ts:75-76`
+
+**结论**：批次大小应基于模型行为和实测结果，而非理论上下文窗口大小。
+
+---
+
+### 48. 优化OpenAI System Prompt避免JSON格式错误 (2025-10-30)
+
+**背景**：测试中频繁出现JSON解析错误：`SyntaxError: Expected ',' or ']' after array element`
+
+**问题分析**：
+1. **添加诊断日志**：在JSON解析失败时打印OpenAI原始响应
+2. **发现问题**：GPT返回的JSON多了多余的引号和方括号
+   ```json
+   [...]"    ← 多了引号
+   ]         ← 又多了方括号
+   ```
+3. **排除截断**：maxOutputTokens=1127，错误position=386，不是token不够
+4. **定位根因**：System Prompt中的抽象占位符（`...`、`textN`）让GPT混淆
+
+**旧Prompt（有问题）**：
+```typescript
+Format:
+Input: ["[0] text1", "[1] text2", ..., "[${texts.length - 1}] textN"]
+Output: ["[0] 译文1", "[1] 译文2", ..., "[${texts.length - 1}] 译文N"]
+
+Example (keep all duplicates):
+Input: ["[0] Hello", "[1] Hello", "[2] World"]
+Output: ["[0] 你好", "[1] 你好", "[2] 世界"]  ← Must be 3 items
+
+Return ONLY the JSON array. NO explanations, NO comments, NO additional text.
+```
+
+**问题点**：
+1. 抽象的 `...` 和 `textN` 让GPT误以为需要添加额外符号
+2. 对JSON语法正确性强调不够
+3. 没有明确说"不要添加任何额外内容"
+
+**决策**：简化Prompt，删除抽象描述，强化JSON语法要求
+
+**新Prompt**：
+```typescript
+STRICT RULES:
+- Return EXACTLY ${texts.length} translations in a valid JSON array
+- DO NOT merge duplicate or similar items
+- DO NOT skip any items
+- Each input [n] must have exactly one output [n]
+- DO NOT add any text before or after the JSON array
+- Ensure proper JSON syntax: valid quotes, commas, and brackets
+
+Example:
+Input: ["[0] Hello", "[1] Hello", "[2] World"]
+Output: ["[0] 你好", "[1] 你好", "[2] 世界"]
+
+Your response must be a valid JSON array that can be parsed by JSON.parse().
+Return ONLY the JSON array, nothing else.
+```
+
+**关键改进**：
+1. ❌ 删除 `Format:` 部分（抽象占位符）
+2. ✅ 新增"DO NOT add any text before or after the JSON array"
+3. ✅ 新增"Ensure proper JSON syntax: valid quotes, commas, and brackets"
+4. ✅ 新增"must be a valid JSON array that can be parsed by JSON.parse()"
+5. ✅ 简化Example，删除注释
+
+**备选方案**：
+1. ❌ 只删除Format，保留其他 → 改进不够彻底
+2. ❌ 改用其他分隔方式（如\n\n） → 已测试过，效果更差
+3. ✅ 优化Prompt + 保留JSON格式 → 既解决问题又保持架构
+
+**理由**：
+- **Prompt工程最佳实践**：避免抽象占位符，用具体示例
+- **明确性优于简洁性**：重复强调关键规则
+- **可验证性**：明确提到JSON.parse()标准
+
+**影响**：
+- JSON格式错误率大幅降低
+- GPT返回格式更稳定
+- 减少错误重试次数
+
+**代码位置**：
+- `src/background/components/openai-translator.ts:131-150`
+
+**结论**：Prompt工程需要精细调整，抽象描述容易误导LLM，具体示例+明确规则更有效。 

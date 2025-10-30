@@ -977,6 +977,84 @@ body::-webkit-scrollbar-thumb:hover,
 .info-box a:hover {
     text-decoration: underline;
 }
+
+/* === Toggle Switch 样式（OpenAI格式开关） === */
+.openai-format-container {
+    margin-top: 12px;
+    padding: 12px;
+    background-color: #2a2a2a;
+    border-radius: 6px;
+    border: 1px solid #444;
+}
+
+.toggle-switch-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.toggle-switch-label {
+    font-size: 0.9em;
+    color: #ddd;
+    font-weight: 500;
+}
+
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #555;
+    transition: 0.3s;
+    border-radius: 24px;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.3s;
+    border-radius: 50%;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+    background-color: #3ea6ff;
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+    transform: translateX(20px);
+}
+
+.toggle-switch input:focus + .toggle-slider {
+    box-shadow: 0 0 1px #3ea6ff;
+}
+
+.format-tip {
+    margin: 0;
+    font-size: 0.8em;
+    color: #999;
+    line-height: 1.4;
+}
     </style>
 </head>
 <body>
@@ -1140,6 +1218,18 @@ body::-webkit-scrollbar-thumb:hover,
         <div class="test-button-container">
             <button id="test-api-key" class="test-button">测试连接</button>
             <p class="test-tip">点击测试将验证当前翻译服务的连接状态</p>
+
+            <!-- OpenAI格式开关（仅在选择OpenAI服务时显示） -->
+            <div id="openai-format-switch" class="openai-format-container" style="display: none;">
+                <div class="toggle-switch-row">
+                    <span class="toggle-switch-label">使用沉浸式格式（实验性）</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="use-immersive-format">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <p class="format-tip">开启后使用换行符分隔字幕，关闭则使用JSON格式</p>
+            </div>
         </div>
         <div class="test-result-container">
             <span id="test-result" class="test-result"></span>
