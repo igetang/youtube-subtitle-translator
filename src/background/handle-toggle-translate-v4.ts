@@ -36,7 +36,7 @@ import {
   fetchSubtitlesWithSignal,
   triggerSubtitleLoadWithSignal 
 } from './components/message-with-signal';
-import { TwoPhaseTranslatorV4 } from './components/two-phase-translator-v4';
+import { TwoPhaseTranslatorV4, GOOGLE_TRANSLATE_BATCH_TIMEOUT_MS } from './components/two-phase-translator-v4';
 import { createVttString, parseVttString } from '../shared/utils/vtt-utils';
 
 /**
@@ -518,6 +518,7 @@ export async function handleToggleTranslateV4(
             effectiveSubtitleData.subtitles,
             effectiveSubtitleData.currentTime || 0,
             sourceLanguageName,  // ✅ 传递源语言name
+            sourceLanguageCode,
             preferences,
             signal
           );
@@ -623,9 +624,9 @@ export async function handleToggleTranslateV4(
       estimatedBatches = Math.ceil(subtitleCount / 20);
       perBatchTimeout = 30000;
     } else if (serviceType === 'google-free' || serviceType === 'google') {
-      // 谷歌: 智能分批（约120条限制），单批5秒
+      // 谷歌: 智能分批（约120条限制），单批10秒
       estimatedBatches = Math.ceil(subtitleCount / 120);
-      perBatchTimeout = 5000;
+      perBatchTimeout = GOOGLE_TRANSLATE_BATCH_TIMEOUT_MS;
     } else if (serviceType === 'microsoft-free' || serviceType === 'microsoft') {
       // 微软: 不预先分批，估算1批，单批5秒
       estimatedBatches = 1;
@@ -656,6 +657,7 @@ export async function handleToggleTranslateV4(
           effectiveSubtitleData.subtitles,
           urgentResults,
           sourceLanguageName,  // ✅ 传递源语言name
+          sourceLanguageCode,
           preferences,
           signal
         );

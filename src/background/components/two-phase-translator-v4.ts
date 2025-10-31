@@ -14,6 +14,9 @@ import { DeepSeekTranslator } from './deepseek-translator';
 import { GeminiTranslator } from './gemini-translator';
 import { DeepLTranslator } from './deepl-translator';
 import { QwenTranslator } from './qwen-translator';
+import { LanguageCodeMapper } from '@shared/utils/language-code-mapper';
+
+export const GOOGLE_TRANSLATE_BATCH_TIMEOUT_MS = 10000;  // 谷歌免费翻译批次超时（毫秒）
 
 /**
  * 两阶段翻译器 - 支持AbortSignal版本
@@ -105,7 +108,8 @@ export class TwoPhaseTranslatorV4 {
    *
    * @param subtitles 所有字幕
    * @param currentTime 当前播放时间（秒）
-   * @param sourceLang 源语言（如"English"，用于翻译API）
+   * @param sourceLanguageName 源语言名称（如"English"，供Chat类API与日志使用）
+   * @param sourceLanguageCode 源语言代码（如"en"，供需要代码的API使用）
    * @param preferences 用户偏好设置
    * @param signal AbortSignal用于取消操作
    * @returns 紧急翻译结果数组
@@ -119,7 +123,8 @@ export class TwoPhaseTranslatorV4 {
       text: string;
     }>,
     currentTime: number,
-    sourceLang: string,
+    sourceLanguageName: string,
+    sourceLanguageCode: string,
     preferences: any,
     signal: AbortSignal
   ): Promise<Array<{
@@ -136,6 +141,8 @@ export class TwoPhaseTranslatorV4 {
     const results: any[] = [];
     const serviceType = preferences.translationService?.type;
     const isMicrosoftService = serviceType === 'microsoft' || serviceType === 'microsoft-free';
+    const normalizedSourceLanguageCode =
+      sourceLanguageCode && sourceLanguageCode.trim() !== '' ? sourceLanguageCode : 'auto';
     
     try {
       // 找到当前播放位置的索引
@@ -162,7 +169,15 @@ export class TwoPhaseTranslatorV4 {
         return results;
       }
       
-      console.log(`[TwoPhaseTranslatorV4] 紧急翻译 ${urgentBatch.length} 条字幕`);
+      const sourceLabel = this.getSourceLanguageLabel(
+        serviceType,
+        sourceLanguageName,
+        normalizedSourceLanguageCode
+      );
+      const targetLabel = this.getTargetLanguageLabel(serviceType, preferences.targetLang);
+      console.log(
+        `[TwoPhaseTranslatorV4] 紧急翻译 ${urgentBatch.length} 条字幕 | ${sourceLabel} → ${targetLabel}`
+      );
 
       // 准备文本：移除单条字幕内的换行符，用空格替代
       const texts = urgentBatch.map(sub => sub.text.replace(/\n/g, ' ').trim());
@@ -185,7 +200,7 @@ export class TwoPhaseTranslatorV4 {
       if (isMicrosoftService) {
         translatedTexts = await this.translateWithMicrosoftSubtitles(
           urgentBatch,
-          sourceLang,  // ✅ 使用传入的源语言name
+          normalizedSourceLanguageCode,
           preferences.targetLang,
           'urgent',
           signal
@@ -194,7 +209,8 @@ export class TwoPhaseTranslatorV4 {
         translatedTexts = await this.callTranslationAPI(
           texts,
           preferences.translationService,
-          sourceLang,  // ✅ 使用传入的源语言name
+          sourceLanguageName,
+          normalizedSourceLanguageCode,
           preferences.targetLang,
           signal,
           { stage: 'urgent', batchIndex: 1, batchCount: 1 }
@@ -237,7 +253,8 @@ export class TwoPhaseTranslatorV4 {
    *
    * @param subtitles 所有字幕
    * @param urgentResults 紧急翻译结果（用于去重）
-   * @param sourceLang 源语言（如"English"，用于翻译API）
+   * @param sourceLanguageName 源语言名称（如"English"，供Chat类API与日志使用）
+   * @param sourceLanguageCode 源语言代码（如"en"，供需要代码的API使用）
    * @param preferences 用户偏好设置
    * @param signal AbortSignal用于取消操作
    * @returns 批量翻译结果数组
@@ -251,7 +268,8 @@ export class TwoPhaseTranslatorV4 {
       text: string;
     }>,
     urgentResults: Array<any>,
-    sourceLang: string,
+    sourceLanguageName: string,
+    sourceLanguageCode: string,
     preferences: any,
     signal: AbortSignal
   ): Promise<Array<{
@@ -268,6 +286,8 @@ export class TwoPhaseTranslatorV4 {
     const results: any[] = [];
     const serviceType = preferences.translationService?.type;
     const isMicrosoftService = serviceType === 'microsoft' || serviceType === 'microsoft-free';
+    const normalizedSourceLanguageCode =
+      sourceLanguageCode && sourceLanguageCode.trim() !== '' ? sourceLanguageCode : 'auto';
 
     try {
       // 延迟启动（避免与紧急翻译冲突）
@@ -303,7 +323,15 @@ export class TwoPhaseTranslatorV4 {
         strategyInfo = `智能分批${batches.length}个`;
       }
 
-      console.log(`[TwoPhaseTranslatorV4] → 批量翻译: ${subtitles.length}条 | ${strategyInfo}`);
+      const sourceLabel = this.getSourceLanguageLabel(
+        serviceType,
+        sourceLanguageName,
+        normalizedSourceLanguageCode
+      );
+      const targetLabel = this.getTargetLanguageLabel(serviceType, preferences.targetLang);
+      console.log(
+        `[TwoPhaseTranslatorV4] → 批量翻译: ${subtitles.length}条 | ${strategyInfo} | ${sourceLabel} → ${targetLabel}`
+      );
 
       // 根据翻译服务类型确定单批超时时间
       let perBatchTimeout = 5000; // 默认5秒
@@ -317,9 +345,10 @@ export class TwoPhaseTranslatorV4 {
         perBatchTimeout = 10000; // DeepL单批10秒（REST API，批次大小50）
       } else if (serviceType === 'qwen') {
         perBatchTimeout = 10000; // Qwen单批10秒（批次大小30）
-      } else if (serviceType === 'google-free' || serviceType === 'google' ||
-                 serviceType === 'microsoft-free' || serviceType === 'microsoft') {
-        perBatchTimeout = 5000; // 免费服务5秒
+      } else if (serviceType === 'google-free' || serviceType === 'google') {
+        perBatchTimeout = GOOGLE_TRANSLATE_BATCH_TIMEOUT_MS; // 谷歌免费翻译10秒
+      } else if (serviceType === 'microsoft-free' || serviceType === 'microsoft') {
+        perBatchTimeout = 5000; // 微软免费翻译5秒
       } else {
         perBatchTimeout = 10000; // 其他服务默认10秒
       }
@@ -375,7 +404,7 @@ export class TwoPhaseTranslatorV4 {
           if (isMicrosoftService) {
             translatedTexts = await this.translateWithMicrosoftSubtitles(
               batch,
-              sourceLang,  // ✅ 使用传入的源语言name
+              normalizedSourceLanguageCode,
               preferences.targetLang,
               'batch',
               batchSignal
@@ -384,7 +413,8 @@ export class TwoPhaseTranslatorV4 {
             translatedTexts = await this.callTranslationAPI(
               texts,
               preferences.translationService,
-              sourceLang,  // ✅ 使用传入的源语言name
+              sourceLanguageName,
+              normalizedSourceLanguageCode,
               preferences.targetLang,
               batchSignal,
               { stage: 'batch', batchIndex: i + 1, batchCount: batches.length }
@@ -455,7 +485,7 @@ export class TwoPhaseTranslatorV4 {
       duration?: number;
       text: string;
     }>,
-    sourceLang: string,
+    sourceLanguageCode: string,
     targetLang: string,
     stage: 'urgent' | 'batch',
     signal: AbortSignal
@@ -501,7 +531,7 @@ export class TwoPhaseTranslatorV4 {
           // 调用优化版翻译方法
           const translatedTexts = await this.microsoftTranslator.translateOptimized(
             batch.texts,
-            sourceLang,
+            sourceLanguageCode,
             targetLang,
             stage
           );
@@ -532,13 +562,25 @@ export class TwoPhaseTranslatorV4 {
       } catch (error) {
         console.error('[TwoPhaseTranslatorV4] ❌ 优化翻译失败，回退到旧逻辑:', error);
         // 如果优化版失败，回退到旧逻辑
-        return this.translateWithMicrosoftSubtitlesLegacy(subtitles, sourceLang, targetLang, stage, signal);
+        return this.translateWithMicrosoftSubtitlesLegacy(
+          subtitles,
+          sourceLanguageCode,
+          targetLang,
+          stage,
+          signal
+        );
       }
     }
 
     // 使用旧逻辑
     console.log(`[TwoPhaseTranslatorV4] 使用传统微软翻译逻辑`);
-    return this.translateWithMicrosoftSubtitlesLegacy(subtitles, sourceLang, targetLang, stage, signal);
+    return this.translateWithMicrosoftSubtitlesLegacy(
+      subtitles,
+      sourceLanguageCode,
+      targetLang,
+      stage,
+      signal
+    );
   }
 
   // 保留旧的实现作为后备
@@ -550,7 +592,7 @@ export class TwoPhaseTranslatorV4 {
       duration?: number;
       text: string;
     }>,
-    sourceLang: string,
+    sourceLanguageCode: string,
     targetLang: string,
     stage: 'urgent' | 'batch',
     signal: AbortSignal
@@ -579,7 +621,7 @@ export class TwoPhaseTranslatorV4 {
       const textsForRequest = requestItems.map(item => item.text);
       const translations = await this.microsoftTranslator.translateTexts(
         textsForRequest,
-        sourceLang,
+        sourceLanguageCode,
         targetLang,
         stage
       );
@@ -836,7 +878,8 @@ export class TwoPhaseTranslatorV4 {
   private async callTranslationAPI(
     texts: string[],
     service: any,
-    sourceLang: string,
+    sourceLanguageName: string,
+    sourceLanguageCode: string,
     targetLang: string,
     signal: AbortSignal,
     options?: { stage: 'urgent' | 'batch'; batchIndex?: number; batchCount?: number }
@@ -863,6 +906,9 @@ export class TwoPhaseTranslatorV4 {
         let translatedTexts: string[] = [];
 
         // 根据翻译服务类型调用不同的API
+        const normalizedSourceLanguageCode =
+          sourceLanguageCode && sourceLanguageCode.trim() !== '' ? sourceLanguageCode : 'auto';
+
         if (service.type === 'openai') {
           // 使用OpenAI翻译（V4架构）
           if (!service.apiKey) {
@@ -881,7 +927,7 @@ export class TwoPhaseTranslatorV4 {
           // 调用翻译（传递stage、批次信息和signal）
           translatedTexts = await translator.translate(
             texts,
-            sourceLang,
+            sourceLanguageName,
             targetLang,
             stage,
             signal,
@@ -903,7 +949,7 @@ export class TwoPhaseTranslatorV4 {
           // 调用翻译（传递 signal）
           translatedTexts = await translator.translate(
             texts,
-            sourceLang,
+            sourceLanguageName,
             targetLang,
             stage,
             signal
@@ -928,7 +974,7 @@ export class TwoPhaseTranslatorV4 {
           // 调用翻译（传递 stage 和 signal）
           translatedTexts = await translator.translate(
             texts,
-            sourceLang,
+            sourceLanguageName,
             targetLang,
             stage,
             signal
@@ -955,7 +1001,7 @@ export class TwoPhaseTranslatorV4 {
           // 调用翻译（传递 stage 和 signal）
           translatedTexts = await translator.translate(
             texts,
-            sourceLang,
+            normalizedSourceLanguageCode,
             targetLang,
             stage,
             signal
@@ -977,7 +1023,7 @@ export class TwoPhaseTranslatorV4 {
           // 调用翻译（传递 stage 和 signal）
           translatedTexts = await translator.translate(
             texts,
-            sourceLang,
+            sourceLanguageName,
             targetLang,
             stage,
             signal
@@ -987,15 +1033,24 @@ export class TwoPhaseTranslatorV4 {
           const stage = options?.stage ?? 'batch';
           const order = this.getGoogleEndpointOrder(stage);
           const allowFallback = stage !== 'batch';
-        const { translations } = await this.translateWithGoogleEndpoints(texts, sourceLang, targetLang, {
-          preferredOrder: order,
-          recordStatistics: stage === 'urgent',
-          allowFallback
-        });
-        translatedTexts = translations;
-      } else if (service.type === 'microsoft' || service.type === 'microsoft-free') {
-        console.warn('[TwoPhaseTranslatorV4] Microsoft翻译需要字幕上下文，返回原文');
-        translatedTexts = texts;
+          console.log(
+            `[TwoPhaseTranslatorV4] Google翻译调用 stage=${stage} ${normalizedSourceLanguageCode} → ${targetLang} | 文本数=${texts.length}`
+          );
+          const { translations } = await this.translateWithGoogleEndpoints(
+            texts,
+            normalizedSourceLanguageCode,
+            targetLang,
+            {
+              preferredOrder: order,
+              recordStatistics: stage === 'urgent',
+              allowFallback,
+              stage
+            }
+          );
+          translatedTexts = translations;
+        } else if (service.type === 'microsoft' || service.type === 'microsoft-free') {
+          console.warn('[TwoPhaseTranslatorV4] Microsoft翻译需要字幕上下文，返回原文');
+          translatedTexts = texts;
           
         } else {
           // 未知服务类型，返回原文
@@ -1018,12 +1073,13 @@ export class TwoPhaseTranslatorV4 {
    */
   private async translateWithGoogleEndpoints(
     texts: string[],
-    sourceLang: string,
+    sourceLanguageCode: string,
     targetLang: string,
     options?: {
       preferredOrder?: GoogleEndpointId[];
       recordStatistics?: boolean;
       allowFallback?: boolean;
+      stage?: 'urgent' | 'batch';
     }
   ): Promise<{ translations: string[]; endpoint: GoogleEndpointId }> {
     if (texts.length === 0) {
@@ -1031,13 +1087,16 @@ export class TwoPhaseTranslatorV4 {
     }
 
     const combinedText = texts.join('\n');
+    const normalizedSourceLanguageCode =
+      sourceLanguageCode && sourceLanguageCode.trim() !== '' ? sourceLanguageCode : 'auto';
     const baseParams: Record<string, string> = {
       client: 'gtx',
-      sl: sourceLang === 'auto' ? 'auto' : sourceLang,
+      sl: normalizedSourceLanguageCode === 'auto' ? 'auto' : normalizedSourceLanguageCode,
       tl: targetLang,
       dt: 't',
       q: combinedText
     };
+    const stage = options?.stage ?? 'batch';
 
     type Endpoint = {
       id: GoogleEndpointId;
@@ -1117,7 +1176,7 @@ export class TwoPhaseTranslatorV4 {
         }
 
         console.debug(
-          `[debug][TwoPhaseTranslatorV4] Google端点=${endpoint.id} 成功 (${normalized.length}条)`
+          `[debug][TwoPhaseTranslatorV4] Google端点=${endpoint.id} 成功 stage=${stage} ${normalizedSourceLanguageCode} → ${targetLang} (${normalized.length}条)`
         );
 
         if (options?.recordStatistics) {
@@ -1129,7 +1188,7 @@ export class TwoPhaseTranslatorV4 {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.debug(
-          `[debug][TwoPhaseTranslatorV4] Google端点=${endpoint.id} 失败，切换中: ${message}`
+          `[debug][TwoPhaseTranslatorV4] Google端点=${endpoint.id} 失败 stage=${stage} ${normalizedSourceLanguageCode} → ${targetLang}: ${message}`
         );
         errors.push(`${endpoint.id}: ${message}`);
 
@@ -1238,6 +1297,41 @@ export class TwoPhaseTranslatorV4 {
     }
 
     return segments;
+  }
+
+  private getSourceLanguageLabel(
+    serviceType: string | undefined,
+    sourceLanguageName: string,
+    sourceLanguageCode: string
+  ): string {
+    const normalizedCode =
+      sourceLanguageCode && sourceLanguageCode.trim() !== '' ? sourceLanguageCode : 'auto';
+
+    switch (serviceType) {
+      case 'google':
+      case 'google-free':
+      case 'microsoft':
+      case 'microsoft-free':
+      case 'deepl':
+        return normalizedCode;
+      default:
+        return sourceLanguageName;
+    }
+  }
+
+  private getTargetLanguageLabel(
+    serviceType: string | undefined,
+    targetLanguageCode: string
+  ): string {
+    switch (serviceType) {
+      case 'openai':
+      case 'deepseek':
+      case 'gemini':
+      case 'qwen':
+        return LanguageCodeMapper.toEnglishName(targetLanguageCode);
+      default:
+        return targetLanguageCode;
+    }
   }
 
   /**
