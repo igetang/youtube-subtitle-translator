@@ -155,7 +155,10 @@ export async function handleToggleTranslateV4(
       const availableTracks = sourceData.availableSourceLanguages;
       const cachedTrack = sourceData.selectedSourceTrack;
 
-      const matchWithKind = (candidates: any[], preferredKind: string | undefined) => {
+      const matchWithKind = (
+        candidates: Array<{ languageCode: string; name: string; kind?: string }>,
+        preferredKind: string | undefined
+      ): { languageCode: string; name: string; kind?: string } | undefined => {
         if (!candidates.length) {
           return undefined;
         }
@@ -173,14 +176,14 @@ export async function handleToggleTranslateV4(
       let sourceTrack: { languageCode: string; name: string; kind?: string } | undefined;
 
       if (requestedSourceLang) {
-        const candidates = availableTracks.filter(track => track.languageCode === requestedSourceLang);
+        const candidates = availableTracks.filter((track: { languageCode: string; name: string; kind?: string }) => track.languageCode === requestedSourceLang);
         // 优先使用用户明确指定的sourceKind，其次使用缓存的kind
         const preferredKind = requestedSourceKind || (cachedTrack?.languageCode === requestedSourceLang ? cachedTrack.kind : undefined);
         sourceTrack = matchWithKind(candidates, preferredKind);
       }
 
       if (!sourceTrack && cachedTrack) {
-        const candidates = availableTracks.filter(track => track.languageCode === cachedTrack.languageCode);
+        const candidates = availableTracks.filter((track: { languageCode: string; name: string; kind?: string }) => track.languageCode === cachedTrack.languageCode);
         sourceTrack = matchWithKind(candidates, cachedTrack.kind) || cachedTrack;
       }
 
@@ -197,9 +200,10 @@ export async function handleToggleTranslateV4(
       }
 
       // ✅ 统一使用YouTube API原始字段命名
-      sourceLanguageCode = sourceTrack.languageCode;  // 用于YouTube API（如 "en"）
-      sourceLanguageName = sourceTrack.name;          // 用于翻译API（如 "English"）
-      sourceKind = sourceTrack.kind;
+      // selectBestSourceLanguage 保证返回非空值（有默认English兜底），所以这里使用非空断言
+      sourceLanguageCode = sourceTrack!.languageCode;  // 用于YouTube API（如 "en"）
+      sourceLanguageName = sourceTrack!.name;          // 用于翻译API（如 "English"）
+      sourceKind = sourceTrack!.kind;
       console.log('[service-worker-v4] ✓ 选择源语言: ' + sourceLanguageName +
                   ' [' + sourceLanguageCode + ']' +
                   (sourceKind ? ' (' + sourceKind + ')' : '') +
@@ -529,7 +533,7 @@ export async function handleToggleTranslateV4(
 
       // 判断是否为致命错误（API密钥问题）
       const category = (error as { category?: string })?.category;
-      const errorMsg = error.message || '';
+      const errorMsg = (error as Error)?.message || '';
       const isFatalError =
         category === 'fatal' ||
         errorMsg.includes('API密钥') ||
