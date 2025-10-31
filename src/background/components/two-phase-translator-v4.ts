@@ -36,7 +36,8 @@ interface MicrosoftAggregate {
 }
 
 export class TwoPhaseTranslatorV4 {
-  private static readonly API_DELAY = 200;  // API调用间隔
+  private static readonly OPENAI_BATCH_SIZE = 10;  // OpenAI单批最大字幕条数
+  private static readonly API_DELAY = 50;  // API调用间隔
   private static readonly URGENT_RESPONSE_TIME = 300;  // 紧急响应时间目标
   private static readonly BATCH_START_DELAY = 200;  // 批量翻译启动延迟（200ms）
   private static readonly TIMEOUT_MS = 15000;  // 统一超时时间（15秒，适配OpenAI）
@@ -71,9 +72,11 @@ export class TwoPhaseTranslatorV4 {
     // 根据翻译服务类型创建不同配置的IntelligentSegmenter
     const serviceType = service?.type;
     if (serviceType === 'openai') {
-      // OpenAI使用20条/批（避免GPT合并字幕问题）
-      this.segmenter = new IntelligentSegmenter(20);
-      console.debug('[debug][TwoPhaseTranslatorV4] 使用OpenAI配置：20条/批');
+      // OpenAI使用固定批次大小（集中管理便于调整）
+      this.segmenter = new IntelligentSegmenter(TwoPhaseTranslatorV4.OPENAI_BATCH_SIZE);
+      console.debug(
+        `[debug][TwoPhaseTranslatorV4] 使用OpenAI配置：${TwoPhaseTranslatorV4.OPENAI_BATCH_SIZE}条/批`
+      );
     } else if (serviceType === 'deepseek') {
       // DeepSeek使用10条/批（优化：减少超时风险，提升响应速度）
       this.segmenter = new IntelligentSegmenter(10);
@@ -194,7 +197,7 @@ export class TwoPhaseTranslatorV4 {
           sourceLang,  // ✅ 使用传入的源语言name
           preferences.targetLang,
           signal,
-          { stage: 'urgent' }
+          { stage: 'urgent', batchIndex: 1, batchCount: 1 }
         );
       }
 
@@ -384,7 +387,7 @@ export class TwoPhaseTranslatorV4 {
               sourceLang,  // ✅ 使用传入的源语言name
               preferences.targetLang,
               batchSignal,
-              { stage: 'batch' }
+              { stage: 'batch', batchIndex: i + 1, batchCount: batches.length }
             );
           }
 
@@ -836,7 +839,7 @@ export class TwoPhaseTranslatorV4 {
     sourceLang: string,
     targetLang: string,
     signal: AbortSignal,
-    options?: { stage: 'urgent' | 'batch' }
+    options?: { stage: 'urgent' | 'batch'; batchIndex?: number; batchCount?: number }
   ): Promise<string[]> {
     // 检查是否配置了翻译服务
     if (!service || !service.type) {
@@ -868,18 +871,24 @@ export class TwoPhaseTranslatorV4 {
 
           const translator = new OpenAITranslator(
             service.apiKey,
-            service.model || 'gpt-5-mini'
+            service.model || 'gpt-5-mini',
+            service.temperature ?? 1,
+            false  // 切换回旧版编号方案
           );
 
           const stage = options?.stage ?? 'batch';
 
-          // 调用翻译（传递stage和signal）
+          // 调用翻译（传递stage、批次信息和signal）
           translatedTexts = await translator.translate(
             texts,
             sourceLang,
             targetLang,
             stage,
-            signal
+            signal,
+            {
+              batchIndex: options?.batchIndex,
+              batchCount: options?.batchCount
+            }
           );
 
         } else if (service.type === 'deepseek') {

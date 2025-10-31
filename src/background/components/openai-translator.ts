@@ -1,7 +1,7 @@
 /**
  * @file openai-translator.ts
  * @description OpenAI翻译器 - V4架构适配版本
- * @version 4.3.2
+ * @version 4.4.0
  *
  * 核心特性：
  * - 支持stage ('urgent' | 'batch') 和 AbortSignal
@@ -9,12 +9,13 @@
  * - 批次大小20（配合IntelligentSegmenter，避免GPT合并字幕）
  * - 文本清理 + JSON格式/\n\n分隔格式（可切换）
  * - 编号标记系统（解决数量不匹配问题）
- * - 强化Prompt（数量约束前置，列表式规则，禁止额外输出）
+ * - Structured Outputs双轨方案（JSON Schema硬约束）
  * - GPT-5参数优化（verbosity=medium，提高输出完整性）
  * - temperature参数支持（默认1.0，GPT-5系列会忽略但保留用于测试）
  * - 细化错误处理
  *
  * 更新记录：
+ * - v4.4.0: 引入Structured Outputs双轨方案，默认保留编号标记路径
  * - v4.3.2: 恢复temperature参数支持（默认1.0，用于测试，GPT-5会忽略）
  * - v4.3.1: 强化Prompt禁止额外文本，恢复Token估算对比日志
  * - v4.3.0: 精简callOpenAIAPI函数，删除无用判断，verbosity改为medium
@@ -23,12 +24,12 @@
  * - v4.1.0: 添加编号标记系统，每条字幕加[n]前缀，强制保持一对一对应
  */
 
-/**
- * 模型配置映射表
- */
 import { handleFetchError, TranslationError } from '@shared/types/translation-errors';
 import { LanguageCodeMapper } from '@shared/utils/language-code-mapper';
 
+/**
+ * 模型配置映射表
+ */
 const MODEL_CONFIGS: Record<string, {
   contextWindow: number;
   maxOutput: number;
@@ -66,6 +67,56 @@ const MODEL_CONFIGS: Record<string, {
 };
 
 /**
+ * Structured Outputs输入结构
+ */
+interface StructuredInput {
+  targetLang: string;
+  items: Array<{
+    id: string;
+    text: string;
+  }>;
+}
+
+/**
+ * Structured Outputs输出结构
+ */
+interface StructuredOutput {
+  translations: Array<{
+    id: string;
+    translation: string;
+  }>;
+}
+
+/**
+ * Structured Outputs JSON Schema
+ */
+interface BatchSchema {
+  name: string;
+  schema: {
+    type: string;
+    additionalProperties: boolean;
+    properties: {
+      translations: {
+        type: string;
+        minItems: number;
+        maxItems: number;
+        items: {
+          type: string;
+          additionalProperties: boolean;
+          properties: {
+            id: { type: string };
+            translation: { type: string };
+          };
+          required: string[];
+        };
+      };
+    };
+    required: string[];
+  };
+  strict: boolean;
+}
+
+/**
  * OpenAI翻译器类 - V4架构
  */
 export class OpenAITranslator {
@@ -73,35 +124,38 @@ export class OpenAITranslator {
   private model: string;
   private temperature: number;
   private modelConfig: typeof MODEL_CONFIGS[string];
+  private useStructuredOutputs: boolean;
 
   /**
    * 构造函数
    * @param apiKey OpenAI API密钥
    * @param model 模型名称
    * @param temperature 温度参数（GPT-5系列固定为1，此参数保留用于测试）
+   * @param useStructuredOutputs 是否启用Structured Outputs方案
    */
-  constructor(apiKey: string, model: string, temperature: number = 1.0) {
+  constructor(
+    apiKey: string,
+    model: string,
+    temperature: number = 1.0,
+    useStructuredOutputs: boolean = false
+  ) {
     this.apiKey = apiKey;
     this.model = model;
     this.temperature = temperature;
     this.modelConfig = MODEL_CONFIGS[model] || MODEL_CONFIGS['gpt-5-mini'];
+    this.useStructuredOutputs = useStructuredOutputs;
   }
 
   /**
    * 翻译文本数组 - V4架构接口
-   * @param texts 待翻译的文本数组
-   * @param sourceLang 源语言代码 (YouTube标准)
-   * @param targetLang 目标语言代码 (YouTube标准)
-   * @param stage 翻译阶段 ('urgent' | 'batch')
-   * @param signal AbortSignal用于中断请求
-   * @returns 翻译后的文本数组
    */
   public async translate(
     texts: string[],
     sourceLang: string,
     targetLang: string,
     stage: 'urgent' | 'batch',
-    signal: AbortSignal
+    signal: AbortSignal,
+    meta?: { batchIndex?: number; batchCount?: number }
   ): Promise<string[]> {
     if (texts.length === 0) {
       return [];
@@ -111,26 +165,40 @@ export class OpenAITranslator {
       throw new DOMException('OpenAI 翻译开始前已取消', 'AbortError');
     }
 
-    console.log(`[OpenAITranslator] → 开始翻译: ${texts.length}条字幕 (${stage}阶段)`);
+    if (this.useStructuredOutputs) {
+      return this.translateStructured(texts, sourceLang, targetLang, stage, signal, meta);
+    }
+
+    return this.translateLegacy(texts, sourceLang, targetLang, stage, signal);
+  }
+
+  /**
+   * 翻译文本数组 - 旧方案（编号标记）
+   */
+  private async translateLegacy(
+    texts: string[],
+    sourceLang: string,
+    targetLang: string,
+    stage: 'urgent' | 'batch',
+    signal: AbortSignal
+  ): Promise<string[]> {
+    if (signal.aborted) {
+      throw new DOMException('OpenAI 翻译开始前已取消', 'AbortError');
+    }
+
+    console.log('[OpenAITranslator][legacy] 使用编号标记方案执行翻译');
 
     try {
-      // 1. 清理每条字幕的内部换行符
       const cleanedTexts = texts.map(text => text.replace(/\n/g, ' ').trim());
-
-      // 2. 添加编号标记（帮助AI保持一对一对应）
       const numberedTexts = cleanedTexts.map((text, i) => `[${i}] ${text}`);
-
-      // 3. 转换为JSON数组格式
       const jsonInput = JSON.stringify(numberedTexts);
       console.debug(`[debug][OpenAITranslator] JSON输入长度: ${jsonInput.length}字符, ${numberedTexts.length}条带编号字幕`);
 
-      // 3. 转换目标语言代码为英文名称（Chat API要求）
       const targetLangName = LanguageCodeMapper.toEnglishName(targetLang);
 
-      // 4. 构建messages（精简版Prompt，明确输入输出格式）
       const messages = [
         {
-          role: "system",
+          role: 'system',
           content: `You are a professional subtitle translator.
 Translate ${texts.length} subtitles from ${sourceLang} to ${targetLangName}.
 
@@ -148,35 +216,30 @@ Input: ["[0] Hello", "[1] Hello", "[2] World"]
 Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
         },
         {
-          role: "user",
+          role: 'user',
           content: jsonInput
         }
       ];
 
-      // 4. 调用API（动态计算max_completion_tokens，考虑JSON额外开销）
-      const jsonOverhead = texts.length * 4; // JSON格式额外字符：[] " " ,
+      const jsonOverhead = texts.length * 4;
       const estimatedOutputTokens = this.estimateOutputTokens(jsonInput, jsonOverhead);
 
-      // 打印合并日志：模型 + max_completion_tokens + 翻译语言参数
       console.log(`[OpenAITranslator] 模型=${this.model}, max_completion_tokens=${estimatedOutputTokens}, 翻译语言参数: ${sourceLang} → ${targetLangName}`);
 
       if (signal.aborted) {
         throw new DOMException('OpenAI 翻译已取消', 'AbortError');
       }
 
-      const responseText = await this.callOpenAIAPI(messages, signal, estimatedOutputTokens);
+      const responseText = await this.callOpenAIAPILegacy(messages, signal, estimatedOutputTokens);
 
-      // 5. 解析JSON结果
       let numberedTranslations: string[];
       try {
-        // 尝试直接解析
         numberedTranslations = JSON.parse(responseText);
         console.debug(`[debug][OpenAITranslator] ✓ JSON解析成功，收到${numberedTranslations.length}条带编号翻译`);
       } catch (parseError) {
         console.warn(`[OpenAITranslator] ⚠️  JSON解析失败，尝试提取JSON部分`, parseError);
         console.error(`[OpenAITranslator] 📄 OpenAI原始响应:`, responseText);
 
-        // 容错：提取JSON数组部分（AI可能返回了额外文字）
         const jsonMatch = responseText.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
           try {
@@ -199,7 +262,6 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
         }
       }
 
-      // 6. 验证返回类型和数量
       if (!Array.isArray(numberedTranslations)) {
         throw new TranslationError(
           `OpenAI 翻译响应格式错误：返回类型为 ${typeof numberedTranslations}`,
@@ -208,28 +270,20 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
         );
       }
 
-      // 7. 去除编号，提取纯翻译文本
       const translations = numberedTranslations.map((item, index) => {
-        // 移除开头的 [n] 编号
         const cleaned = item.replace(/^\[\d+\]\s*/, '');
-
-        // 检查编号是否正确（可选的验证）
         const expectedPrefix = `[${index}]`;
         if (!item.startsWith(expectedPrefix)) {
           console.warn(`[OpenAITranslator] ⚠️ 编号不匹配: 期望 ${expectedPrefix}，实际 ${item.substring(0, 10)}`);
         }
-
         return cleaned;
       });
 
-      // 8. 最终数量验证
       if (translations.length !== texts.length) {
-        // 打印详细调试信息
         console.error(`[OpenAITranslator] 原始输入(全部${texts.length}条):`, cleanedTexts);
         console.error(`[OpenAITranslator] AI返回结果(全部${numberedTranslations.length}条):`, numberedTranslations);
         console.error(`[OpenAITranslator] API原始响应:`, responseText);
 
-        // 抛出错误
         throw new TranslationError(
           `OpenAI 翻译数量不匹配：期望${texts.length}条，实际${translations.length}条`,
           'retryable',
@@ -239,11 +293,185 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
 
       console.log(`[OpenAITranslator] ✓ 翻译完成: ${translations.length}条字幕（已去除编号）`);
       return translations;
-
     } catch (error) {
-      console.error(`[OpenAITranslator] ✗ 翻译失败:`, error);
+      console.error('[OpenAITranslator] ✗ 翻译失败:', error);
       throw error;
     }
+  }
+
+  /**
+   * 翻译文本数组 - 新方案（Structured Outputs）
+   */
+  private async translateStructured(
+    texts: string[],
+    sourceLang: string,
+    targetLang: string,
+    stage: 'urgent' | 'batch',
+    signal: AbortSignal,
+    meta?: { batchIndex?: number; batchCount?: number }
+  ): Promise<string[]> {
+    if (signal.aborted) {
+      throw new DOMException('OpenAI 翻译开始前已取消', 'AbortError');
+    }
+
+    let logBase = '';
+    let completionTokensLog: number | undefined;
+
+    try {
+      const cleanedTexts = texts.map(text => text.replace(/\n/g, ' ').trim());
+      const items = cleanedTexts.map((text, index) => ({
+        id: String(index),
+        text
+      }));
+
+      const targetLangName = LanguageCodeMapper.toEnglishName(targetLang);
+      const inputData: StructuredInput = {
+        targetLang: targetLangName,
+        items
+      };
+
+      const schema = this.buildBatchSchema(items.length);
+      const jsonPayload = JSON.stringify(inputData);
+      const estimatedOutputTokens = this.estimateOutputTokens(jsonPayload);
+      const batchInfo = this.buildBatchLabel(stage, meta);
+      logBase =
+        `[OpenAI翻译] 方案=Structured Outputs | 模型=${this.model} | 阶段=${stage} | 批次=${batchInfo} ` +
+        `| 温度=${this.temperature} | 估算max_tokens=${estimatedOutputTokens}`;
+
+      const messages = [
+        {
+          role: 'system',
+          content:
+            `You are a professional subtitle translator.\n` +
+            `Translate ${items.length} subtitles from ${sourceLang} to ${targetLangName}.\n\n` +
+            `RULES:\n` +
+            `- Do NOT merge or split items\n` +
+            `- Keep original ids unchanged\n` +
+            `- Output must match the provided JSON schema exactly`
+        },
+        {
+          role: 'user',
+          content: jsonPayload
+        }
+      ];
+
+      if (signal.aborted) {
+        throw new DOMException('OpenAI 翻译已取消', 'AbortError');
+      }
+
+      const {
+        content: responseText,
+        completionTokens
+      } = await this.callOpenAIAPIStructured(messages, schema, signal);
+      completionTokensLog = completionTokens;
+
+      let structuredOutput: StructuredOutput;
+      try {
+        structuredOutput = JSON.parse(responseText);
+        console.debug(
+          `[debug][OpenAITranslator] ✓ Structured Outputs解析成功，收到${structuredOutput?.translations?.length ?? 0}条翻译`
+        );
+      } catch (parseError) {
+        console.error('[OpenAITranslator][structured] ❌ JSON解析失败', parseError);
+        console.error('[OpenAITranslator][structured] 📄 OpenAI原始响应:', responseText);
+        throw new TranslationError(
+          `OpenAI Structured Outputs 解析失败: ${parseError}`,
+          'retryable',
+          'openai'
+        );
+      }
+
+      if (!structuredOutput.translations || !Array.isArray(structuredOutput.translations)) {
+        throw new TranslationError(
+          'OpenAI Structured Outputs 响应格式错误：缺少translations数组',
+          'retryable',
+          'openai'
+        );
+      }
+
+      const translations = structuredOutput.translations;
+
+      if (translations.length !== texts.length) {
+        console.error('[OpenAITranslator][structured] 输入数据:', items);
+        console.error('[OpenAITranslator][structured] OpenAI返回:', translations);
+        console.error('[OpenAITranslator][structured] OpenAI原始响应(JSON字符串):', responseText);
+        throw new TranslationError(
+          `OpenAI Structured Outputs 数量不匹配：期望${texts.length}条，实际${translations.length}条`,
+          'retryable',
+          'openai'
+        );
+      }
+
+      const expectedIds = items.map(item => item.id);
+      const actualIds = translations.map(item => item.id);
+      const idsMatch = expectedIds.every((id, index) => id === actualIds[index]);
+
+      if (!idsMatch) {
+        console.error('[OpenAITranslator][structured] id顺序不匹配', { expectedIds, actualIds });
+        console.error('[OpenAITranslator][structured] OpenAI原始响应(JSON字符串):', responseText);
+        throw new TranslationError(
+          'OpenAI Structured Outputs id顺序不匹配',
+          'retryable',
+          'openai'
+        );
+      }
+
+      console.log(`${logBase} | 输出tokens=${completionTokens ?? '未知'}`);
+      return translations.map(item => item.translation);
+    } catch (error) {
+      if (logBase) {
+        console.log(`${logBase} | 输出tokens=${completionTokensLog ?? '未知'} | 错误=${(error as Error)?.message ?? error}`);
+      }
+      console.error('[OpenAITranslator] ✗ Structured Outputs翻译失败:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 构建Structured Outputs JSON Schema
+   */
+  private buildBatchSchema(itemCount: number): BatchSchema {
+    return {
+      name: 'SubtitleBatch',
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          translations: {
+            type: 'array',
+            minItems: itemCount,
+            maxItems: itemCount,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                id: { type: 'string' },
+                translation: { type: 'string' }
+              },
+              required: ['id', 'translation']
+            }
+          }
+        },
+        required: ['translations']
+      },
+      strict: true
+    };
+  }
+
+  /**
+   * 构建批次标签
+   */
+  private buildBatchLabel(
+    stage: 'urgent' | 'batch',
+    meta?: { batchIndex?: number; batchCount?: number }
+  ): string {
+    if (stage !== 'batch') {
+      return '紧急';
+    }
+
+    const index = Math.max(1, meta?.batchIndex ?? 1);
+    const total = Math.max(index, meta?.batchCount ?? index);
+    return `第${index}批/共${total}批`;
   }
 
   /**
@@ -254,16 +482,11 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
    * @returns 估算的输出token数
    */
   private estimateOutputTokens(inputText: string, jsonOverhead: number = 0): number {
-    // 估算逻辑（与Gemini保持一致）：
-    // 1. 字符数 → UTF-8字节数（中文3字节，英文1字节）
-    // 2. 字节数 ÷ 2.5 = 输入tokens
-    // 3. 输入tokens × 1.5 = 输出tokens（50%余量，保证充足空间）
     const encoder = new TextEncoder();
     const inputBytes = encoder.encode(inputText).length + jsonOverhead;
     const estimatedInputTokens = inputBytes / 2.5;
-    const estimatedOutputTokens = Math.ceil(estimatedInputTokens * 1.5);  // 50%余量
+    const estimatedOutputTokens = Math.ceil(estimatedInputTokens * 1.5);
 
-    // 限制上限（避免超过模型最大输出）
     const maxOutputTokens = Math.min(estimatedOutputTokens, this.modelConfig.maxOutput);
 
     console.debug(
@@ -274,29 +497,23 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
   }
 
   /**
-   * 调用OpenAI API (非流式)
-   * @param messages 消息数组
-   * @param signal AbortSignal
-   * @param maxCompletionTokens 最大完成token数
-   * @returns 翻译后的组合文本
+   * 调用OpenAI API - 旧方案（编号标记）
    */
-  private async callOpenAIAPI(
+  private async callOpenAIAPILegacy(
     messages: any[],
     signal: AbortSignal,
     maxCompletionTokens: number
   ): Promise<string> {
     const url = 'https://api.openai.com/v1/chat/completions';
 
-    // 构建请求体
-    // 注意：GPT-5系列会忽略temperature参数（固定为1），但保留用于测试
     const requestBody = {
       model: this.model,
       messages,
       max_completion_tokens: maxCompletionTokens,
       stream: false,
-      temperature: this.temperature,      // GPT-5系列会忽略此参数
-      reasoning_effort: 'minimal',        // 保持最快速度
-      verbosity: 'low'                 // 提高输出完整性
+      temperature: this.temperature,
+      reasoning_effort: 'minimal',
+      verbosity: 'low'
     };
 
     let response: Response;
@@ -306,10 +523,10 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`,
+          Authorization: `Bearer ${this.apiKey}`
         },
         body: JSON.stringify(requestBody),
-        signal,
+        signal
       });
     } catch (error) {
       handleFetchError(error, 'openai', 'OpenAI API 网络请求失败');
@@ -333,7 +550,6 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
 
     const content = data.choices?.[0]?.message?.content;
     if (!content) {
-      // 添加详细调试信息，帮助排查问题
       console.error('[OpenAITranslator] API返回结构异常:', {
         hasChoices: !!data.choices,
         choicesLength: data.choices?.length,
@@ -352,7 +568,6 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
       );
     }
 
-    // Token使用统计（含估算对比）
     if (data.usage) {
       const actualInput = data.usage.prompt_tokens;
       const actualOutput = data.usage.completion_tokens;
@@ -370,9 +585,93 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
   }
 
   /**
+   * 调用OpenAI API - 新方案（Structured Outputs）
+   */
+  private async callOpenAIAPIStructured(
+    messages: any[],
+    schema: BatchSchema,
+    signal: AbortSignal
+  ): Promise<{ content: string; completionTokens?: number }> {
+    const url = 'https://api.openai.com/v1/chat/completions';
+
+    const requestBody = {
+      model: this.model,
+      messages,
+      response_format: {
+        type: 'json_schema',
+        json_schema: schema
+      },
+      stream: false,
+      temperature: this.temperature,
+      reasoning_effort: 'minimal',
+      verbosity: 'low'
+    };
+
+    console.debug(
+      `[debug][OpenAITranslator] Structured Outputs请求: model=${this.model}, minItems=${schema.schema.properties.translations.minItems}`
+    );
+
+    let response: Response;
+
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.apiKey}`
+        },
+        body: JSON.stringify(requestBody),
+        signal
+      });
+    } catch (error) {
+      handleFetchError(error, 'openai', 'OpenAI API 网络请求失败');
+    }
+
+    if (!response.ok) {
+      await this.handleAPIError(response);
+    }
+
+    let data: any;
+    try {
+      data = await response.json();
+    } catch {
+      throw new TranslationError(
+        'OpenAI API 返回内容解析失败',
+        'retryable',
+        'openai',
+        response.status
+      );
+    }
+
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) {
+      console.error('[OpenAITranslator][structured] API返回结构异常:', {
+        hasChoices: !!data.choices,
+        choicesLength: data.choices?.length,
+        firstChoice: data.choices?.[0],
+        hasMessage: !!data.choices?.[0]?.message,
+        messageContent: data.choices?.[0]?.message?.content,
+        finishReason: data.choices?.[0]?.finish_reason,
+        fullResponse: data
+      });
+
+      throw new TranslationError(
+        'OpenAI API 返回内容为空',
+        'retryable',
+        'openai',
+        response.status
+      );
+    }
+
+    return {
+      content,
+      completionTokens: data.usage?.completion_tokens
+    };
+  }
+
+  /**
    * 处理API错误
-   * @param response fetch响应对象
-  */
+   */
   private async handleAPIError(response: Response): Promise<never> {
     let errorMessage = '未知错误';
     let errorCode: string | undefined;

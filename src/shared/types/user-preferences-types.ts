@@ -64,6 +64,7 @@ export interface TranslationServiceComplete {
 
   // === OpenAI实验性参数 ===
   useImmersiveFormat?: boolean;                 // 是否使用沉浸式格式（\n\n分隔）而非JSON格式
+  useStructuredOutputs?: boolean;               // 是否启用Structured Outputs双轨方案
 }
 
 /**
@@ -112,7 +113,8 @@ export const TRANSLATION_SERVICE_TEMPLATES: Record<TranslationServiceType, Omit<
     maxTokens: 128000,
     rpm: 60,
     tpm: 40000,
-    useImmersiveFormat: false  // 默认使用JSON格式（带编号）
+    useImmersiveFormat: false,  // 默认使用JSON格式（带编号）
+    useStructuredOutputs: false // 默认关闭Structured Outputs方案
   },
   [TranslationServiceType.GEMINI]: {
     type: TranslationServiceType.GEMINI,
