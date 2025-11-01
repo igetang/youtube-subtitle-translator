@@ -112,7 +112,12 @@ export const TRANSLATION_SERVICE_TEMPLATES: Record<TranslationServiceType, Omit<
     model: null,
     temperature: null,
     rpm: 100,
-    tpm: null
+    tpm: null,
+
+    // 🔥 真并发配置
+    enableConcurrentTranslation: true,  // 启用并发
+    concurrencyLimit: 10,               // 并发数：10（激进策略）
+    requestDelay: 0                     // 无延迟（真并发）
   },
   [TranslationServiceType.OPENAI]: {
     type: TranslationServiceType.OPENAI,

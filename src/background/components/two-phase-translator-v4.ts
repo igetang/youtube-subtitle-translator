@@ -1656,9 +1656,18 @@ export class TwoPhaseTranslatorV4 {
           );
           translatedTexts = translations;
         } else if (service.type === 'microsoft' || service.type === 'microsoft-free') {
-          console.warn('[TwoPhaseTranslatorV4] Microsoft翻译需要字幕上下文，返回原文');
-          translatedTexts = texts;
-          
+          // 使用 Microsoft 免费翻译
+          const translator = new MicrosoftTranslator();
+          const stage = options?.stage ?? 'batch';
+
+          // 调用翻译（传递 stage）
+          translatedTexts = await translator.translateTexts(
+            texts,
+            normalizedSourceLanguageCode,
+            targetLang,
+            stage
+          );
+
         } else {
           // 未知服务类型，返回原文
           console.warn(`[TwoPhaseTranslatorV4] 未知的翻译服务类型: ${service.type}`);
