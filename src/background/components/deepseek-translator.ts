@@ -56,7 +56,7 @@ interface DeepSeekResponse {
  */
 export class DeepSeekTranslator {
   // ========== 调试开关 ==========
-  private static readonly DEBUG_TRANSLATION = true;   // 🔧 调试开关：打印翻译前后的详细信息
+  private static readonly DEBUG_TRANSLATION = false;  // 🔧 调试开关：打印翻译前后的详细信息
 
   // ========== 常量配置 ==========
   private static readonly ENDPOINT = 'https://api.deepseek.com/chat/completions';
@@ -64,7 +64,7 @@ export class DeepSeekTranslator {
   private static readonly TEMPERATURE = 1.3;          // 官方推荐值（翻译场景）
   private static readonly MAX_TOKENS = 8000;          // 支持更长输出
   private static readonly BATCH_SIZE = 10;            // 批量翻译批次大小（优化：20→10，减少超时风险）
-  private static readonly BATCH_DELAY_MS = 200;       // batch 阶段延迟
+  private static readonly BATCH_DELAY_MS = 50;        // batch 阶段延迟
   private static readonly SEPARATOR = '\n---\n';      // 字幕分隔符
 
   // ========== 实例属性 ==========

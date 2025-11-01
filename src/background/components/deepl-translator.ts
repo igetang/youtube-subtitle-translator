@@ -67,8 +67,8 @@ export class DeepLTranslator {
   private static readonly FREE_ENDPOINT = 'https://api-free.deepl.com/v2/translate';
   private static readonly PRO_ENDPOINT = 'https://api.deepl.com/v2/translate';
   private static readonly BATCH_SIZE = 50;              // DeepL 原生支持数组批量
-  private static readonly FREE_BATCH_DELAY_MS = 1000;   // 免费层延迟（建议值）
-  private static readonly PRO_BATCH_DELAY_MS = 200;     // 付费层延迟（建议值）
+  private static readonly FREE_BATCH_DELAY_MS = 50;     // 免费层延迟
+  private static readonly PRO_BATCH_DELAY_MS = 50;      // 付费层延迟
 
   private apiKey: string;
   private tier: 'free' | 'pro';

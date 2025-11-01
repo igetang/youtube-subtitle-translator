@@ -148,7 +148,7 @@ export const TRANSLATION_SERVICE_TEMPLATES: Record<TranslationServiceType, Omit<
     rpm: null,                                     // 官方未公布RPM限制
     tpm: null,                                     // 按字符计费，无TPM概念
     tier: 'free',                                  // 'free' | 'pro'（用户选择）
-    batchDelay: 1000,                              // 建议值：免费层 1000ms, 付费层 200ms
+    batchDelay: 50,                                // 批次间延迟（ms）
     formality: 'default',                          // 'default' | 'more' | 'less' | 'prefer_more' | 'prefer_less'
     splitSentences: "0",                           // ⚠️ 字符串类型，默认"0"禁止分句
     preserveFormatting: false,                     // 格式保留

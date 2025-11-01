@@ -40,7 +40,7 @@ export class QwenTranslator {
   private static readonly SINGAPORE_ENDPOINT =
     'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions';
   private static readonly BATCH_SIZE = 30;        // 智能断句最大批次
-  private static readonly BATCH_DELAY_MS = 200;   // batch 阶段延迟
+  private static readonly BATCH_DELAY_MS = 50;    // batch 阶段延迟
   private static readonly SUPPORTED_CODES = new Set<string>([
     'auto',
     'en', 'zh', 'zh_tw', 'ru', 'ja', 'ko', 'es', 'fr', 'pt', 'de', 'it',
