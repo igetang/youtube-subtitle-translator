@@ -48,6 +48,16 @@ export class TwoPhaseTranslatorV4 {
   private static readonly MS_MAX_CHARS = 5000;  // 微软单个文本最大字符数
   private static readonly MS_MAX_TOTAL_CHARS = 50000;  // 微软单次请求字符总量限制
 
+  /**
+   * 并发翻译配置（Phase 1：仅DeepSeek启用）
+   */
+  private static readonly CONCURRENCY_CONFIG = {
+    DEEPSEEK: 10,           // DeepSeek默认并发数（官方"无限制"，社区经验10）
+    OPENAI: 10,             // OpenAI默认并发数（预留）
+    GEMINI: 5,              // Gemini默认并发数（预留）
+    BATCH_TIMEOUT_MS: 8000  // 单批次超时（8秒）
+  };
+
   // 🚀 调试开关：启用微软5000字符窗口优化
   private static readonly USE_MICROSOFT_OPTIMIZER = true;  // 设为true启用新优化器
   
@@ -102,7 +112,47 @@ export class TwoPhaseTranslatorV4 {
       console.debug('[debug][TwoPhaseTranslatorV4] 使用Google/Microsoft配置：40条/批');
     }
   }
-  
+
+  /**
+   * 获取当前服务的并发限制
+   * @returns 并发数（0表示串行处理）
+   */
+  private getConcurrencyLimit(): number {
+    const service = this.translationService;
+    if (!service) return 0;
+
+    // 检查是否启用并发翻译
+    if (!service.enableConcurrentTranslation) {
+      return 0; // 返回0表示使用串行处理
+    }
+
+    // 优先使用用户自定义的并发限制
+    if (service.concurrencyLimit && service.concurrencyLimit > 0) {
+      return service.concurrencyLimit;
+    }
+
+    // 使用服务默认配置
+    const serviceType = service.type;
+    switch (serviceType) {
+      case 'deepseek':
+        return TwoPhaseTranslatorV4.CONCURRENCY_CONFIG.DEEPSEEK;
+      case 'openai':
+        return TwoPhaseTranslatorV4.CONCURRENCY_CONFIG.OPENAI;
+      case 'gemini':
+        return TwoPhaseTranslatorV4.CONCURRENCY_CONFIG.GEMINI;
+      default:
+        return 0; // 其他服务默认串行
+    }
+  }
+
+  /**
+   * 获取批次超时时间
+   * @returns 超时时间（毫秒）
+   */
+  private getBatchTimeout(): number {
+    return TwoPhaseTranslatorV4.CONCURRENCY_CONFIG.BATCH_TIMEOUT_MS;
+  }
+
   /**
    * 执行紧急翻译（支持取消）
    *
@@ -247,9 +297,10 @@ export class TwoPhaseTranslatorV4 {
     
     return results;
   }
-  
+
   /**
-   * 执行批量翻译（支持取消）
+   * 执行批量翻译（路由器方法）
+   * 根据服务配置自动选择串行或并发翻译
    *
    * @param subtitles 所有字幕
    * @param urgentResults 紧急翻译结果（用于去重）
@@ -260,6 +311,64 @@ export class TwoPhaseTranslatorV4 {
    * @returns 批量翻译结果数组
    */
   public async translateBatch(
+    subtitles: Array<{
+      id?: string;
+      start: number;
+      end?: number;
+      duration?: number;
+      text: string;
+    }>,
+    urgentResults: Array<any>,
+    sourceLanguageName: string,
+    sourceLanguageCode: string,
+    preferences: any,
+    signal: AbortSignal
+  ): Promise<Array<{
+    index: number;
+    originalText: string;
+    translatedText: string;
+    isUrgent: false;
+  }>> {
+    // 获取并发限制
+    const concurrency = this.getConcurrencyLimit();
+
+    // 路由到对应的翻译方法
+    if (concurrency > 0) {
+      console.debug(`[debug][TwoPhaseTranslatorV4] 使用并发翻译模式（并发数: ${concurrency}）`);
+      return this.translateBatchConcurrent(
+        subtitles,
+        urgentResults,
+        sourceLanguageName,
+        sourceLanguageCode,
+        preferences,
+        signal
+      );
+    } else {
+      console.debug('[debug][TwoPhaseTranslatorV4] 使用串行翻译模式');
+      return this.translateBatchSerial(
+        subtitles,
+        urgentResults,
+        sourceLanguageName,
+        sourceLanguageCode,
+        preferences,
+        signal
+      );
+    }
+  }
+
+  /**
+   * 串行批量翻译（原有逻辑）
+   * 逐批处理，等待每批完成后再进行下一批
+   *
+   * @param subtitles 所有字幕
+   * @param urgentResults 紧急翻译结果（用于去重）
+   * @param sourceLanguageName 源语言名称（如"English"，供Chat类API与日志使用）
+   * @param sourceLanguageCode 源语言代码（如"en"，供需要代码的API使用）
+   * @param preferences 用户偏好设置
+   * @param signal AbortSignal用于取消操作
+   * @returns 批量翻译结果数组
+   */
+  private async translateBatchSerial(
     subtitles: Array<{
       id?: string;
       start: number;
@@ -476,7 +585,236 @@ export class TwoPhaseTranslatorV4 {
     
     return results;
   }
-  
+
+  /**
+   * 并发批量翻译（新逻辑）
+   * 使用分组并发：将批次分成多轮，每轮内并发执行
+   *
+   * @param subtitles 所有字幕
+   * @param urgentResults 紧急翻译结果（用于去重）
+   * @param sourceLanguageName 源语言名称
+   * @param sourceLanguageCode 源语言代码
+   * @param preferences 用户偏好设置
+   * @param signal AbortSignal用于取消操作
+   * @returns 批量翻译结果数组
+   */
+  private async translateBatchConcurrent(
+    subtitles: Array<{
+      id?: string;
+      start: number;
+      end?: number;
+      duration?: number;
+      text: string;
+    }>,
+    urgentResults: Array<any>,
+    sourceLanguageName: string,
+    sourceLanguageCode: string,
+    preferences: any,
+    signal: AbortSignal
+  ): Promise<Array<{
+    index: number;
+    originalText: string;
+    translatedText: string;
+    isUrgent: false;
+  }>> {
+    // 检查信号
+    if (signal.aborted) {
+      throw new DOMException('批量翻译开始前已取消', 'AbortError');
+    }
+
+    const results: any[] = [];
+    const serviceType = preferences.translationService?.type;
+    const normalizedSourceLanguageCode =
+      sourceLanguageCode && sourceLanguageCode.trim() !== '' ? sourceLanguageCode : 'auto';
+
+    try {
+      // 延迟启动（避免与紧急翻译冲突）
+      await this.delayWithSignal(TwoPhaseTranslatorV4.BATCH_START_DELAY, signal);
+
+      // 批量翻译应该翻译全部字幕
+      const batchSubtitles = subtitles;
+
+      // 如果紧急翻译已经覆盖全部字幕，可以跳过批量翻译
+      if (urgentResults.length === subtitles.length) {
+        console.log('[TwoPhaseTranslatorV4] 紧急翻译已覆盖全部字幕，跳过批量翻译');
+        return urgentResults;
+      }
+
+      // 使用智能分段创建批次
+      const batchesWithMeta = this.segmenter.createSmartBatches(batchSubtitles);
+      const batches = batchesWithMeta.map(batch => batch.subtitles);
+
+      // 获取并发限制
+      const concurrency = this.getConcurrencyLimit();
+      const perBatchTimeout = this.getBatchTimeout();
+
+      const sourceLabel = this.getSourceLanguageLabel(
+        serviceType,
+        sourceLanguageName,
+        normalizedSourceLanguageCode
+      );
+      const targetLabel = this.getTargetLanguageLabel(serviceType, preferences.targetLang);
+
+      console.log(
+        `[TwoPhaseTranslatorV4] → 批量翻译: ${subtitles.length}条 | 并发${concurrency} | ${batches.length}批次 | ${sourceLabel} → ${targetLabel}`
+      );
+
+      // 分组并发执行
+      let globalIndex = 0;
+      for (let i = 0; i < batches.length; i += concurrency) {
+        // 检查主信号
+        if (signal.aborted) {
+          throw new DOMException(`批量翻译在第${Math.floor(i / concurrency) + 1}轮被取消`, 'AbortError');
+        }
+
+        // 当前轮的批次
+        const chunk = batches.slice(i, i + concurrency);
+        const roundNum = Math.floor(i / concurrency) + 1;
+        const totalRounds = Math.ceil(batches.length / concurrency);
+
+        console.debug(`[debug][TwoPhaseTranslatorV4] 🚀 第${roundNum}/${totalRounds}轮并发开始（${chunk.length}个批次）`);
+
+        // 创建并发Promise数组
+        const chunkPromises = chunk.map(async (batch, chunkIndex) => {
+          const batchIndex = globalIndex + chunkIndex;
+          const texts = batch.map(sub => sub.text.replace(/\n/g, ' ').trim());
+
+          try {
+            // 为每个批次创建独立的超时信号
+            let batchSignal: AbortSignal;
+
+            try {
+              // 尝试使用现代API（Chrome 103+）
+              const timeoutSignal = AbortSignal.timeout(perBatchTimeout);
+              batchSignal = AbortSignal.any([signal, timeoutSignal]);
+            } catch (e) {
+              // 降级方案
+              const batchController = new AbortController();
+
+              if (signal.aborted) {
+                batchController.abort();
+              } else {
+                signal.addEventListener('abort', () => batchController.abort());
+              }
+
+              const timeoutId = setTimeout(() => {
+                batchController.abort(new DOMException('批次翻译超时', 'TimeoutError'));
+              }, perBatchTimeout);
+
+              batchController.signal.addEventListener('abort', () => clearTimeout(timeoutId));
+              batchSignal = batchController.signal;
+            }
+
+            const translatedTexts = await this.callTranslationAPI(
+              texts,
+              preferences.translationService,
+              sourceLanguageName,
+              normalizedSourceLanguageCode,
+              preferences.targetLang,
+              batchSignal,
+              { stage: 'batch', batchIndex: batchIndex + 1, batchCount: batches.length }
+            );
+
+            const returnTime = new Date().toLocaleTimeString('zh-CN', {
+              hour12: false,
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              fractionalSecondDigits: 3
+            });
+
+            return {
+              success: true,
+              batchIndex,
+              batch,
+              texts,
+              translatedTexts,
+              returnTime
+            };
+
+          } catch (error: any) {
+            const returnTime = new Date().toLocaleTimeString('zh-CN', {
+              hour12: false,
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              fractionalSecondDigits: 3
+            });
+
+            return {
+              success: false,
+              batchIndex,
+              error,
+              returnTime
+            };
+          }
+        });
+
+        // Promise.all 保证顺序
+        const chunkResults = await Promise.all(chunkPromises);
+
+        // 打印实际返回顺序（按时间排序）
+        const sortedByTime = [...chunkResults].sort((a, b) =>
+          a.returnTime.localeCompare(b.returnTime)
+        );
+
+        console.debug(`[debug][TwoPhaseTranslatorV4] 📊 第${roundNum}轮实际返回顺序（按时间）:`);
+        sortedByTime.forEach((result, idx) => {
+          const status = result.success ? '✅' : '❌';
+          console.debug(`  ${idx + 1}. [${result.returnTime}] 批次${result.batchIndex + 1} ${status}`);
+        });
+
+        // 处理结果（按逻辑顺序）
+        for (const result of chunkResults) {
+          if (!result.success) {
+            // 任何批次失败，直接抛出错误
+            const errorMsg = result.error.name === 'TimeoutError' || result.error.message === '批次翻译超时'
+              ? '翻译超时'
+              : result.error.message || '翻译失败';
+
+            console.debug(`[debug][TwoPhaseTranslatorV4] 批次 ${result.batchIndex + 1}/${batches.length} 失败: ${errorMsg}`);
+            throw new Error(errorMsg);
+          }
+
+          // 构建结果（TypeScript类型守卫：确保success=true时这些字段存在）
+          if (result.success && result.batch && result.texts && result.translatedTexts) {
+            result.batch.forEach((sub: any, idx: number) => {
+              const translatedText = result.translatedTexts![idx] || sub.text;
+              const originalIndex = subtitles.indexOf(sub);
+
+              if (originalIndex !== -1) {
+                results.push({
+                  index: originalIndex,
+                  originalText: result.texts![idx],
+                  translatedText: translatedText,
+                  isUrgent: false
+                });
+              }
+            });
+          }
+        }
+
+        globalIndex += chunk.length;
+
+        // 批次间延迟（避免API限流）
+        if (i + concurrency < batches.length) {
+          await this.delayWithSignal(TwoPhaseTranslatorV4.API_DELAY, signal);
+        }
+      }
+
+      // 汇总报告
+      console.log(`[TwoPhaseTranslatorV4] ✓ 并发批量翻译完成: ${results.length} 条`);
+
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.log('[TwoPhaseTranslatorV4] ✗ 批量翻译被取消');
+      }
+      throw error;
+    }
+
+    return results;
+  }
+
   private async translateWithMicrosoftSubtitles(
     subtitles: Array<{
       id?: string;

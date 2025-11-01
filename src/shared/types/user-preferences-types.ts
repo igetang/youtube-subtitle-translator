@@ -45,12 +45,16 @@ export interface TranslationServiceComplete {
   
   // === 调节参数 ===
   temperature?: number | null;                  // 温度参数
-  maxTokens?: number;                           // 最大令牌数
+  maxTokens?: number | null;                    // 最大令牌数
   topP?: number;                                // Top-P参数
   
   // === 限流参数 ===
   rpm?: number | null;                          // 每分钟请求限制
   tpm?: number | null;                          // 每分钟令牌限制
+
+  // === 并发翻译配置 ===
+  enableConcurrentTranslation?: boolean;        // 是否启用并发翻译（默认true for DeepSeek）
+  concurrencyLimit?: number;                    // 并发限制（用户可覆盖，留空则使用服务默认值）
 
   // === Gemini专用参数（Phase 1） ===
   tier?: 'free' | 'paid' | 'pro';               // 账户类型：Gemini(free/paid)、DeepL(free/pro)
@@ -136,7 +140,9 @@ export const TRANSLATION_SERVICE_TEMPLATES: Record<TranslationServiceType, Omit<
     temperature: 1.3,  // 官方推荐值（固定，不暴露给用户）
     maxTokens: 8000,   // 支持更长输出
     rpm: 50,
-    tpm: 50000
+    tpm: 50000,
+    enableConcurrentTranslation: true,  // 默认启用并发翻译
+    concurrencyLimit: undefined         // 留空，使用代码中的预设值（10）
   },
   [TranslationServiceType.DEEPL]: {
     type: TranslationServiceType.DEEPL,
