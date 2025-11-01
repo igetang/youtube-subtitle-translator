@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DeepSeek API 并发翻译测试</title>
+  <style>
+    body {
+      font-family: 'Courier New', monospace;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    h1 {
+      color: #4ec9b0;
+      border-bottom: 2px solid #4ec9b0;
+      padding-bottom: 10px;
+    }
+    .input-section {
+      background: #2d2d2d;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    label {
+      display: block;
+      color: #9cdcfe;
+      margin-bottom: 8px;
+      font-weight: bold;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 10px;
+      background: #1e1e1e;
+      border: 1px solid #3e3e3e;
+      color: #d4d4d4;
+      border-radius: 4px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    button {
+      background: #0e639c;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      margin-top: 10px;
+      transition: background 0.3s;
+    }
+    button:hover {
+      background: #1177bb;
+    }
+    button:disabled {
+      background: #555;
+      cursor: not-allowed;
+    }
+    .log-area {
+      background: #1e1e1e;
+      border: 1px solid #3e3e3e;
+      border-radius: 8px;
+      padding: 20px;
+      min-height: 400px;
+      max-height: 600px;
+      overflow-y: auto;
+      font-size: 13px;
+    }
+    .log-entry {
+      margin-bottom: 8px;
+      padding: 4px 0;
+    }
+    .log-send { color: #569cd6; }
+    .log-success { color: #4ec9b0; }
+    .log-error { color: #f48771; }
+    .log-info { color: #dcdcaa; }
+    .log-result { color: #ce9178; }
+    .timestamp {
+      color: #858585;
+      font-size: 11px;
+    }
+    .section-title {
+      color: #4ec9b0;
+      font-size: 16px;
+      font-weight: bold;
+      margin: 20px 0 10px 0;
+      border-bottom: 1px solid #3e3e3e;
+      padding-bottom: 5px;
+    }
+    .summary-box {
+      background: #2d2d2d;
+      border-left: 4px solid #4ec9b0;
+      padding: 15px;
+      margin: 15px 0;
+      border-radius: 4px;
+    }
+    .summary-item {
+      margin: 8px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🚀 DeepSeek API 并发翻译测试</h1>
+
+    <div class="input-section">
+      <label for="apiKey">DeepSeek API Key:</label>
+      <input type="text" id="apiKey" placeholder="sk-your-api-key-here" />
+      <button id="startBtn" onclick="startTest()">开始测试</button>
+      <button id="clearBtn" onclick="clearLog()" style="margin-left: 10px; background: #555;">清空日志</button>
+    </div>
+
+    <div class="log-area" id="logArea"></div>
+  </div>
+
+  <script>
+    const testTexts = [
+      'Hello',
+      'How are you today?',
+      'The quick brown fox jumps over the lazy dog.',
+      'This is a longer sentence that will take more time to translate because it has more words.',
+      'Short text.',
+      'Another medium length sentence for testing purposes.',
+      'Hi!',
+      'This is a very very very long sentence with lots of words that should take the longest time to process and translate into another language, making it return last.',
+      'Good morning.',
+      'Testing concurrent API calls with Promise.all.'
+    ];
+
+    let logContainer;
+
+    function log(message, type = 'info') {
+      if (!logContainer) {
+        logContainer = document.getElementById('logArea');
+      }
+      const entry = document.createElement('div');
+      entry.className = `log-entry log-${type}`;
+      const timestamp = new Date().toLocaleTimeString('zh-CN', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        fractionalSecondDigits: 3
+      });
+      entry.innerHTML = `<span class="timestamp">[${timestamp}]</span> ${message}`;
+      logContainer.appendChild(entry);
+      logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    function clearLog() {
+      const logArea = document.getElementById('logArea');
+      logArea.innerHTML = '';
+      logContainer = null;
+    }
+
+    async function translateWithDeepSeek(text, index, apiKey) {
+      const startTime = Date.now();
+      const startTimestamp = new Date().toLocaleTimeString('zh-CN', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        fractionalSecondDigits: 3
+      });
+
+      log(`📤 [批次${index + 1}] 发送请求 - 文本长度: ${text.length}字符`, 'send');
+
+      try {
+        const response = await fetch('https://api.deepseek.com/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({
+            model: 'deepseek-chat',
+            messages: [
+              {
+                role: 'system',
+                content: 'You are a professional translator. Translate the following English text to Chinese. Return only the translation, no explanations.'
+              },
+              {
+                role: 'user',
+                content: text
+              }
+            ],
+            temperature: 0.3,
+            max_tokens: 200
+          })
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+
+        const data = await response.json();
+        const translation = data.choices[0].message.content;
+
+        const endTime = Date.now();
+        const endTimestamp = new Date().toLocaleTimeString('zh-CN', {
+          hour12: false,
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          fractionalSecondDigits: 3
+        });
+        const duration = endTime - startTime;
+
+        log(`✅ [批次${index + 1}] 返回结果 - 耗时: ${duration}ms`, 'success');
+
+        return {
+          index: index + 1,
+          original: text,
+          translation: translation,
+          duration: duration,
+          returnTime: endTimestamp,
+          startTime: startTimestamp
+        };
+
+      } catch (error) {
+        const endTime = Date.now();
+        const endTimestamp = new Date().toLocaleTimeString('zh-CN', {
+          hour12: false,
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          fractionalSecondDigits: 3
+        });
+        const duration = endTime - startTime;
+
+        log(`❌ [批次${index + 1}] 失败 - 耗时: ${duration}ms - 错误: ${error.message}`, 'error');
+
+        return {
+          index: index + 1,
+          original: text,
+          translation: `[翻译失败: ${error.message}]`,
+          duration: duration,
+          returnTime: endTimestamp,
+          startTime: startTimestamp,
+          error: true
+        };
+      }
+    }
+
+    async function startTest() {
+      const apiKey = document.getElementById('apiKey').value.trim();
+
+      if (!apiKey) {
+        alert('请输入 DeepSeek API Key！');
+        return;
+      }
+
+      if (!apiKey.startsWith('sk-')) {
+        alert('API Key 格式不正确，应该以 sk- 开头');
+        return;
+      }
+
+      const startBtn = document.getElementById('startBtn');
+      startBtn.disabled = true;
+      startBtn.textContent = '测试进行中...';
+
+      clearLog();
+
+      log('🚀 === DeepSeek API 并发翻译测试 ===', 'info');
+      log(`📦 准备发送 ${testTexts.length} 个翻译任务`, 'info');
+      log('⏱️  开始并发发送...', 'info');
+      log('', 'info');
+
+      try {
+        const promises = testTexts.map((text, index) =>
+          translateWithDeepSeek(text, index, apiKey)
+        );
+
+        const results = await Promise.all(promises);
+
+        log('', 'info');
+        log('='.repeat(80), 'info');
+        log('📊 === 最终结果分析 ===', 'info');
+        log('', 'info');
+
+        // 按返回时间排序
+        const sortedByTime = [...results].sort((a, b) => a.duration - b.duration);
+
+        log('<div class="section-title">🕐 实际返回顺序（按耗时排序）</div>', 'result');
+        sortedByTime.forEach((result, i) => {
+          log(`  ${i + 1}. 批次${result.index} - 耗时${result.duration}ms - 返回${result.returnTime}`, 'result');
+        });
+
+        log('', 'info');
+        log('<div class="section-title">📋 Promise.all 结果顺序（按原始批次顺序）</div>', 'result');
+        results.forEach((result, i) => {
+          const status = result.error ? '❌' : '✅';
+          const originalPreview = result.original.length > 40
+            ? result.original.substring(0, 40) + '...'
+            : result.original;
+          const translationPreview = result.translation.length > 40
+            ? result.translation.substring(0, 40) + '...'
+            : result.translation;
+
+          log(`<div class="summary-box">`, 'result');
+          log(`  <div class="summary-item"><strong>results[${i}] = 批次${result.index} ${status}</strong></div>`, 'result');
+          log(`  <div class="summary-item">原文: "${originalPreview}"</div>`, 'result');
+          log(`  <div class="summary-item">译文: "${translationPreview}"</div>`, 'result');
+          log(`  <div class="summary-item">耗时: ${result.duration}ms</div>`, 'result');
+          log(`</div>`, 'result');
+        });
+
+        log('', 'info');
+        log('✅ <strong>验证：虽然返回顺序是乱的，但results数组的顺序和原始testTexts完全一致！</strong>', 'success');
+        log('   results[0] 对应 testTexts[0]', 'success');
+        log('   results[1] 对应 testTexts[1]', 'success');
+        log('   ... 以此类推', 'success');
+
+        const isOrderCorrect = results.every((result, index) => result.original === testTexts[index]);
+        log('', 'info');
+        log(`🎯 顺序验证: ${isOrderCorrect ? '✅ 通过！' : '❌ 失败！'}`, isOrderCorrect ? 'success' : 'error');
+
+      } catch (error) {
+        log(`❌ Promise.all 执行失败: ${error.message}`, 'error');
+        console.error(error);
+      } finally {
+        startBtn.disabled = false;
+        startBtn.textContent = '开始测试';
+      }
+    }
+
+    // 页面加载时的提示
+    window.addEventListener('load', () => {
+      log('💡 提示：请输入您的 DeepSeek API Key 并点击"开始测试"按钮', 'info');
+      log('📝 测试将并发发送10个翻译请求，观察返回顺序和结果匹配情况', 'info');
+    });
+  </script>
+</body>
+</html>
