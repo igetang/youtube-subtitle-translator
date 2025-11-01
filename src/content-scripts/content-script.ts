@@ -31,6 +31,8 @@ let capturedSourceLang: string | null = null; // 存储从service-worker传递�
 // API响应处理器Map
 const apiResponseHandlers = new Map<string, (response: any) => void>();
 
+type RefreshReason = 'initialize' | 'visibility' | 'videoChange' | 'manual';
+
 // 视频切换相关变量
 let currentVideoId: string | null = null;
 let isNavigating = false;
@@ -204,7 +206,7 @@ function setupVisibilityChangeListener(): void {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       console.log('[content-script] 标签页激活，刷新状态');
-      refreshStates({ forcePopupClosed: true }).catch((error) => {
+      refreshStates({ forcePopupClosed: true, reason: 'visibility' }).catch((error) => {
         console.error('[content-script] 标签页激活刷新状态失败:', error);
       });
     }
@@ -437,6 +439,16 @@ function hideTranslatedSubtitles(): void {
   subtitleOverlay.hide();
   // 状态更新由Background通过STATE_CHANGED消息统一管理，避免重复更新
   // stateManager?.updateState('translateActive', 'inactive');
+}
+
+function resetTranslateState(reason: RefreshReason): void {
+  console.log(`[content-script] 重置翻译状态为未激活（reason=${reason}）`);
+  capturedSourceLang = null;
+  hideTranslatedSubtitles();
+  window.postMessage({
+    source: 'content-script',
+    type: 'DESTROY_SUBTITLE_INTERCEPTOR'
+  }, '*');
 }
 
 // ==================== Popup管理 ====================
@@ -1013,7 +1025,7 @@ async function initialize(): Promise<void> {
     setupMessageHandlers();
     
     // 刷新状态
-    await refreshStates({ forcePopupClosed: true });
+    await refreshStates({ forcePopupClosed: true, reason: 'initialize' });
 
     // 启动视频切换检测
     startVideoChangeDetection();
@@ -1042,9 +1054,10 @@ async function initialize(): Promise<void> {
 /**
  * 刷新所有状态
  */
-async function refreshStates(options: { forcePopupClosed?: boolean } = {}): Promise<void> {
+async function refreshStates(options: { forcePopupClosed?: boolean; reason?: RefreshReason } = {}): Promise<void> {
   try {
-    const { forcePopupClosed = true } = options;
+    const { forcePopupClosed = true, reason = 'manual' } = options;
+    const shouldForceInactive = reason !== 'manual';
 
     const response = await chrome.runtime.sendMessage({
       type: 'getAllState',
@@ -1053,7 +1066,7 @@ async function refreshStates(options: { forcePopupClosed?: boolean } = {}): Prom
     
     if (response && response.success) {
       const { translateActive, popupOpen } = response.data;
-      const resolvedTranslateActive = translateActive || 'inactive';
+      const resolvedTranslateActive = shouldForceInactive ? TranslateActiveState.INACTIVE : (translateActive || 'inactive');
       const resolvedPopupOpen = forcePopupClosed ? false : (popupOpen || false);
       
       // ✅ 方案A：只通过 StateManager 批量更新状态
@@ -1067,6 +1080,10 @@ async function refreshStates(options: { forcePopupClosed?: boolean } = {}): Prom
       
       // ❌ 删除直接调用 uiRenderer.update() 的代码
       // 避免重复更新UI，让状态管理器通过通知机制统一处理
+
+      if (shouldForceInactive) {
+        resetTranslateState(reason);
+      }
     }
   } catch (error) {
     console.error('[content-script] 刷新状态失败:', error);
@@ -1239,7 +1256,7 @@ async function handleVideoChange(oldVideoId: string | null, newVideoId: string):
 
   // 5. 重新读取全局状态，保持跨标签同步
   try {
-    await refreshStates({ forcePopupClosed: true });
+    await refreshStates({ forcePopupClosed: true, reason: 'videoChange' });
   } catch (error) {
     console.error('[content-script] 视频切换刷新状态失败:', error);
   }
