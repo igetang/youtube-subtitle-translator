@@ -36,6 +36,9 @@ let currentVideoId: string | null = null;
 let isNavigating = false;
 let urlCheckInterval: number | null = null;
 
+// 可见性监听防重复标记
+let hasVisibilityChangeListener = false;
+
 // 错误消息定时器（需要管理两个：外层和内层）
 let errorMessageTimer: number | null = null;
 let errorMessageHideTimer: number | null = null;
@@ -188,6 +191,27 @@ async function checkAndCreateButtons(): Promise<void> {
       clearInterval(checkInterval);
     }
   }, 500); // 每500ms检查一次
+}
+
+/**
+ * 设置标签页可见性监听器，保持全局状态同步
+ */
+function setupVisibilityChangeListener(): void {
+  if (hasVisibilityChangeListener) {
+    return;
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      console.log('[content-script] 标签页激活，刷新状态');
+      refreshStates({ forcePopupClosed: true }).catch((error) => {
+        console.error('[content-script] 标签页激活刷新状态失败:', error);
+      });
+    }
+  });
+
+  hasVisibilityChangeListener = true;
+  console.log('[content-script] 标签页可见性监听器已设置');
 }
 
 // ==================== 用户交互处理 ====================
@@ -989,10 +1013,13 @@ async function initialize(): Promise<void> {
     setupMessageHandlers();
     
     // 刷新状态
-    await refreshStates();
+    await refreshStates({ forcePopupClosed: true });
 
     // 启动视频切换检测
     startVideoChangeDetection();
+
+    // 监听标签页可见性变化
+    setupVisibilityChangeListener();
 
     // 初始化用户偏好管理器，确保监听器可用
     const userPreferencesManager = UserPreferencesManager.getInstance();
@@ -1015,8 +1042,10 @@ async function initialize(): Promise<void> {
 /**
  * 刷新所有状态
  */
-async function refreshStates(): Promise<void> {
+async function refreshStates(options: { forcePopupClosed?: boolean } = {}): Promise<void> {
   try {
+    const { forcePopupClosed = true } = options;
+
     const response = await chrome.runtime.sendMessage({
       type: 'getAllState',
       data: { includeUserPreferences: true }
@@ -1024,13 +1053,15 @@ async function refreshStates(): Promise<void> {
     
     if (response && response.success) {
       const { translateActive, popupOpen } = response.data;
+      const resolvedTranslateActive = translateActive || 'inactive';
+      const resolvedPopupOpen = forcePopupClosed ? false : (popupOpen || false);
       
       // ✅ 方案A：只通过 StateManager 批量更新状态
       // StateManager 会通过通知机制自动触发 UI 更新
       if (stateManager) {
         await stateManager.updateStates({
-          translateActive: translateActive || 'inactive',
-          popupOpen: popupOpen || false
+          translateActive: resolvedTranslateActive,
+          popupOpen: resolvedPopupOpen
         });
       }
       
@@ -1190,17 +1221,10 @@ function clearErrorMessage(): void {
 async function handleVideoChange(oldVideoId: string | null, newVideoId: string): Promise<void> {
   console.log(`[content-script] 视频切换检测: ${oldVideoId} → ${newVideoId}`);
 
-  // 1. 重置翻译状态为关闭
-  if (stateManager) {
-    await stateManager.updateStates({
-      translateActive: TranslateActiveState.INACTIVE
-    });
-  }
-
-  // 2. 清理临时变量
+  // 1. 清理临时变量
   capturedSourceLang = null;
 
-  // 2.5. 销毁拦截器（如果存在）
+  // 2. 销毁拦截器（如果存在）
   console.log('[content-script] 视频切换，销毁拦截器...');
   window.postMessage({
     source: 'content-script',
@@ -1210,20 +1234,24 @@ async function handleVideoChange(oldVideoId: string | null, newVideoId: string):
   // 3. 清理字幕显示（使用SubtitleOverlay的API）
   subtitleOverlay.hide();
 
-  // 4. 更新按钮状态
-  if (uiRenderer) {
-    // 更新翻译按钮状态
-    const translateButton = document.getElementById('youtube-translate-button');
-    if (translateButton) {
-      translateButton.classList.remove('active');
-      translateButton.setAttribute('aria-pressed', 'false');
-    }
-  }
-
-  // 5. 清除错误消息
+  // 4. 清除错误消息
   clearErrorMessage();
 
-  console.log('[content-script] 视频切换重置完成');
+  // 5. 重新读取全局状态，保持跨标签同步
+  try {
+    await refreshStates({ forcePopupClosed: true });
+  } catch (error) {
+    console.error('[content-script] 视频切换刷新状态失败:', error);
+  }
+
+  // 6. 确保按钮重新注入并应用最新状态
+  try {
+    await checkAndCreateButtons();
+  } catch (error) {
+    console.error('[content-script] 视频切换后重新创建按钮失败:', error);
+  }
+
+  console.log('[content-script] 视频切换处理完成');
 }
 
 /**
