@@ -1,449 +1,133 @@
 # 按钮状态全局同步机制分析
 
-## 概述
-
-本文档分析YouTube字幕翻译插件的按钮状态同步机制，采用**全局状态设计**（类似YouTube自身的CC字幕按钮）。
-
-## 设计原则
-
-### 全局状态存储
-
-- **存储位置**：`chrome.storage.session['runtime_state_translateActive']`
-- **存储值**：`'inactive'` | `'pending'` | `'active'`
-- **特点**：所有标签页共享**同一个**存储位置
-
-### 同步策略：被动读取（Pull模式）
-
-不采用广播通知（Push），而是在需要时主动读取：
-
-```
-保存：当前页面改变状态 → 写入 chrome.storage.session
-读取：页面激活/刷新/切换时 → 读取 chrome.storage.session → 更新UI
-```
-
-**优点：**
-- 实现简单，逻辑清晰
-- 没有死循环问题
-- 性能好（按需读取）
-- 符合Chrome扩展最佳实践
+> 更新时间：2025-11-01  
+> 适用分支：`feature/concurrent-translation`
 
 ---
 
-## 核心流程
+## 🎯 总览
 
-### 流程1：状态保存
-
-```
-用户点击翻译按钮
-  ↓
-content-script: toggleTranslation()
-  ↓
-StateManager.updateState('translateActive', 'pending')
-  ↓
-chrome.runtime.sendMessage({ type: 'setRuntimeState', stateKey: 'translateActive', value: 'pending' })
-  ↓
-service-worker: RuntimeStateManager.setTranslateState('pending')
-  ↓
-chrome.storage.session.set('runtime_state_translateActive', 'pending')
-  ↓
-【完成】状态已保存到全局存储
-```
-
-### 流程2：状态读取
-
-```
-页面激活/刷新/视频切换
-  ↓
-content-script: refreshStates()
-  ↓
-chrome.runtime.sendMessage({ type: 'getAllState' })
-  ↓
-service-worker: RuntimeStateManager.getAllState()
-  ↓
-chrome.storage.session.get('runtime_state_translateActive')
-  ↓
-返回状态值（如 'active'）
-  ↓
-StateManager.updateStates({ translateActive: 'active' })
-  ↓
-uiRenderer.update() → 更新按钮UI
-  ↓
-【完成】按钮显示正确状态
-```
+翻译开关与翻译设置（Popup）按钮共享统一的运行时状态模型，依赖 `runtime-state-manager` + `chrome.storage.session` 实现跨标签页、刷新与 SPA 导航的一致体验。核心设计遵循“按钮被动读取、后台统一写入、Popup 自行关闭”的原则，避免状态错乱或界面悬挂。
 
 ---
 
-## 使用场景
+## 🧱 状态模型
 
-### 场景1：首次打开视频页面
+| 状态键 | 存储位置 | 取值 | 说明 |
+| --- | --- | --- | --- |
+| `runtime_state_translateActive` | `chrome.storage.session` | `'inactive' \| 'pending' \| 'active'` | 翻译开关全局状态 |
+| `runtime_state_popupOpen` | `chrome.storage.session` | `false \| true` | 翻译设置（Popup）开启状态 |
 
-```
-用户打开 youtube.com/watch?v=abc123
-  ↓
-content-script 初始化
-  ↓
-调用 refreshStates() 读取状态
-  ↓
-storage['translateActive'] = 'inactive'（默认值）
-  ↓
-按钮显示：关闭图标
-```
+- `runtime-state-manager` 在后台维持缓存，并通过 `chrome.storage.onChanged` 监听多进程场景。
+- 内容脚本通过 `StateManager.updateState(s)` 统一写入，`UIRenderer` 仅被动渲染。
 
-### 场景2：点击翻译按钮
+---
 
+## 🔄 关键数据流
+
+### 1. 翻译开关状态保存
 ```
 用户点击按钮
   ↓
-保存 storage['translateActive'] = 'pending'
+content-script → StateManager.updateState('translateActive', nextState)
   ↓
-按钮显示：处理中...
+service-worker → handleRuntimeStateSet()
   ↓
-翻译完成，保存 storage['translateActive'] = 'active'
+runtime-state-manager.setTranslateState(nextState)
   ↓
-按钮显示：开启图标
+chrome.storage.session['runtime_state_translateActive'] = nextState
 ```
 
-### 场景3：页面刷新
-
+### 2. 状态读取（翻译 + Popup）
 ```
-刷新前：storage['translateActive'] = 'active'
+content-script.refreshStates({ forcePopupClosed: true })
   ↓
-页面刷新，content-script 重新初始化
+service-worker.handleGetAllState()
   ↓
-调用 refreshStates() 读取状态
+runtime-state-manager.getAllState()
   ↓
-读取到 'active'
+StateManager.updateStates({
+  translateActive: storedValue || 'inactive',
+  popupOpen: forcePopupClosed ? false : storedPopup
+})
   ↓
-按钮显示：开启图标
-  ↓
-✅ 状态恢复成功
-```
-
-### 场景4：标签页切换
-
-```
-标签页A：翻译=开启，storage['translateActive'] = 'active'
-  ↓
-切换到标签页B（新打开的YouTube页面）
-  ↓
-标签页B初始化 → refreshStates()
-  ↓
-读取到 'active'
-  ↓
-标签页B的按钮也显示：开启图标
-  ↓
-✅ 全局状态同步成功
+UIRenderer.update() → 同步两个按钮
 ```
 
-### 场景5：标签页失焦后重新聚焦
-
+### 3. Popup 打开 & 强制关闭
 ```
-用户从YouTube标签页切换到其他网站
+content-script.togglePopup()
   ↓
-【不触发任何逻辑】
+service-worker.handleOpenPopup()
   ↓
-用户切回YouTube标签页
+chrome.action.openPopup()
   ↓
-触发 visibilitychange 事件
+popup.ts 连接 popup-lifecycle Port，postMessage({ tabId })
   ↓
-【需要实现】调用 refreshStates() 读取最新状态
+runtime-state-manager.setPopupState(true)
+--------------------------------------------
+导航/刷新/标签激活 → refreshStates({ forcePopupClosed: true })
   ↓
-更新按钮UI
-```
-
-### 场景6：视频切换（SPA导航）
-
-```
-标签页A：视频1，翻译=开启
+runtime-state-manager.setPopupState(false)
   ↓
-切换到视频2
+service-worker.forceCloseAllPopups()
   ↓
-触发 handleVideoChange()
+port.postMessage({ type: 'force-close' })
   ↓
-【当前实现】强制重置为 'inactive' ❌
-【应该改为】读取 storage['translateActive'] ✅
-  ↓
-按钮显示全局状态
+popup.ts 接收消息 → window.close()
 ```
 
 ---
 
-## 当前实现状态
+## 🧩 代码要点
 
-### ✅ 已实现
+### 内容脚本 `src/content-scripts/content-script.ts`
+- `initialize()`：注入主世界脚本后立即 `refreshStates({ forcePopupClosed: true })`；注册 `setupVisibilityChangeListener()` 保证标签激活时刷新状态。
+- `refreshStates(options)`：默认 `forcePopupClosed = true`，同时刷新翻译与 Popup 状态，并通过 `StateManager.updateStates` 通知 UI。
+- `handleVideoChange()`：清理临时变量 → `refreshStates({ forcePopupClosed: true })` → `checkAndCreateButtons()`，确保 SPA 导航后按钮/Popup 状态正确。
+- `StateManager`：批量写入只负责消息派发，不直接操控 DOM。
 
-1. **状态保存机制**
-   - 文件：`src/shared/components/state-manager.ts`
-   - 方法：`StateManager.updateState()`
-   - 流程：content-script → service-worker → chrome.storage.session
+### 后台 `src/background/service-worker.ts`
+- `runtime-state-manager`：封装状态写入，并向监听者广播枚举事件。
+- `popupPortRegistry`：记录 `tabId → port`，在 `POPUP_STATE_CHANGED` 为 `false` 时调用 `forceCloseAllPopups()`。
+- `setupPortListener()`：Popup 连接时登记端口，断开时移除并回写 `popupOpen = false`，避免悬挂引用。
 
-2. **状态读取机制**
-   - 文件：`src/content-scripts/content-script.ts`
-   - 方法：`refreshStates()`
-   - 流程：content-script → service-worker → chrome.storage.session
-
-3. **页面初始化时读取**
-   - 文件：`src/content-scripts/content-script.ts:973-1012`
-   - 方法：`initialize() → refreshStates()`
-   - 时机：content-script加载时自动调用
-
-4. **storage自动同步机制**
-   - 文件：`src/shared/storage/runtime-state-manager.ts:57-87`
-   - 方法：`setupStorageListener()`
-   - 功能：监听 `chrome.storage.onChanged`，自动更新内存缓存
-
-### ❌ 缺失/需要修改
-
-1. **标签页激活时读取状态**
-   - **问题**：当用户从其他网站切回YouTube时，按钮状态不更新
-   - **需要添加**：监听 `visibilitychange` 事件
-   - **位置**：`src/content-scripts/content-script.ts`
-
-   ```typescript
-   // 监听标签页可见性变化
-   document.addEventListener('visibilitychange', async () => {
-     if (document.visibilityState === 'visible') {
-       console.log('[content-script] 标签页激活，刷新状态');
-       await refreshStates();
-     }
-   });
-   ```
-
-2. **视频切换时不应强制重置状态**
-   - **问题**：切换视频时强制设置 `translateActive = 'inactive'`
-   - **位置**：`src/content-scripts/content-script.ts:1190-1227`
-   - **当前代码**：
-   ```typescript
-   async function handleVideoChange(oldVideoId: string | null, newVideoId: string): Promise<void> {
-     // 1. 重置翻译状态为关闭 ❌
-     if (stateManager) {
-       await stateManager.updateStates({
-         translateActive: TranslateActiveState.INACTIVE
-       });
-     }
-   ```
-   - **应该改为**：
-   ```typescript
-   async function handleVideoChange(oldVideoId: string | null, newVideoId: string): Promise<void> {
-     // 1. 清理UI和临时状态
-     capturedSourceLang = null;
-     subtitleOverlay.hide();
-     clearErrorMessage();
-
-     // 2. 重新读取全局状态（保持与其他标签页一致）
-     await refreshStates();
-
-     // 3. 不要强制重置状态，让全局状态生效
-   ```
-
-3. **service-worker监听器只打印日志**
-   - **位置**：`src/background/service-worker.ts:1961-1978`
-   - **当前代码**：
-   ```typescript
-   runtimeStateManager.addChangeListener(
-     RuntimeStateChangeEvent.TRANSLATE_ACTIVE_CHANGED,
-     (newValue, oldValue) => {
-       console.log(`[service-worker] 状态变更: translateState [${oldValue} → ${newValue}]`);
-       // ❌ 只打印日志，没有其他处理
-     }
-   );
-   ```
-   - **说明**：这个监听器**不需要广播**，因为采用被动读取策略。但可以在这里添加其他业务逻辑（如果需要）。
+### Popup `src/popup/popup.ts`
+- 连接 `popup-lifecycle` Port 后发送 `{ type: 'init', tabId }` 给后台。
+- 监听 `port.onMessage`，收到 `{ type: 'force-close' }` 后执行 `window.close()` 主动收起界面。
 
 ---
 
-## 需要修改的代码
+## 📚 典型场景
 
-### 修改1：添加标签页激活监听
-
-**文件**：`src/content-scripts/content-script.ts`
-
-**位置**：在 `initialize()` 函数中添加
-
-```typescript
-async function initialize(): Promise<void> {
-  try {
-    // ... 现有初始化代码 ...
-
-    // 启动视频切换检测
-    startVideoChangeDetection();
-
-    // 【新增】监听标签页激活
-    setupVisibilityChangeListener();
-
-    isInitialized = true;
-    console.log('[content-script] ✅ 初始化完成');
-  } catch (error) {
-    console.error('[content-script] ❌ 初始化失败:', error);
-  }
-}
-
-/**
- * 【新增】设置标签页可见性监听器
- */
-function setupVisibilityChangeListener(): void {
-  document.addEventListener('visibilitychange', async () => {
-    if (document.visibilityState === 'visible') {
-      console.log('[content-script] 标签页激活，刷新状态');
-      await refreshStates();
-    }
-  });
-
-  console.log('[content-script] 标签页可见性监听器已设置');
-}
-```
-
-### 修改2：视频切换时不强制重置状态
-
-**文件**：`src/content-scripts/content-script.ts`
-
-**函数**：`handleVideoChange()`（第1190行）
-
-**修改前**：
-```typescript
-async function handleVideoChange(oldVideoId: string | null, newVideoId: string): Promise<void> {
-  console.log(`[content-script] 视频切换检测: ${oldVideoId} → ${newVideoId}`);
-
-  // 1. 重置翻译状态为关闭
-  if (stateManager) {
-    await stateManager.updateStates({
-      translateActive: TranslateActiveState.INACTIVE
-    });
-  }
-
-  // 2. 清理临时变量
-  capturedSourceLang = null;
-
-  // 2.5. 销毁拦截器
-  window.postMessage({
-    source: 'content-script',
-    type: 'DESTROY_SUBTITLE_INTERCEPTOR'
-  }, '*');
-
-  // 3. 清理字幕显示
-  subtitleOverlay.hide();
-
-  // 4. 更新按钮状态
-  if (uiRenderer) {
-    const translateButton = document.getElementById('youtube-translate-button');
-    if (translateButton) {
-      translateButton.classList.remove('active');
-      translateButton.setAttribute('aria-pressed', 'false');
-    }
-  }
-
-  // 5. 清除错误消息
-  clearErrorMessage();
-
-  console.log('[content-script] 视频切换重置完成');
-}
-```
-
-**修改后**：
-```typescript
-async function handleVideoChange(oldVideoId: string | null, newVideoId: string): Promise<void> {
-  console.log(`[content-script] 视频切换检测: ${oldVideoId} → ${newVideoId}`);
-
-  // 1. 清理临时变量
-  capturedSourceLang = null;
-
-  // 2. 销毁拦截器（如果存在）
-  console.log('[content-script] 视频切换，销毁拦截器...');
-  window.postMessage({
-    source: 'content-script',
-    type: 'DESTROY_SUBTITLE_INTERCEPTOR'
-  }, '*');
-
-  // 3. 清理字幕显示（使用SubtitleOverlay的API）
-  subtitleOverlay.hide();
-
-  // 4. 清除错误消息
-  clearErrorMessage();
-
-  // 5. 【修改】重新读取全局状态，而不是强制重置
-  // 这样可以保持与其他标签页的状态一致
-  await refreshStates();
-
-  console.log('[content-script] 视频切换处理完成');
-}
-```
+| 场景 | 翻译按钮表现 | 设置按钮 / Popup 表现 | 说明 |
+| --- | --- | --- | --- |
+| 首次进入视频 | 根据全局状态显示（默认 `inactive`） | 未激活，Popup 关闭 | `initialize()` → `refreshStates()` |
+| 手动开启翻译 | `inactive → pending → active` | 不受影响 | 状态写入由 StateManager 完成 |
+| 手动打开设置 | 状态保持不变 | Popup 打开，`popupOpen = true` | Popup 连接 Port，后台登记 |
+| 刷新 / SPA 导航 | 保留翻译全局状态 | `forcePopupClosed` → Popup 立即关闭 | `handleVideoChange()` 路径 |
+| 标签切换离开 → 返回 | 状态同步（无需手动刷新） | 保持未激活 | `visibilitychange` 触发刷新 |
+| 多标签同步 | 各标签读取同一枚举值 | 默认未激活，需手动再开 | 所有状态均通过被动读取 |
 
 ---
 
-## 测试验证
+## ✅ 测试清单
 
-### 测试用例1：页面刷新保持状态
-
-1. 打开YouTube视频，开启翻译
-2. 刷新页面（F5）
-3. **预期**：按钮显示"开启"状态
-
-### 测试用例2：标签页切换同步状态
-
-1. 标签页A：打开视频1，开启翻译
-2. 标签页B：打开视频2
-3. **预期**：标签页B的按钮也显示"开启"状态
-
-### 测试用例3：视频切换保持全局状态
-
-1. 视频1：开启翻译
-2. 切换到视频2（同一标签页）
-3. **预期**：按钮仍显示"开启"状态（全局状态）
-
-### 测试用例4：标签页失焦后重新聚焦
-
-1. 标签页A：打开视频，开启翻译
-2. 切换到其他网站标签页
-3. 切回标签页A
-4. **预期**：按钮显示"开启"状态（验证需要修改1）
-
-### 测试用例5：多标签页协同工作
-
-1. 标签页A：视频1，翻译=关闭
-2. 标签页B：视频2，翻译=关闭
-3. 在标签页A开启翻译
-4. 切换到标签页B
-5. **预期**：标签页B的按钮也显示"开启"状态
+1. **刷新恢复**：开启翻译 & Popup → 刷新 → 翻译按钮保持开启，Popup 收起。
+2. **跨标签**：Tab A 开启翻译 → 切到 Tab B → 翻译按钮显示开启，设置按钮未激活。
+3. **SPA 导航**：同标签跳视频 → 翻译状态保留，Popup 立即消失。
+4. **标签切换**：切到其它网站再返回 → 状态保持一致。
+5. **双 Popup**：两个标签同时打开 Popup → 其中任一导航时，两端 Popup 均收起。
 
 ---
 
-## 后续优化方向（可选）
-
-### 按视频ID独立状态（如果需要）
-
-如果未来需要每个视频独立记住翻译状态，需要修改存储结构：
-
-**当前结构**：
-```typescript
-chrome.storage.session['runtime_state_translateActive'] = 'active'
-```
-
-**改进结构**：
-```typescript
-chrome.storage.local['video_translation_states'] = {
-  'video_abc123': 'active',
-  'video_def456': 'inactive',
-  'video_ghi789': 'active'
-}
-```
-
-**需要修改**：
-1. 存储管理器：新增 `VideoTranslationStateManager`
-2. `refreshStates()`：根据当前 videoId 读取对应状态
-3. `handleVideoChange()`：读取新视频的状态而不是全局状态
+## 🧭 后续优化（可选）
+- 为翻译状态引入按视频 ID 记忆策略（local storage 分桶）。
+- 对 `forceCloseAllPopups()` 增加重试与详细日志，便于诊断端口中断。
+- 考虑在 UI 上增加状态同步提示或动画，提升可见性。
 
 ---
 
-## 总结
+## 🏁 总结
 
-当前设计采用**全局状态**，所有标签页共享同一个翻译状态，这与YouTube自身的行为一致。
-
-**核心机制**：
-- 保存：当前页面改变 → 写入全局存储
-- 读取：页面激活/刷新/切换 → 读取全局存储 → 更新UI
-
-**需要完成的修改**：
-1. ✅ 添加标签页激活监听（`visibilitychange`）
-2. ✅ 视频切换时读取状态而不是重置
-
-完成这两处修改后，按钮状态将在所有场景下正确同步。
+当前方案通过“被动读取 + 统一写入 + Popup 强制关闭”三段式设计，让翻译开关与翻译设置按钮在任何页面状态变更后仍能保持一致、可控与安全的表现，大幅降低了多标签、多导航场景下出现状态漂移或残留界面的风险。

@@ -61,6 +61,28 @@ const storageManager = StorageManager.getInstance();
 const translationCacheManager = TranslationCacheManager.getInstance();
 const videoSourceLanguageCacheManager = VideoSourceLanguageCacheManager.getInstance();
 
+// === Popup Port 注册表 ===
+const popupPortRegistry = new Map<number, chrome.runtime.Port>();
+
+function registerPopupPort(tabId: number, port: chrome.runtime.Port): void {
+  popupPortRegistry.set(tabId, port);
+}
+
+function unregisterPopupPort(tabId: number): void {
+  popupPortRegistry.delete(tabId);
+}
+
+function forceCloseAllPopups(): void {
+  popupPortRegistry.forEach((port, tabId) => {
+    try {
+      port.postMessage({ type: 'force-close' });
+    } catch (error) {
+      console.error(`[service-worker] ✗ 强制关闭Popup失败 (Tab:${tabId})`, error);
+      popupPortRegistry.delete(tabId);
+    }
+  });
+}
+
 // === Feature Flag: 控制是否使用新的AbortController架构 ===
 const USE_ABORT_CONTROLLER_ARCHITECTURE = true;  // 设为true启用新架构，false使用旧架构
 
@@ -236,11 +258,15 @@ function setupPortListener(): void {
       
       // 记录关联的标签页ID
       let associatedTabId: number | undefined;
+      const bindPortToTab = (tabId: number) => {
+        associatedTabId = tabId;
+        registerPopupPort(tabId, port);
+      };
       
       // 监听来自popup的消息，获取标签页ID
       port.onMessage.addListener((msg) => {
         if (msg.type === 'init' && msg.tabId) {
-          associatedTabId = msg.tabId;
+          bindPortToTab(msg.tabId);
           // 注释掉关联日志
           // console.log(`[service-worker] Port关联标签页ID: ${associatedTabId}`);
         }
@@ -258,6 +284,9 @@ function setupPortListener(): void {
       port.onDisconnect.addListener(async () => {
         // 注释掉中间层检测日志
         // console.log('[service-worker] popup关闭检测');
+        if (typeof associatedTabId === 'number') {
+          unregisterPopupPort(associatedTabId);
+        }
         
         try {
           // 🔧 统一状态管理：Port断开 = Popup真正关闭
@@ -1973,6 +2002,9 @@ function setupStateChangeListeners(): void {
     RuntimeStateChangeEvent.POPUP_STATE_CHANGED,
     (newValue, oldValue) => {
       console.log(`[service-worker] 状态变更: popupOpen [${oldValue} → ${newValue}]`);
+      if (newValue === false) {
+        forceCloseAllPopups();
+      }
     }
   );
 }

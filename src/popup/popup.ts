@@ -830,6 +830,13 @@ port.onDisconnect.addListener(() => {
   console.log('[popup] Port连接断开');
 });
 
+port.onMessage.addListener((msg) => {
+  if (msg?.type === 'force-close') {
+    console.log('[popup] 收到强制关闭指令，执行window.close()');
+    window.close();
+  }
+});
+
 // === 核心功能函数 ===
 
 /**
