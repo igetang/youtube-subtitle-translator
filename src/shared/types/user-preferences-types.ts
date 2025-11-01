@@ -55,6 +55,7 @@ export interface TranslationServiceComplete {
   // === 并发翻译配置 ===
   enableConcurrentTranslation?: boolean;        // 是否启用并发翻译（默认true for DeepSeek）
   concurrencyLimit?: number;                    // 并发限制（用户可覆盖，留空则使用服务默认值）
+  requestDelay?: number;                        // 请求间延迟（毫秒，用于流水线并发）
 
   // === Gemini专用参数（Phase 1） ===
   tier?: 'free' | 'paid' | 'pro';               // 账户类型：Gemini(free/paid)、DeepL(free/pro)
@@ -98,7 +99,12 @@ export const TRANSLATION_SERVICE_TEMPLATES: Record<TranslationServiceType, Omit<
     model: null,
     temperature: null,
     rpm: 100,
-    tpm: null
+    tpm: null,
+
+    // 🔥 流水线并发配置
+    enableConcurrentTranslation: true,   // 启用并发
+    concurrencyLimit: 999,               // 设置很大 = 一轮发完所有批次
+    requestDelay: 100                    // 每批次间隔100ms
   },
   [TranslationServiceType.MICROSOFT_FREE]: {
     type: TranslationServiceType.MICROSOFT_FREE,

@@ -154,6 +154,15 @@ export class TwoPhaseTranslatorV4 {
   }
 
   /**
+   * 获取请求间延迟时间（用于流水线并发）
+   * @returns 延迟时间（毫秒），0表示无延迟
+   */
+  private getRequestDelay(): number {
+    const service = this.translationService;
+    return service?.requestDelay ?? 0;
+  }
+
+  /**
    * 执行紧急翻译（支持取消）
    *
    * @param subtitles 所有字幕
@@ -329,10 +338,26 @@ export class TwoPhaseTranslatorV4 {
     translatedText: string;
     isUrgent: false;
   }>> {
-    // 获取并发限制
+    // 获取并发限制和请求延迟
     const concurrency = this.getConcurrencyLimit();
+    const requestDelay = this.getRequestDelay();
 
     // 路由到对应的翻译方法
+
+    // 路由1：流水线并发模式（有延迟）
+    if (concurrency > 0 && requestDelay > 0) {
+      console.debug(`[debug][TwoPhaseTranslatorV4] 使用流水线并发模式（间隔${requestDelay}ms）`);
+      return this.translateBatchPipeline(
+        subtitles,
+        urgentResults,
+        sourceLanguageName,
+        sourceLanguageCode,
+        preferences,
+        signal
+      );
+    }
+
+    // 路由2：真并发模式（无延迟）
     if (concurrency > 0) {
       console.debug(`[debug][TwoPhaseTranslatorV4] 使用并发翻译模式（并发数: ${concurrency}）`);
       return this.translateBatchConcurrent(
@@ -343,17 +368,18 @@ export class TwoPhaseTranslatorV4 {
         preferences,
         signal
       );
-    } else {
-      console.debug('[debug][TwoPhaseTranslatorV4] 使用串行翻译模式');
-      return this.translateBatchSerial(
-        subtitles,
-        urgentResults,
-        sourceLanguageName,
-        sourceLanguageCode,
-        preferences,
-        signal
-      );
     }
+
+    // 路由3：串行模式
+    console.debug('[debug][TwoPhaseTranslatorV4] 使用串行翻译模式');
+    return this.translateBatchSerial(
+      subtitles,
+      urgentResults,
+      sourceLanguageName,
+      sourceLanguageCode,
+      preferences,
+      signal
+    );
   }
 
   /**
@@ -583,6 +609,249 @@ export class TwoPhaseTranslatorV4 {
       throw error;
     }
     
+    return results;
+  }
+
+  /**
+   * 流水线并发批量翻译
+   * 按固定间隔依次发送请求，但不等待返回，最后统一收集结果
+   *
+   * 适用场景：
+   * - 非官方API端点（如Google免费翻译）
+   * - 需要避免触发速率限制
+   * - 仍希望提升性能
+   *
+   * @param subtitles 所有字幕
+   * @param urgentResults 紧急翻译结果（用于去重）
+   * @param sourceLanguageName 源语言名称（如"English"，供Chat类API与日志使用）
+   * @param sourceLanguageCode 源语言代码（如"en"，供需要代码的API使用）
+   * @param preferences 用户偏好设置
+   * @param signal AbortSignal用于取消操作
+   * @returns 批量翻译结果数组
+   */
+  private async translateBatchPipeline(
+    subtitles: Array<{
+      id?: string;
+      start: number;
+      end?: number;
+      duration?: number;
+      text: string;
+    }>,
+    urgentResults: Array<any>,
+    sourceLanguageName: string,
+    sourceLanguageCode: string,
+    preferences: any,
+    signal: AbortSignal
+  ): Promise<Array<{
+    index: number;
+    originalText: string;
+    translatedText: string;
+    isUrgent: false;
+  }>> {
+
+    // 检查信号
+    if (signal.aborted) {
+      throw new DOMException('批量翻译开始前已取消', 'AbortError');
+    }
+
+    const results: any[] = [];
+    const serviceType = preferences.translationService?.type;
+    const normalizedSourceLanguageCode =
+      sourceLanguageCode && sourceLanguageCode.trim() !== '' ? sourceLanguageCode : 'auto';
+
+    try {
+      // 延迟启动（避免与紧急翻译冲突）
+      await this.delayWithSignal(TwoPhaseTranslatorV4.BATCH_START_DELAY, signal);
+
+      const batchSubtitles = subtitles;
+
+      // 如果紧急翻译已覆盖全部字幕，跳过批量翻译
+      if (urgentResults.length === subtitles.length) {
+        console.log('[TwoPhaseTranslatorV4] 紧急翻译已覆盖全部字幕，跳过批量翻译');
+        return urgentResults;
+      }
+
+      // 使用智能分段创建批次
+      const batchesWithMeta = this.segmenter.createSmartBatches(batchSubtitles);
+      const batches = batchesWithMeta.map(batch => batch.subtitles);
+
+      // 获取配置
+      const requestDelay = this.getRequestDelay();
+      const perBatchTimeout = this.getBatchTimeout();
+
+      const sourceLabel = this.getSourceLanguageLabel(
+        serviceType,
+        sourceLanguageName,
+        normalizedSourceLanguageCode
+      );
+      const targetLabel = this.getTargetLanguageLabel(serviceType, preferences.targetLang);
+
+      console.log(
+        `[TwoPhaseTranslatorV4] → 批量翻译: ${subtitles.length}条 | 流水线并发 | ${batches.length}批次 | 间隔${requestDelay}ms | ${sourceLabel} → ${targetLabel}`
+      );
+
+      // 🔑 流水线发送阶段
+      const promises: Promise<any>[] = [];
+      let sendStartTime = Date.now();
+
+      for (let i = 0; i < batches.length; i++) {
+        // 检查主信号
+        if (signal.aborted) {
+          throw new DOMException(`批量翻译在批次 ${i + 1} 发送前被取消`, 'AbortError');
+        }
+
+        const batch = batches[i];
+        const texts = batch.map(sub => sub.text.replace(/\n/g, ' ').trim());
+
+        // 延迟发送（除第一个批次外）
+        if (i > 0 && requestDelay > 0) {
+          await this.delayWithSignal(requestDelay, signal);
+        }
+
+        // 创建批次超时信号
+        let batchSignal: AbortSignal;
+        try {
+          const timeoutSignal = AbortSignal.timeout(perBatchTimeout);
+          batchSignal = AbortSignal.any([signal, timeoutSignal]);
+        } catch (e) {
+          const batchController = new AbortController();
+          if (signal.aborted) {
+            batchController.abort();
+          } else {
+            signal.addEventListener('abort', () => batchController.abort());
+          }
+          const timeoutId = setTimeout(() => {
+            batchController.abort(new DOMException('批次翻译超时', 'TimeoutError'));
+          }, perBatchTimeout);
+          batchController.signal.addEventListener('abort', () => clearTimeout(timeoutId));
+          batchSignal = batchController.signal;
+        }
+
+        // 🔑 立即创建Promise（开始执行），不等待返回
+        const batchPromise = (async () => {
+          const sendTime = new Date().toLocaleTimeString('zh-CN', {
+            hour12: false,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            fractionalSecondDigits: 3
+          });
+
+          try {
+            const translatedTexts = await this.callTranslationAPI(
+              texts,
+              preferences.translationService,
+              sourceLanguageName,
+              normalizedSourceLanguageCode,
+              preferences.targetLang,
+              batchSignal,
+              { stage: 'batch', batchIndex: i + 1, batchCount: batches.length }
+            );
+
+            const returnTime = new Date().toLocaleTimeString('zh-CN', {
+              hour12: false,
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              fractionalSecondDigits: 3
+            });
+
+            return {
+              success: true,
+              batchIndex: i,
+              batch,
+              texts,
+              translatedTexts,
+              sendTime,
+              returnTime
+            };
+
+          } catch (error: any) {
+            const returnTime = new Date().toLocaleTimeString('zh-CN', {
+              hour12: false,
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              fractionalSecondDigits: 3
+            });
+
+            return {
+              success: false,
+              batchIndex: i,
+              error,
+              sendTime,
+              returnTime
+            };
+          }
+        })();
+
+        promises.push(batchPromise);
+
+        console.debug(`[debug][TwoPhaseTranslatorV4] 📤 批次${i + 1}/${batches.length} 已发送`);
+      }
+
+      const sendEndTime = Date.now();
+      const sendDuration = sendEndTime - sendStartTime;
+      console.debug(`[debug][TwoPhaseTranslatorV4] ✓ 所有批次发送完成，耗时${sendDuration}ms`);
+
+      // 🔑 Promise.all统一等待所有结果
+      console.debug(`[debug][TwoPhaseTranslatorV4] ⏳ 等待所有批次返回...`);
+      const batchResults = await Promise.all(promises);
+
+      const totalDuration = Date.now() - sendStartTime;
+      console.debug(`[debug][TwoPhaseTranslatorV4] ✓ 所有批次返回完成，总耗时${totalDuration}ms`);
+
+      // 打印返回顺序分析
+      console.debug(`[debug][TwoPhaseTranslatorV4] 📊 返回顺序分析:`);
+      const sortedByReturnTime = [...batchResults].sort((a, b) =>
+        a.returnTime.localeCompare(b.returnTime)
+      );
+      sortedByReturnTime.forEach((result, idx) => {
+        const status = result.success ? '✅' : '❌';
+        const delay = result.returnTime ?
+          `(发送${result.sendTime} → 返回${result.returnTime})` : '';
+        console.debug(`  ${idx + 1}. 批次${result.batchIndex + 1} ${status} ${delay}`);
+      });
+
+      // 处理结果（按逻辑顺序）
+      for (const result of batchResults) {
+        if (!result.success) {
+          const errorMsg = result.error.name === 'TimeoutError' || result.error.message === '批次翻译超时'
+            ? '翻译超时'
+            : result.error.message || '翻译失败';
+
+          console.debug(`[debug][TwoPhaseTranslatorV4] 批次 ${result.batchIndex + 1}/${batches.length} 失败: ${errorMsg}`);
+          throw new Error(errorMsg);
+        }
+
+        // 构建结果
+        if (result.success && result.batch && result.texts && result.translatedTexts) {
+          result.batch.forEach((sub: any, idx: number) => {
+            const translatedText = result.translatedTexts![idx] || sub.text;
+            const originalIndex = subtitles.indexOf(sub);
+
+            if (originalIndex !== -1) {
+              results.push({
+                index: originalIndex,
+                originalText: result.texts![idx],
+                translatedText: translatedText,
+                isUrgent: false
+              });
+            }
+          });
+        }
+      }
+
+      // 汇总报告
+      console.log(`[TwoPhaseTranslatorV4] ✓ 流水线并发翻译完成: ${results.length} 条 | 总耗时${totalDuration}ms`);
+
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.log('[TwoPhaseTranslatorV4] ✗ 批量翻译被取消');
+      }
+      throw error;
+    }
+
     return results;
   }
 
