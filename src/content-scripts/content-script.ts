@@ -45,6 +45,9 @@ let hasVisibilityChangeListener = false;
 let errorMessageTimer: number | null = null;
 let errorMessageHideTimer: number | null = null;
 
+// 自动恢复翻译的去重标志位
+let isAutoRestoring = false;
+
 
 /**
  * 获取当前视频ID
@@ -203,12 +206,16 @@ function setupVisibilityChangeListener(): void {
     return;
   }
 
-  document.addEventListener('visibilitychange', () => {
+  document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'visible') {
       console.log('[content-script] 标签页激活，刷新状态');
-      refreshStates({ forcePopupClosed: true, reason: 'visibility' }).catch((error) => {
+      try {
+        await refreshStates({ forcePopupClosed: true, reason: 'visibility' });
+        // 🆕 标签页激活后,自动恢复翻译状态
+        await autoRestoreTranslationIfNeeded();
+      } catch (error) {
         console.error('[content-script] 标签页激活刷新状态失败:', error);
-      });
+      }
     }
   });
 
@@ -439,6 +446,159 @@ function hideTranslatedSubtitles(): void {
   subtitleOverlay.hide();
   // 状态更新由Background通过STATE_CHANGED消息统一管理，避免重复更新
   // stateManager?.updateState('translateActive', 'inactive');
+}
+
+// ==================== 翻译状态自动恢复 ====================
+
+/**
+ * 等待YouTube播放器准备就绪
+ * @param timeout 超时时间（毫秒），默认10秒
+ * @returns 是否准备就绪
+ */
+async function waitForYouTubePlayer(timeout: number = 10000): Promise<boolean> {
+  // 检查播放器是否已经存在
+  const existingPlayer = document.querySelector('.html5-video-player');
+  if (existingPlayer) {
+    console.log('[content-script] YouTube播放器已就绪（立即检测）');
+    return true;
+  }
+
+  // 轮询检测
+  const maxAttempts = Math.floor(timeout / 500);  // 默认20次（10秒）
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    const player = document.querySelector('.html5-video-player');
+    if (player) {
+      console.log(`[content-script] YouTube播放器已就绪（轮询第${i + 1}次）`);
+      return true;
+    }
+  }
+
+  console.error('[content-script] YouTube播放器未就绪，轮询超时');
+  return false;
+}
+
+/**
+ * 自动恢复翻译状态（如果需要）
+ *
+ * 使用场景：
+ * 1. 页面初始化时（initialize()）
+ * 2. 视频切换后（handleVideoChange()）
+ * 3. 标签页激活时（visibilitychange）
+ *
+ * 工作流程：
+ * 1. 检查去重标志，防止并发调用
+ * 2. 等待YouTube播放器准备就绪
+ * 3. 读取session中的translateActive状态
+ * 4. 如果状态为'active'，自动触发翻译
+ *
+ * @param forceRestore 强制恢复(用于视频切换场景,此时状态已被重置但需要恢复)
+ */
+async function autoRestoreTranslationIfNeeded(forceRestore: boolean = false): Promise<void> {
+  // === 步骤1：去重检查 ===
+  if (isAutoRestoring) {
+    console.log('[content-script] 正在自动恢复翻译，跳过重复调用');
+    return;
+  }
+
+  if (!isInitialized) {
+    console.log('[content-script] Content Script 未初始化完成，跳过自动恢复');
+    return;
+  }
+
+  isAutoRestoring = true;
+
+  try {
+    // === 步骤2：等待YouTube播放器准备就绪 ===
+    const playerReady = await waitForYouTubePlayer();
+    if (!playerReady) {
+      console.log('[content-script] YouTube播放器未就绪，跳过自动恢复');
+      return;
+    }
+
+    // === 步骤3：读取session状态 ===
+    // 优先从本地StateManager读取(状态最新),如果不存在则从RuntimeStateManager读取
+    let translateActive: string;
+    if (stateManager) {
+      translateActive = stateManager.getTranslateState();
+      console.log('[content-script] 检查翻译状态(StateManager):', translateActive, '| 强制恢复:', forceRestore);
+    } else {
+      // 降级方案: 从RuntimeStateManager读取
+      const RuntimeStateManager = (await import('@shared/storage/runtime-state-manager')).RuntimeStateManager;
+      const runtimeStateManager = RuntimeStateManager.getInstance();
+      translateActive = await runtimeStateManager.getTranslateState();
+      console.log('[content-script] 检查翻译状态(RuntimeStateManager):', translateActive, '| 强制恢复:', forceRestore);
+    }
+
+    // === 步骤4：判断是否需要恢复 ===
+    if (!forceRestore && translateActive !== TranslateActiveState.ACTIVE) {
+      console.log('[content-script] 翻译状态非active，无需恢复');
+      return;
+    }
+
+    // === 步骤5：检查videoId ===
+    const videoId = getVideoId();
+    if (!videoId) {
+      console.log('[content-script] 无法获取videoId，跳过自动恢复');
+      return;
+    }
+
+    // === 步骤6：延迟执行，确保播放器完全加载 ===
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    console.log('[content-script] 🔄 自动恢复翻译:', videoId);
+
+    // === 步骤7：设置状态为PENDING（符合状态机规范：ACTIVE → PENDING）===
+    if (stateManager) {
+      await stateManager.updateState('translateActive', TranslateActiveState.PENDING);
+    }
+
+    // === 步骤8：显示"翻译中"提示 ===
+    subtitleOverlay.showPendingMessage('正在恢复翻译...');
+
+    // === 步骤9：直接发送翻译消息到Service Worker ===
+    const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
+    const originalSubtitleState = subtitleBtn?.getAttribute('aria-pressed') === 'true';
+
+    const videoElement = document.querySelector('video');
+    const currentTime = videoElement ? videoElement.currentTime : 0;
+
+    const response = await chrome.runtime.sendMessage({
+      type: 'TOGGLE_TRANSLATE',
+      data: {
+        videoId,
+        newState: true,  // 开启翻译
+        currentTime,
+        originalSubtitleState
+      }
+    });
+
+    // === 步骤10：根据响应更新状态 ===
+    if (response?.success) {
+      console.log('[content-script] ✅ 自动恢复翻译完成');
+      // Service Worker会设置状态为ACTIVE并通过消息通知更新UI
+      // 这里不需要手动设置状态
+    } else {
+      console.error('[content-script] ❌ 自动恢复翻译失败:', response?.error);
+      if (stateManager) {
+        await stateManager.updateState('translateActive', TranslateActiveState.INACTIVE);
+      }
+      subtitleOverlay.hide();
+    }
+
+  } catch (error) {
+    console.error('[content-script] ❌ 自动恢复翻译失败:', error);
+
+    // 失败时重置状态为INACTIVE
+    if (stateManager) {
+      await stateManager.updateState('translateActive', TranslateActiveState.INACTIVE);
+    }
+    subtitleOverlay.hide();
+
+  } finally {
+    isAutoRestoring = false;
+  }
 }
 
 function resetTranslateState(reason: RefreshReason): void {
@@ -1045,7 +1205,11 @@ async function initialize(): Promise<void> {
     isInitialized = true;
     // 保留最终初始化完成日志
     console.log('[content-script] ✅ 初始化完成');
-    
+
+    // 🆕 自动恢复翻译状态
+    // 注意：必须在refreshStates()之后调用，因为refreshStates()会同步按钮UI状态
+    await autoRestoreTranslationIfNeeded();
+
   } catch (error) {
     console.error('[content-script] ❌ 初始化失败:', error);
   }
@@ -1057,7 +1221,9 @@ async function initialize(): Promise<void> {
 async function refreshStates(options: { forcePopupClosed?: boolean; reason?: RefreshReason } = {}): Promise<void> {
   try {
     const { forcePopupClosed = true, reason = 'manual' } = options;
-    const shouldForceInactive = reason !== 'manual';
+    // 只有视频切换时才强制重置翻译状态(因为是新视频,旧翻译无效)
+    // 其他场景(initialize, visibility)保持session状态,由autoRestore决定是否恢复
+    const shouldForceInactive = reason === 'videoChange';
 
     const response = await chrome.runtime.sendMessage({
       type: 'getAllState',
@@ -1254,18 +1420,47 @@ async function handleVideoChange(oldVideoId: string | null, newVideoId: string):
   // 4. 清除错误消息
   clearErrorMessage();
 
-  // 5. 重新读取全局状态，保持跨标签同步
+  // 5. 🆕 保存切换前的翻译状态(用于后续自动恢复)
+  // 重要: 通过background获取session storage中的原始值,避免读取到被污染的缓存
+  let shouldAutoRestore = false;
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'getAllState',
+      data: { includeUserPreferences: false }
+    });
+
+    if (response?.success) {
+      const previousState = response.data?.translateActive;
+      shouldAutoRestore = previousState === 'active' || previousState === TranslateActiveState.ACTIVE;
+      console.log('[content-script] 视频切换前翻译状态(background):', previousState, '| 需要恢复:', shouldAutoRestore);
+    } else {
+      console.warn('[content-script] 获取切换前状态失败:', response?.error);
+    }
+  } catch (error) {
+    console.error('[content-script] 获取切换前状态失败:', error);
+  }
+
+  // 6. 重新读取全局状态并重置翻译状态(清理旧视频的翻译)
   try {
     await refreshStates({ forcePopupClosed: true, reason: 'videoChange' });
   } catch (error) {
     console.error('[content-script] 视频切换刷新状态失败:', error);
   }
 
-  // 6. 确保按钮重新注入并应用最新状态
+  // 7. 确保按钮重新注入并应用最新状态
   try {
     await checkAndCreateButtons();
   } catch (error) {
     console.error('[content-script] 视频切换后重新创建按钮失败:', error);
+  }
+
+  // 8. 🆕 根据保存的状态决定是否自动恢复翻译
+  // 如果切换前翻译是开启的,自动翻译新视频
+  if (shouldAutoRestore) {
+    console.log('[content-script] 视频切换后自动恢复翻译');
+    await autoRestoreTranslationIfNeeded(true); // 强制恢复
+  } else {
+    console.log('[content-script] 视频切换前翻译未开启,不自动恢复');
   }
 
   console.log('[content-script] 视频切换处理完成');
