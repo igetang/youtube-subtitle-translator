@@ -1,10 +1,10 @@
 # 翻译状态会话自动恢复架构设计
 
-**文档版本：** v1.1
+**文档版本：** v2.0
 **创建日期：** 2025-11-03
 **最后更新：** 2025-11-03
 **作者：** Claude Code
-**状态：** 设计阶段（已核对代码匹配度）
+**状态：** 已实现（与代码完全同步）
 
 ---
 
@@ -327,16 +327,18 @@ T9: 翻译恢复完成 ✅
  * 使用场景：
  * 1. 页面初始化时（initialize()）
  * 2. 视频切换后（handleVideoChange()）
+ * 3. 标签页激活时（visibilitychange）
  *
  * 工作流程：
  * 1. 检查去重标志，防止并发调用
  * 2. 等待YouTube播放器准备就绪
  * 3. 读取session中的translateActive状态
- * 4. 如果状态为'active'，自动触发翻译
+ * 4. 如果状态为'active'（或forceRestore=true），自动触发翻译
  *
+ * @param forceRestore 强制恢复（用于视频切换场景）
  * @returns Promise<void>
  */
-async function autoRestoreTranslationIfNeeded(): Promise<void>
+async function autoRestoreTranslationIfNeeded(forceRestore: boolean = false): Promise<void>
 ```
 
 #### 实现逻辑
@@ -368,14 +370,21 @@ async function autoRestoreTranslationIfNeeded(): Promise<void> {
     }
 
     // === 步骤3：读取session状态 ===
-    const runtimeStateManager = RuntimeStateManager.getInstance();
-    await runtimeStateManager.initialize(); // 确保初始化
-    const translateActive = await runtimeStateManager.getTranslateState();
-
-    console.log('[content-script] 检查翻译状态:', translateActive);
+    // 优先从本地StateManager读取(状态最新),避免缓存延迟问题
+    let translateActive: string;
+    if (stateManager) {
+      translateActive = stateManager.getTranslateState();
+      console.log('[content-script] 检查翻译状态(StateManager):', translateActive, '| 强制恢复:', forceRestore);
+    } else {
+      // 降级方案: 从RuntimeStateManager读取
+      const RuntimeStateManager = (await import('@shared/storage/runtime-state-manager')).RuntimeStateManager;
+      const runtimeStateManager = RuntimeStateManager.getInstance();
+      translateActive = await runtimeStateManager.getTranslateState();
+      console.log('[content-script] 检查翻译状态(RuntimeStateManager):', translateActive, '| 强制恢复:', forceRestore);
+    }
 
     // === 步骤4：判断是否需要恢复 ===
-    if (translateActive !== TranslateActiveState.ACTIVE) {
+    if (!forceRestore && translateActive !== TranslateActiveState.ACTIVE) {
       console.log('[content-script] 翻译状态非active，无需恢复');
       return;
     }
@@ -392,29 +401,51 @@ async function autoRestoreTranslationIfNeeded(): Promise<void> {
 
     console.log('[content-script] 🔄 自动恢复翻译:', videoId);
 
-    // === 步骤7：重置状态为INACTIVE（关键！让toggleTranslation能正确判断为"开启"操作）===
-    // 原因：toggleTranslation()内部会检查当前状态来判断是"开启"还是"关闭"
-    // 如果状态已是ACTIVE，会被判断为"关闭"操作，逻辑反转
+    // === 步骤7：设置状态为PENDING（符合状态机规范：ACTIVE → PENDING）===
     if (stateManager) {
-      stateManager.updateState('translateActive', TranslateActiveState.INACTIVE);
+      await stateManager.updateState('translateActive', TranslateActiveState.PENDING);
     }
 
-    // === 步骤8：触发翻译流程 ===
-    // toggleTranslation()会自动：
-    // 1. 检测到INACTIVE状态，判断为"开启翻译"
-    // 2. 设置状态为PENDING
-    // 3. 发送TOGGLE_TRANSLATE消息到Service Worker
-    // 4. 执行完整的翻译流程
-    await toggleTranslation();
+    // === 步骤8：显示"翻译中"提示 ===
+    subtitleOverlay.showPendingMessage('正在恢复翻译...');
 
-    console.log('[content-script] ✅ 自动恢复翻译完成');
+    // === 步骤9：直接发送翻译消息到Service Worker ===
+    const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
+    const originalSubtitleState = subtitleBtn?.getAttribute('aria-pressed') === 'true';
+
+    const videoElement = document.querySelector('video');
+    const currentTime = videoElement ? videoElement.currentTime : 0;
+
+    const response = await chrome.runtime.sendMessage({
+      type: 'TOGGLE_TRANSLATE',
+      data: {
+        videoId,
+        newState: true,  // 开启翻译
+        currentTime,
+        originalSubtitleState
+      }
+    });
+
+    // === 步骤10：根据响应更新状态 ===
+    if (response?.success) {
+      console.log('[content-script] ✅ 自动恢复翻译完成');
+      // Service Worker会设置状态为ACTIVE并通过消息通知更新UI
+    } else {
+      console.error('[content-script] ❌ 自动恢复翻译失败:', response?.error);
+      if (stateManager) {
+        await stateManager.updateState('translateActive', TranslateActiveState.INACTIVE);
+      }
+      subtitleOverlay.hide();
+    }
 
   } catch (error) {
     console.error('[content-script] ❌ 自动恢复翻译失败:', error);
 
     // 失败时重置状态为INACTIVE
-    const runtimeStateManager = RuntimeStateManager.getInstance();
-    await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
+    if (stateManager) {
+      await stateManager.updateState('translateActive', TranslateActiveState.INACTIVE);
+    }
+    subtitleOverlay.hide();
 
   } finally {
     isAutoRestoring = false;
@@ -593,35 +624,133 @@ async function handleVideoChange(oldVideoId: string | null, newVideoId: string):
   // 4. 清除错误消息
   clearErrorMessage();
 
-  // 5. 重新读取全局状态，保持跨标签同步
+  // 5. 🆕 保存切换前的翻译状态(用于后续自动恢复)
+  // 重要: 通过background获取session storage中的原始值,避免读取到被污染的缓存
+  let shouldAutoRestore = false;
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'getAllState',
+      data: { includeUserPreferences: false }
+    });
+
+    if (response?.success) {
+      const previousState = response.data?.translateActive;
+      shouldAutoRestore = previousState === 'active' || previousState === TranslateActiveState.ACTIVE;
+      console.log('[content-script] 视频切换前翻译状态(background):', previousState, '| 需要恢复:', shouldAutoRestore);
+    } else {
+      console.warn('[content-script] 获取切换前状态失败:', response?.error);
+    }
+  } catch (error) {
+    console.error('[content-script] 获取切换前状态失败:', error);
+  }
+
+  // 6. 重新读取全局状态并重置翻译状态(清理旧视频的翻译)
   try {
     await refreshStates({ forcePopupClosed: true, reason: 'videoChange' });
   } catch (error) {
     console.error('[content-script] 视频切换刷新状态失败:', error);
   }
 
-  // 6. 确保按钮重新注入并应用最新状态
+  // 7. 确保按钮重新注入并应用最新状态
   try {
     await checkAndCreateButtons();
   } catch (error) {
     console.error('[content-script] 视频切换后重新创建按钮失败:', error);
   }
 
-  // 🆕 新增：步骤7 - 自动恢复翻译状态
-  // refreshStates()已经同步了按钮UI状态
-  // 现在检查session状态，如果是ACTIVE，自动触发翻译
-  await autoRestoreTranslationIfNeeded();
+  // 8. 🆕 根据保存的状态决定是否自动恢复翻译
+  // 如果切换前翻译是开启的,自动翻译新视频
+  if (shouldAutoRestore) {
+    console.log('[content-script] 视频切换后自动恢复翻译');
+    await autoRestoreTranslationIfNeeded(true); // 强制恢复
+  } else {
+    console.log('[content-script] 视频切换前翻译未开启,不自动恢复');
+  }
 
   console.log('[content-script] 视频切换处理完成');
 }
 ```
 
 **关键点：**
-- 保留现有的清理流程（步骤1-4）
-- 保留 `refreshStates()` 调用（步骤5，从session同步状态）
-- 保留按钮创建逻辑（步骤6）
-- 新增 `autoRestoreTranslationIfNeeded()` 调用（步骤7）
-- 不需要手动设置INACTIVE，`refreshStates()`会自动处理
+- **步骤5（新增）**: 在清理前先保存切换前的翻译状态,通过 background 读取原始 session 值
+- **步骤6**: `refreshStates({ reason: 'videoChange' })` 会强制重置为 INACTIVE（清理旧视频）
+- **步骤7**: 重新创建按钮
+- **步骤8（新增）**: 根据保存的状态决定是否强制恢复翻译
+- **forceRestore参数**: 视频切换场景使用 `forceRestore=true`,跳过状态检查
+
+#### 3.3 修改 refreshStates() 函数 (🆕 v2.0新增)
+
+**位置：** `src/content-scripts/content-script.ts:1209`
+
+**改动：**
+
+```typescript
+async function refreshStates(options: { forcePopupClosed?: boolean; reason?: RefreshReason } = {}): Promise<void> {
+  try {
+    const { forcePopupClosed = true, reason = 'manual' } = options;
+
+    // 🔑 关键修改：只有视频切换时才强制重置翻译状态
+    // 其他场景(initialize, visibility)保持session状态,由autoRestore决定是否恢复
+    const shouldForceInactive = reason === 'videoChange';
+
+    const response = await chrome.runtime.sendMessage({
+      type: 'getAllState',
+      data: { includeUserPreferences: true }
+    });
+
+    if (response && response.success) {
+      const { translateActive, popupOpen } = response.data;
+      const resolvedTranslateActive = shouldForceInactive ? TranslateActiveState.INACTIVE : (translateActive || 'inactive');
+      const resolvedPopupOpen = forcePopupClosed ? false : (popupOpen || false);
+
+      if (stateManager) {
+        await stateManager.updateStates({
+          translateActive: resolvedTranslateActive,
+          popupOpen: resolvedPopupOpen
+        });
+      }
+
+      if (shouldForceInactive) {
+        resetTranslateState(reason);
+      }
+    }
+  } catch (error) {
+    console.error('[content-script] 刷新状态失败:', error);
+  }
+}
+```
+
+**关键点：**
+- **旧逻辑**: `shouldForceInactive = reason !== 'manual'` (除了手动刷新,都强制重置)
+- **新逻辑**: `shouldForceInactive = reason === 'videoChange'` (只有视频切换才强制重置)
+- **原因**: 页面刷新和Tab切换时,应该保持session状态,让 `autoRestore` 来决定是否恢复
+- **影响**: `initialize` 和 `visibility` 场景不再强制重置,保持session状态
+
+#### 3.4 修改 visibilitychange 监听器 (🆕 v2.0新增)
+
+**位置：** `src/content-scripts/content-script.ts:209`
+
+**改动：**
+
+```typescript
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible') {
+    console.log('[content-script] 标签页激活，刷新状态');
+    try {
+      await refreshStates({ forcePopupClosed: true, reason: 'visibility' });
+      // 🆕 标签页激活后,自动恢复翻译状态
+      await autoRestoreTranslationIfNeeded();
+    } catch (error) {
+      console.error('[content-script] 标签页激活刷新状态失败:', error);
+    }
+  }
+});
+```
+
+**关键点：**
+- 新增 `autoRestoreTranslationIfNeeded()` 调用
+- 支持Tab切换回来时自动恢复翻译
+- 与页面刷新场景逻辑一致
 
 ---
 
@@ -1061,6 +1190,51 @@ console.log(`[性能] 自动恢复耗时: ${endTime - startTime}ms`);
 
 ## 📝 版本历史
 
+### v2.0 (2025-11-03) - 实现完成版（当前版本）
+
+**状态：** ✅ 已实现并部分测试通过
+
+**核心改动：**
+
+1. **状态读取优化** ⭐关键修复
+   - 从 RuntimeStateManager 改为优先从 StateManager 读取
+   - 解决缓存延迟导致的状态不一致问题
+   - 降级方案：StateManager 不存在时使用 RuntimeStateManager
+
+2. **翻译触发方式重构** ⭐核心变更
+   - 旧方式：重置为 INACTIVE → 调用 `toggleTranslation()`
+   - 新方式：设置为 PENDING → 直接发送 TOGGLE_TRANSLATE 消息
+   - 符合状态机规范：ACTIVE → PENDING → ACTIVE
+   - 避免非法状态转换警告
+
+3. **视频切换强制恢复** ⭐新增功能
+   - 新增 `forceRestore` 参数支持强制恢复
+   - 视频切换前通过 background 保存原始状态
+   - 避免 content script 直接访问 session storage（权限限制）
+   - 切换后根据保存状态决定是否恢复
+
+4. **refreshStates() 逻辑优化** ⭐行为变更
+   - 旧逻辑：`reason !== 'manual'` 都强制重置
+   - 新逻辑：只有 `reason === 'videoChange'` 才强制重置
+   - `initialize` 和 `visibility` 保持 session 状态
+
+5. **Tab切换支持** ⭐新增场景
+   - 新增 `visibilitychange` 监听器中的自动恢复调用
+   - 支持 Tab 切换回来时自动恢复翻译
+   - 支持新标签页打开时自动恢复
+
+**测试状态：**
+- ✅ 页面刷新：保持状态并自动恢复
+- ✅ 页面导航：切换视频后自动翻译
+- ⚠️ Tab切换：部分实现（按钮状态正确，翻译流程待优化）
+- ✅ 状态转换：无非法转换警告
+
+**已知问题：**
+- Tab切换场景的翻译执行流程需进一步优化
+- 极端情况下的时序竞争待测试
+
+---
+
 ### v1.1 (2025-11-03) - 代码匹配度核对版
 **主要更新：**
 1. ✅ 修正所有API方法名：`getTranslateActive()` → `getTranslateState()`
@@ -1071,10 +1245,7 @@ console.log(`[性能] 自动恢复耗时: ${endTime - startTime}ms`);
 6. ✅ 更新 `handleVideoChange()` 函数签名和流程
 7. ✅ 完善代码位置索引
 
-**核对结果：**
-- 文档与当前代码架构完全匹配 ✅
-- 所有方法名、参数、调用方式已验证 ✅
-- 可直接基于文档实现功能 ✅
+---
 
 ### v1.0 (2025-11-03) - 初始设计版
 **主要内容：**
