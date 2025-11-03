@@ -1,8 +1,50 @@
 # YouTube字幕翻译扩展 - 项目上下文快照
-> 最后更新：2025-10-30
+> 最后更新：2025-11-03
 > 用途：新Claude Code会话快速了解当前状态
 
 ## 🎯 当前状态
+
+### 最近完成的架构优化 (2025-11-03)
+
+**✅ 已完成：视频源语言缓存单一数据源重构（v5.24.11）** ⭐
+
+**问题背景**：
+- 在v5.24.10及之前版本，视频源语言缓存被多次写入（3次）
+- Popup通过getAvailableSourceLanguages()自己获取并保存轨道数据
+- Service Worker通过handleGetPopupInitData()也获取并保存轨道数据
+- Cache Manager的initialize()会主动创建空缓存并写入
+- 导致性能浪费和职责混乱
+
+**架构重构**：
+- **核心原则**：单一数据源（Single Source of Truth）
+- **职责划分**：
+  - Popup = 纯消费者（不读缓存、不调用Content Script、不保存缓存）
+  - Service Worker = 唯一写入者（唯一负责获取和保存轨道数据）
+  - Cache Manager = 纯存储层（统一upsert接口，删除upsertFromPopup）
+  - Content Script = 数据源（只响应请求，不操作缓存）
+- **数据流**：单向流动（YouTube API → Service Worker → Cache Manager → chrome.storage.local → Popup）
+- **架构约束**：
+  1. 只有Service Worker可以调用Cache Manager的upsert()
+  2. Popup不允许import VideoSourceLanguageCacheManager
+  3. Content Script只响应消息，不主动操作缓存
+  4. 所有缓存读写必须通过Service Worker
+
+**效果**：
+- ✅ 3次存储写入 → 1次存储写入
+- ✅ 职责清晰，每层边界明确
+- ✅ 数据流向单向，易于维护
+- ✅ 性能优化，减少chrome.storage.onChanged触发
+
+**影响文件**：
+- `docs/architecture/03-component-design.md` - 新增6.1.1节
+- `docs/architecture/06-simplified-popup-architecture.md` - 新增Popup职责边界章节
+- `CLAUDE.md` - 新增2.1节视频源语言缓存架构
+- `PROJECT_CONTEXT.md` - 本条记录
+
+**下一步**：
+- 实施代码重构（删除Popup中的getAvailableSourceLanguages和saveVideoSourceLanguageCache）
+- 统一Cache Manager接口（合并set和upsertFromPopup为upsert）
+- 修改initialize()不主动写入空数据
 
 ### 最近修复的Bug (2025-10-30)
 

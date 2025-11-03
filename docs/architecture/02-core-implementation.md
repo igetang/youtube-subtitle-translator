@@ -1,8 +1,8 @@
 # YouTube字幕翻译助手 - 技术架构文档 Part 2（核心数据结构与实现）
 
-> **最后更新**: 2025-10-25  
-> **版本**: v4.0.0  
-> **当前方案**: ✅ **Popup + AbortController V4 两阶段翻译架构**
+> **最后更新**: 2025-11-03
+> **版本**: v5.24.11
+> **当前方案**: ✅ **Popup + AbortController V4 两阶段翻译架构 + 单一数据源原则**
 
 本文档记录当前生产环境所使用的核心数据模型、翻译流程和 UI 数据结构。旧版 SidePanel / EventBus 数据结构已经归档，仅保留为历史参考。
 
@@ -31,7 +31,10 @@
   - 信号组合：`AbortSignal.any([手动取消, AbortSignal.timeout])`
 - **阶段划分**（关键阶段及对应实现）：
   1. **配置加载**：读取 `UserPreferencesManager.getUserPreferences()`；缺失配置直接终止。
-  2. **源语言信息**：`VideoSourceLanguageCacheManager` / `selectBestSourceLanguage`
+  2. **源语言信息**：`VideoSourceLanguageCacheManager.get/upsert` / `selectBestSourceLanguage` ⭐
+     - **单一数据源原则（v5.24.11）**: Service Worker是视频源语言数据的唯一写入者
+     - 缓存未命中时，Service Worker通过Content Script获取轨道数据并写入缓存
+     - Popup通过`getPopupInitData`消息从Service Worker获取数据，不直接操作缓存
   3. **轨道获取**：通过 `chrome.tabs.sendMessage` 调用 main-world（先尝试 `playerResponse`，再 fallback 到 Player API）。
   4. **字幕抓取**：`triggerSubtitleLoadWithSignal` → 等待 `SUBTITLE_DATA`，必要时复用缓存字幕（`findByVideoAndSourceLang`）。
   5. **两阶段翻译**：`TwoPhaseTranslatorV4`
@@ -104,7 +107,12 @@ interface SubtitleEntry {
 
 ## 4. Popup 与 UI 数据
 
-- Popup 相关逻辑集中在 `src/popup/popup.ts`；并未公开 `PopupContext` 等统一接口，而是直接使用 `UserPreferences`、`VideoSourceLanguageCache` 等类型。
+- **Popup架构原则（v5.24.11）** ⭐：
+  - Popup = 纯UI层，只负责展示和用户交互
+  - 数据获取：通过`getPopupInitData`消息从Service Worker获取完整上下文数据
+  - 数据更新：通过`updateVideoSourceLanguage`消息通知Service Worker保存
+  - **禁止操作**：不直接读取/写入`VideoSourceLanguageCache`，不直接调用Content Script获取轨道数据
+- Popup 相关逻辑集中在 `src/popup/popup.ts`；数据类型使用 `UserPreferences`、`TrackMetadata` 等。
 - UI 注入逻辑：`src/shared/components/ui-manager.ts`
   - 优先通过 `chrome.action.openPopup()` 打开设置；失败则 fallback 到背景消息。
   - 控制栏按钮注入与状态更新通过 DOM 观察器 + MessageBus。

@@ -1,8 +1,8 @@
 # YouTube字幕翻译助手 - 开发指南
 
-> **最后更新**: 2025-10-25  
-> **当前版本**: v4.0.0  
-> **架构状态**: ✅ **AbortController V4 + Popup 架构生效** - 两阶段翻译、MessageBus 通信已全面落地
+> **最后更新**: 2025-11-03
+> **当前版本**: v5.24.11
+> **架构状态**: ✅ **AbortController V4 + Popup 架构 + 单一数据源原则生效** - 两阶段翻译、MessageBus 通信、职责清晰分离已全面落地
 
 本文档提供扩展项目的开发环境设置、工作流程和贡献指南，帮助开发者参与当前架构的项目开发。
 
@@ -13,6 +13,7 @@
 - **MessageBus通信**: 统一的消息总线，已完全替代EventBus
 - **3状态翻译系统**: 简化的翻译状态管理（INACTIVE/PENDING/ACTIVE）
 - **YouTube Player API**: 集成官方API直接控制字幕（ISO 639-1标准）
+- **单一数据源原则（v5.24.11新增）** ⭐: 每种数据只有一个权威写入者，UI层只读取不写入
 - **Chrome官方最佳实践**: 严格遵循 Manifest V3 规范
 
 ### 重要设计决策
@@ -166,10 +167,20 @@ npm ls
 #### 📦 存储管理统一架构
 - **UserPreferencesManager**: 用户偏好设置管理（全局唯一）
 - **RuntimeStateManager**: 运行时状态管理（session存储）
-- **VideoSourceLanguageData**: 视频源语言数据（分散存储，含完整列表）
+- **VideoSourceLanguageData**: 视频源语言数据（分散存储，含完整列表）⭐
+  - **⚠️ 开发约束（v5.24.11）**: Service Worker是唯一写入者
+  - Popup通过`getPopupInitData`消息获取数据，禁止直接读取/写入缓存
+  - Popup通过`updateVideoSourceLanguage`消息通知Service Worker保存
 - **TranslationCacheData**: 翻译缓存（分散存储，含原始字幕）
 - **MemoryCache**: 内存缓存管理（Service Worker内存）
 - **统一入口**: `src/shared/storage/index.ts`
+
+**单一数据源原则**:
+- ✅ 每种数据只有一个权威写入者（通常是Service Worker）
+- ✅ UI层（Popup/Content Script）只负责展示和用户交互，不直接操作存储
+- ✅ 数据流向单向：数据源 → Service Worker → Storage Manager → UI层
+- ❌ 禁止Popup直接import `VideoSourceLanguageCacheManager`
+- ❌ 禁止Popup直接调用Content Script的`getVideoTrackData`消息
 
 #### 🔄 MessageBus 通信系统
 - **统一消息格式**: 使用 `type` 字段替代 `action` 字段

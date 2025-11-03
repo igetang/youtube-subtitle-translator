@@ -354,7 +354,8 @@ function selectBestSourceLanguage(
 { type: 'saveTranslationCache', data: { videoId: string, params: TranslationParams, result: TranslationResult } }
 
 // 轨道获取（Popup专用）
-{ type: 'getAvailableTracks', data: { videoId: string } }
+// ⚠️ 注意：v5.24.11+ 已废弃，Popup改用 'getPopupInitData' 消息获取完整上下文数据
+{ type: 'getAvailableTracks', data: { videoId: string } }  // @deprecated
 ```
 
 ### 2.7 字幕数据获取

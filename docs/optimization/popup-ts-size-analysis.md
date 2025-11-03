@@ -215,18 +215,25 @@ import {
 
 ### Phase 2: 优化缓存管理
 
-**目标**: 更充分使用 `VideoSourceLanguageCacheManager`
+**⭐ 更新 (v5.24.11)**: 此问题已通过单一数据源架构重构解决
 
-**当前问题**:
+**原问题**:
 - `saveVideoSourceLanguageCache()` 在 popup.ts 中直接操作存储
 - `getAvailableSourceLanguages()` 在 popup.ts 中直接读取缓存
+- 导致视频源语言缓存被写入3次
 
-**优化方案**:
-1. 在 `VideoSourceLanguageCacheManager` 中添加缺失的方法
-2. popup.ts 只调用 manager 的方法，不直接操作存储
-3. 减少重复的缓存读写代码
+**已实施的解决方案**:
+1. ✅ Popup不再直接操作缓存 - 改为通过Service Worker消息获取数据
+2. ✅ Service Worker成为唯一写入者 - 统一通过`VideoSourceLanguageCacheManager.upsert()`
+3. ✅ `getAvailableSourceLanguages()` 已废弃 - 改用`getPopupInitData`消息
+4. ✅ `saveVideoSourceLanguageCache()` 已废弃 - 改用`updateVideoSourceLanguage`消息
 
-**预计减少**: 100 行
+**效果**:
+- 3次存储写入 → 1次存储写入
+- 职责清晰，Popup = 纯UI层
+- 减少约100行缓存操作代码
+
+**详细文档**: 参见 [简化的Popup架构设计](../architecture/06-simplified-popup-architecture.md) 和 [组件设计](../architecture/03-component-design.md#611-视频源语言缓存的单一数据源架构)
 
 ### Phase 3: 函数拆分
 

@@ -1,5 +1,5 @@
 # Project: YouTube字幕翻译Chrome扩展
-_Last updated: 2025-10-10_
+_Last updated: 2025-11-03_
 
 ## Pinned（仅高置信"必须遵守"写入；受保护不可修订）
 - 必须使用 2.5vw 作为字幕基础大小（与YouTube保持一致）
@@ -16,6 +16,10 @@ _Last updated: 2025-10-10_
 - 2025-09-25: 决定完全匹配YouTube设置，不设置任何最小字体限制（理由：即使是3.38px的极小字体也要保持与YouTube原生一致）
 - 2025-10-07: 决定使用编号标记系统解决字幕翻译数量不匹配问题（理由：用户选择的方案，避免字幕丢失或错位）
 - 2025-10-10: 启动全项目日志优化任务（理由：统一日志规范，使用console.log记录关键操作，console.debug记录详细步骤）
+- 2025-11-03: **采用单一数据源原则重构视频源语言缓存架构**（理由：解决3次重复写入问题，职责清晰分离UI层/业务层/存储层，数据流向单向易维护）
+- 2025-11-03: Service Worker成为视频源语言数据的唯一写入者（理由：避免Popup和Service Worker同时写入导致的重复和冲突）
+- 2025-11-03: Popup改为纯UI层，通过消息获取数据（理由：禁止UI层直接操作缓存，通过getPopupInitData和updateVideoSourceLanguage消息通信）
+- 2025-11-03: 废弃Popup中的getAvailableSourceLanguages()和saveVideoSourceLanguageCache()函数（理由：职责不清，违反单一数据源原则）
 
 ## TODO（权威待办清单）
 - [P1][OPEN][#5] 测试编号方案是否解决22条字幕数量不匹配问题
@@ -28,6 +32,8 @@ _Last updated: 2025-10-10_
 ## In Progress
 
 ## Done（最近完成的放前面）
+- 2025-11-03: [#9] 完成v5.24.11视频源语言缓存单一数据源架构重构（evidence：Service Worker成为唯一写入者，Popup改为纯UI层通过消息通信，更新9个架构文档）
+- 2025-11-03: [#9] 更新全部相关文档记录架构变更（evidence：CHANGELOG.md、CLAUDE.md、PROJECT_CONTEXT.md、9个docs/architecture/文档、progress.md全部更新）
 - 2025-10-10: [#8-partial] 完成日志优化任务第一阶段（evidence：已优化4个主目录23+文件，service-worker.ts从146个log减至27个，新增128个debug）
 - 2025-10-07: [#7] 实现了编号标记系统v4.1.0（evidence：openai-translator.ts第106行添加编号前缀，第179-190行去除编号，第184-187行编号验证）
 - 2025-09-25: 成功修复了字幕大小精度问题（evidence：将CSS calc()替换为JavaScript预计算值，完全匹配YouTube原生字幕）
@@ -46,6 +52,10 @@ _Last updated: 2025-10-10_
 - Risk: 极端窗口大小下可能出现字幕显示问题（Mitigation: 使用clamp()函数限制边界值）
 
 ## Notes（简要要点）
+- 2025-11-03: **单一数据源原则架构重构完成**（v5.24.11）- 这是一个重要的架构里程碑
+- 2025-11-03: 技术细节：3次存储写入→1次，Popup禁止直接操作VideoSourceLanguageCache，必须通过getPopupInitData/updateVideoSourceLanguage消息
+- 2025-11-03: 架构约束：❌禁止Popup import VideoSourceLanguageCacheManager，❌禁止直接调用getVideoTrackData消息
+- 2025-11-03: 文档更新：CHANGELOG.md新增v5.24.11版本记录，docs/architecture/新增"单一数据源原则"设计原则
 - 2025-10-10: 日志优化任务进行中，已完成约45%（4/10目录），详细进度见 docs/tasks/log-optimization-progress.md
 - 2025-10-10: service-worker.ts优化完成：使用9批次自动替换 + 手动审查，从146个log减至27个关键操作日志
 - 2025-10-07: 编号标记系统已实现，等待用户构建测试效果

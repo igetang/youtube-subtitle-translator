@@ -1,7 +1,7 @@
 # VTC 5.24 架构设计文档 - Part 3 (存储与缓存架构)
 
-> **文档更新**: 2025-10-25  
-> **版本**: v5.24.10（Service Worker Orchestration + AbortController V4）  
+> **文档更新**: 2025-11-03
+> **版本**: v5.24.11（视频源语言缓存单一数据源重构）
 > **当前方案**: ✅ **Popup UI + Service Worker 调度（HandleToggleTranslate V4）**
 
 ## 🚨 **方案变更说明**
@@ -38,10 +38,133 @@
 
 **核心原则**：
 - **Service Worker 作为数据守门人**：后台脚本（`service-worker.ts`）统一响应消息并调用存储管理器
+- **单一数据源原则（Single Source of Truth）** ⭐：每种数据只有一个权威写入者，避免重复写入和数据不一致
 - **消息驱动的数据访问**：`handleToggleTranslateV4` 接收来自 Popup/内容脚本的请求，串联状态、缓存与翻译流程
 - **分层存储策略**：持久化数据使用 `chrome.storage.local`，跨标签页运行态使用 `chrome.storage.session`（详见 6.4 与 7.1.2）
 - **统一键名管理**：通过 `StorageKeys` 与专用管理器约束键前缀，避免直接拼接字符串
 - **避免直接调用原生 API**：若确需批量写入，亦通过 `StorageManager.set()`/`get()` 等封装方法实现，保留监控与迁移钩子
+
+#### 6.1.1 视频源语言缓存的单一数据源架构（v5.24.11新增）
+
+**架构背景**：在v5.24.10及之前版本中，存在视频源语言缓存被多次写入的问题：
+- Popup 通过 `getAvailableSourceLanguages()` 自己获取轨道数据并保存
+- Service Worker 通过 `handleGetPopupInitData()` 也获取轨道数据并保存
+- Cache Manager 的 `initialize()` 会主动创建空缓存并写入
+
+这导致同一个videoId的缓存在短时间内被写入3次，造成性能浪费和职责混乱。
+
+**单一数据源重构（2025-11-03）**：
+
+**核心原则**：
+- ✅ **Service Worker = 唯一数据写入者**：只有 Service Worker 可以写入视频源语言缓存
+- ❌ **Popup = 纯消费者**：Popup 不直接读取缓存、不调用Content Script、不保存缓存
+- ✅ **Cache Manager = 纯存储层**：只提供get/upsert接口，不实现业务逻辑
+- ✅ **Content Script = 数据源**：只负责响应请求并返回YouTube API数据
+
+**数据流向（单向流动）**：
+```
+YouTube API (Content Script)
+         ↓
+    Service Worker (业务协调层 + 唯一写入者)
+         ↓
+  VideoSourceLanguageCacheManager (纯存储层)
+         ↓
+  chrome.storage.local (持久化)
+         ↓
+      Popup (纯UI展示层 + 只读消费者)
+```
+
+**职责划分**：
+
+1. **Popup（UI层）**
+   - ✅ 展示用户界面
+   - ✅ 接收用户操作
+   - ✅ 通过消息通知Service Worker用户的操作
+   - ✅ 从Service Worker获取数据并展示
+   - ❌ 不直接读取chrome.storage
+   - ❌ 不直接调用Content Script获取轨道数据
+   - ❌ 不直接保存缓存数据
+
+2. **Service Worker（业务层）**
+   - ✅ 唯一负责获取轨道数据（通过Content Script）
+   - ✅ 唯一负责保存缓存数据（通过Cache Manager）
+   - ✅ 实现业务逻辑（智能选择源语言、缓存策略等）
+   - ✅ 协调Popup、Content Script、Cache Manager之间的通信
+
+3. **VideoSourceLanguageCacheManager（存储层）**
+   - ✅ 管理内存缓存（this.cache）
+   - ✅ 读写chrome.storage.local
+   - ✅ 实现FIFO淘汰策略
+   - ✅ 提供统一的upsert接口（替代set和upsertFromPopup）
+   - ❌ 不实现业务逻辑
+   - ❌ 不主动获取数据
+   - ❌ initialize()时不主动写入空数据
+
+4. **Content Script（数据源）**
+   - ✅ 响应 `getVideoTrackData` 消息
+   - ✅ 从YouTube Player API获取轨道数据
+   - ✅ 返回原始数据给调用者
+   - ❌ 不保存缓存
+   - ❌ 不做数据处理（除基本格式转换）
+
+**消息接口规范**：
+
+```typescript
+// Popup初始化时
+Popup → Service Worker: {
+  type: 'getPopupInitData',
+  tabId: number
+}
+Service Worker → Popup: {
+  popupContext: {
+    availableSourceLanguages: TrackMetadata[],
+    selectedSourceTrack: TrackMetadata | null,
+    ...
+  }
+}
+
+// 用户切换源语言时
+Popup → Service Worker: {
+  type: 'updateVideoSourceLanguage',
+  data: {
+    videoId: string,
+    selectedSourceTrack: TrackMetadata
+  }
+}
+Service Worker → Popup: {
+  success: boolean
+}
+```
+
+**Cache Manager接口统一**：
+
+```typescript
+class VideoSourceLanguageCacheManager {
+  // ✅ 统一的写入方法（替代set和upsertFromPopup）
+  async upsert(data: Omit<VideoSourceLanguageData, 'fetchedAt' | 'lastAccessed'>): Promise<void>
+
+  // ✅ 读取方法
+  async get(videoId: string): Promise<VideoSourceLanguageData | null>
+
+  // ❌ 废弃方法（向后兼容，内部调用upsert）
+  async set(data: ...): Promise<void>  // 已废弃
+  async upsertFromPopup(data: ...): Promise<void>  // 已废弃
+}
+```
+
+**架构优势**：
+- ✅ **消除重复写入**：从3次写入减少到1次写入
+- ✅ **职责清晰**：每个层级的职责明确，不会相互越界
+- ✅ **易于维护**：数据流向清晰，单向流动，便于排查问题
+- ✅ **性能优化**：减少存储写入次数，减少chrome.storage.onChanged触发
+- ✅ **代码简化**：删除冗余方法和重复逻辑
+
+**架构约束**：
+为了保证架构不被破坏，制定以下约束：
+1. ✅ **只有Service Worker可以调用Cache Manager的upsert()**
+2. ❌ **Popup不允许import VideoSourceLanguageCacheManager**
+3. ❌ **Content Script只响应消息，不主动操作缓存**
+4. ✅ **所有缓存读写必须通过Service Worker**
 
 ### 6.2 两层缓存架构
 
@@ -455,31 +578,51 @@ interface VideoSourceLanguageCache {
 - **存储位置**: `chrome.storage.local`
 - **存储键**: `StorageKeys.VIDEO_SOURCE_LANGUAGE_CACHE`（单键对象，内部维护 FIFO 数组）
 - **缓存策略**: 命中时刷新 `lastAccessed`，超过 `maxSize`（10）触发 FIFO；单条记录超过 30 天则丢弃
-- **更新逻辑**: `VideoSourceLanguageCacheManager.set()`/`updateSelectedLanguage()` 负责写入与清理，所有写操作都会调用内部 `saveCache()`
+- **更新逻辑**: ⭐ **只有Service Worker可以写入**，通过 `VideoSourceLanguageCacheManager.upsert()` 统一接口
 
 **核心能力**：
-- ✅ **避免重复 API 调用**：Popup / Service Worker 拉取轨道前优先命中缓存
+- ✅ **避免重复 API 调用**：Service Worker 拉取轨道前优先命中缓存
 - ✅ **记忆轨道选择**：缓存 `selectedSourceTrack`（包含 kind），供下一次直接复用
 - ✅ **轨道清洗**：写入/读取时统一通过 `sanitizeKind` 过滤，仅保留稳定值
-- ✅ **后台异步写入**：`handleToggleTranslateV4` 在轨道拉取成功后异步调用 `set()`，不阻塞主流程
+- ✅ **单一写入者**：⭐ 只有 Service Worker 可以写入，避免重复保存
 
-**使用示例**：
+**使用示例（Service Worker）**：
 ```typescript
+// ✅ 正确：Service Worker中的使用方式
 const manager = VideoSourceLanguageCacheManager.getInstance();
 const cached = await manager.get(videoId);
 
 if (cached) {
-  // 直接使用缓存的轨道列表与已选轨道
-  renderTracks(cached.availableSourceLanguages, cached.selectedSourceTrack);
+  // 缓存命中，直接使用
+  return cached.availableSourceLanguages;
 } else {
-  const tracks = await fetchFromYouTubeAPI(videoId);
-  const bestTrack = selectBestSourceLanguage(tracks, targetLang, null);
-  await manager.set({
+  // 缓存未命中，从Content Script获取
+  const tracks = await getTracksFromContentScript(videoId);
+  const bestTrack = selectBestSourceLanguage(tracks, targetLang);
+
+  // Service Worker负责保存缓存
+  await manager.upsert({
     videoId,
     availableSourceLanguages: tracks,
     selectedSourceTrack: bestTrack
   });
+
+  return tracks;
 }
+```
+
+**禁止的使用方式（Popup）**：
+```typescript
+// ❌ 错误：Popup不应该直接操作缓存
+// ❌ 删除：Popup中的getAvailableSourceLanguages函数
+// ❌ 删除：Popup中的saveVideoSourceLanguageCache函数
+
+// ✅ 正确：Popup通过消息请求数据
+const response = await chrome.runtime.sendMessage({
+  type: 'getPopupInitData',
+  tabId: currentTabId
+});
+const { availableSourceLanguages } = response.popupContext;
 ```
 
 #### 7.1.6 **TranslationCacheData** - 完整翻译缓存数据

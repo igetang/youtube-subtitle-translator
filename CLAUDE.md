@@ -137,8 +137,64 @@ enum TranslateActiveState {
 #### 2. 存储架构（三层分离）
 - **RuntimeState** - 运行时状态（session存储、跨标签页共享）
 - **UserPreferences** - 用户偏好（local存储、持久化）
-- **VideoSourceLanguageData** - 视频源语言数据（local存储）
+- **VideoSourceLanguageData** - 视频源语言数据（local存储）⭐ 单一数据源架构
 - **TranslationCacheData** - 翻译缓存（local存储）
+
+#### 2.1 视频源语言缓存架构（v5.24.11新增）⭐
+
+**核心原则：单一数据源 (Single Source of Truth)**
+
+每种数据只有一个权威写入者，避免重复写入和数据不一致。
+
+**职责划分**：
+
+1. **Popup（UI层）- 纯消费者**
+   - ✅ 展示用户界面
+   - ✅ 接收用户操作
+   - ✅ 通过消息通知Service Worker
+   - ✅ 从Service Worker获取数据
+   - ❌ 不直接读取视频源语言缓存
+   - ❌ 不直接调用Content Script获取轨道数据
+   - ❌ 不直接保存缓存数据
+
+2. **Service Worker（业务层）- 唯一写入者**
+   - ✅ 唯一负责获取轨道数据
+   - ✅ 唯一负责保存缓存数据
+   - ✅ 实现业务逻辑（智能选择源语言等）
+   - ✅ 协调Popup、Content Script、Cache Manager通信
+
+3. **VideoSourceLanguageCacheManager（存储层）- 纯工具**
+   - ✅ 管理内存缓存
+   - ✅ 读写chrome.storage.local
+   - ✅ 实现FIFO淘汰策略
+   - ✅ 提供统一upsert接口（替代set和upsertFromPopup）
+   - ❌ 不实现业务逻辑
+   - ❌ initialize()时不主动写入空数据
+
+4. **Content Script（数据源）- 只响应请求**
+   - ✅ 响应getVideoTrackData消息
+   - ✅ 从YouTube Player API获取轨道数据
+   - ❌ 不保存缓存
+   - ❌ 不做数据处理（除基本格式转换）
+
+**数据流向（单向流动）**：
+```
+YouTube API (Content Script)
+         ↓
+    Service Worker (业务协调 + 唯一写入)
+         ↓
+  VideoSourceLanguageCacheManager (存储)
+         ↓
+  chrome.storage.local
+         ↓
+      Popup (只读展示)
+```
+
+**架构约束（必须遵守）**：
+1. ✅ 只有Service Worker可以调用Cache Manager的upsert()
+2. ❌ Popup不允许import VideoSourceLanguageCacheManager
+3. ❌ Content Script只响应消息，不主动操作缓存
+4. ✅ 所有缓存读写必须通过Service Worker
 
 #### 3. 翻译架构（V4 - AbortController）
 - **两阶段并行翻译**：紧急翻译（前9后30）+ 批量翻译（全部）

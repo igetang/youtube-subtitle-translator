@@ -153,6 +153,105 @@
 - 🎯 **故障定位**: 日志设计应该有助于快速定位问题根源和影响范围
 - 🎯 **性能监控**: 关键操作应该包含性能指标，便于性能分析和优化
 
+### 8. 单一数据源原则 (Single Source of Truth) ⭐
+**教训来源**: 视频源语言缓存3次写入问题（v5.24.11重构）
+- ❌ **避免多点写入**: 同一数据不应由多个组件分别写入存储
+- ✅ **唯一写入者**: 每种数据有且仅有一个权威的写入组件
+- ✅ **职责清晰分离**: UI层只读取和展示，业务层负责获取和写入，存储层只做持久化
+- ✅ **单向数据流**: 数据流向清晰可追踪：数据源 → 业务层 → 存储层 → UI层
+
+**案例**: 视频源语言缓存3次写入问题
+- 错误模式（v5.24.10及之前）:
+  ```typescript
+  // ❌ Popup自己获取并保存轨道数据
+  async function getAvailableSourceLanguages(videoId: string) {
+    const response = await chrome.tabs.sendMessage(tabId, {
+      type: 'getVideoTrackData',
+      videoId
+    });
+    await saveVideoSourceLanguageCache(videoId, ...);  // 第1次写入
+  }
+
+  // ❌ Service Worker也获取并保存轨道数据
+  async function handleGetPopupInitData(tabId, videoId) {
+    const response = await chrome.tabs.sendMessage(tabId, {
+      type: 'getVideoTrackData',
+      videoId
+    });
+    await videoSourceLanguageCacheManager.set({...});  // 第2次写入
+  }
+
+  // ❌ Cache Manager初始化时写入空数据
+  async initialize() {
+    const result = await chrome.storage.local.get('video_source_language_cache');
+    if (!result.video_source_language_cache) {
+      await this.saveCache();  // 第3次写入（空数据）
+    }
+  }
+  ```
+
+- 正确模式（v5.24.11+）:
+  ```typescript
+  // ✅ Popup只负责UI展示和用户交互
+  async function initializePopup() {
+    // 通过Service Worker获取数据
+    const response = await chrome.runtime.sendMessage({
+      type: 'getPopupInitData',
+      tabId: currentTabId
+    });
+    const { availableSourceLanguages } = response.popupContext;
+    // 渲染UI
+  }
+
+  // ✅ Service Worker是唯一的写入者
+  async function handleGetPopupInitData(tabId, videoId) {
+    // 检查缓存
+    let cachedItem = await videoSourceLanguageCacheManager.get(videoId);
+
+    // 缓存未命中时才获取
+    if (!cachedItem) {
+      const response = await chrome.tabs.sendMessage(tabId, {
+        type: 'getVideoTrackData',
+        videoId
+      });
+
+      // 唯一写入点
+      await videoSourceLanguageCacheManager.upsert({
+        videoId,
+        availableSourceLanguages: response.availableSourceLanguages,
+        selectedSourceTrack: ...
+      });
+    }
+
+    return { popupContext: {...} };
+  }
+
+  // ✅ Cache Manager只负责存储操作，不主动创建数据
+  async initialize() {
+    // 只加载已有数据，不写入空数据
+    const result = await chrome.storage.local.get('video_source_language_cache');
+    if (result.video_source_language_cache) {
+      this.cache = result.video_source_language_cache;
+    }
+  }
+  ```
+
+**架构效果**:
+- ✅ 3次存储写入 → 1次存储写入
+- ✅ 职责清晰：Popup = UI层，Service Worker = 业务层，Cache Manager = 存储层
+- ✅ 数据流向单向：YouTube API → Service Worker → Cache Manager → Popup
+- ✅ 易于维护和测试
+
+**设计指导原则**:
+- 🎯 **职责单一**: 每个组件只负责一种职责（UI/业务/存储），不跨界
+- 🎯 **唯一入口**: 每种数据只有一个写入入口，其他组件只读取
+- 🎯 **避免重复**: 不同代码路径不应重复执行相同的存储写入
+- 🎯 **消息驱动**: 跨组件通信使用消息，而非直接调用存储API
+
+**相关文档**:
+- [组件设计 - 视频源语言缓存单一数据源架构](03-component-design.md#611-视频源语言缓存的单一数据源架构)
+- [简化的Popup架构 - Popup职责边界](06-simplified-popup-architecture.md#popup职责边界v52411新增)
+
 ---
 
 ## ✅ 重要技术更新

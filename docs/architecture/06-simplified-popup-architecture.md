@@ -1,8 +1,8 @@
 # YouTube字幕翻译助手 - 简化的Popup架构设计
 
-> **文档更新**: 2025-08-24  
-> **版本**: v5.24.7+ (**当前统一版本**)  
-> **架构方案**: ✅ **Popup直接调用架构**
+> **文档更新**: 2025-11-03
+> **版本**: v5.24.11+ (视频源语言缓存单一数据源重构)
+> **架构方案**: ✅ **Popup直接调用架构 + 单一数据源原则**
 
 ## 架构演进历程
 
@@ -16,9 +16,10 @@
 - **消息流**: Content Script → Background (同步) → chrome.sidePanel.open()
 - **问题**: 兼容性差、权限复杂、用户体验不一致
 
-### 3. 当前架构（简化的Popup直接调用）
+### 3. 当前架构（简化的Popup直接调用 + 单一数据源）
 - **直接调用**: Content Script → chrome.action.openPopup()
-- **优势**: 简单、快速、可靠
+- **单一数据源**: ⭐ Popup = 纯消费者，不直接操作缓存
+- **优势**: 简单、快速、可靠、职责清晰
 
 ## 当前架构详解
 
@@ -35,6 +36,11 @@
 3. **保持必要的分离**
    - 翻译等复杂业务逻辑仍在Background处理
    - 仅Popup操作采用直接调用
+
+4. **单一数据源原则（v5.24.11新增）** ⭐
+   - Popup是纯UI层，只负责展示和用户交互
+   - 所有数据获取和缓存写入都通过Service Worker
+   - 避免多处写入导致的重复和不一致
 
 ### 架构对比
 
@@ -136,24 +142,51 @@ export class RuntimeStateManager {
 6. Popup关闭 → Port断开 → Background设置popupOpen=false
 ```
 
-#### Popup数据获取流程（重要补充）
+#### Popup数据获取流程（v5.24.11重构）⭐
+
+**核心原则：Popup = 纯消费者，所有数据通过Service Worker获取**
+
 ```
 Popup初始化时需要获取以下数据：
 
-1. 用户偏好设置（直接读取存储）
-   Popup → chrome.storage.local.get('user_preferences_*')
+1. 用户偏好设置（允许直接读取）
+   Popup → chrome.storage.local.get('user_preferences')
    获取: targetLang, subtitleMode, translationService等
+   ✅ 只读操作，不涉及业务逻辑，允许直接访问
 
-2. 视频上下文数据（通过消息获取）
-   Popup → Background: sendMessage({type: 'getPopupInitData'})
-   获取: videoId, tabId等基本信息
+2. 视频上下文数据（通过Service Worker获取）⭐
+   Popup → Service Worker: sendMessage({type: 'getPopupInitData', tabId})
+   Service Worker返回完整PopupContext:
+   - videoId, tabId等基本信息
+   - availableSourceLanguages（可用源语言列表）
+   - selectedSourceTrack（用户选择的源语言）
+   - 运行时状态等
 
-3. 源语言列表（两层缓存机制）
-   a. 检查本地缓存: chrome.storage.local.get(`video_source_${videoId}`)
+   ⭐ 重点：Service Worker在处理时会：
+   a. 检查缓存: VideoSourceLanguageCacheManager.get(videoId)
    b. 缓存未命中时：
-      Popup → Content Script: sendMessage({type: 'getVideoTrackData'})
-      Content Script → YouTube API获取字幕轨道
-   c. 保存到缓存供下次使用
+      - Service Worker → Content Script: sendMessage({type: 'getVideoTrackData'})
+      - Content Script → YouTube API获取字幕轨道
+      - Service Worker → VideoSourceLanguageCacheManager.upsert() 保存缓存
+   c. 返回完整数据给Popup
+
+   ❌ Popup禁止：
+   - 不直接读取VideoSourceLanguageCache
+   - 不直接调用Content Script获取轨道
+   - 不调用VideoSourceLanguageCacheManager保存缓存
+
+3. 用户切换源语言（通过Service Worker更新）⭐
+   Popup → Service Worker: sendMessage({
+     type: 'updateVideoSourceLanguage',
+     data: { videoId, selectedSourceTrack }
+   })
+   Service Worker:
+   - 调用VideoSourceLanguageCacheManager.upsert()更新缓存
+   - 返回success响应
+
+   ❌ Popup禁止：
+   - 不直接调用saveVideoSourceLanguageCache()
+   - 不直接操作缓存
 ```
 
 ### Popup初始化的六步流程
@@ -216,6 +249,103 @@ Popup初始化时需要获取以下数据：
 2. **合理使用共享内存**: `chrome.storage.session` 适合运行时状态
 3. **保持关注点分离**: UI操作归UI，业务逻辑归Background
 4. **性能优先**: 减少不必要的中间层
+5. **单一数据源（v5.24.11新增）** ⭐: 每种数据只有一个权威写入者
+
+## Popup职责边界（v5.24.11新增）⭐
+
+### Popup允许的操作
+
+**✅ UI展示和用户交互**
+- 渲染用户界面
+- 接收用户输入（点击、选择、输入等）
+- 显示加载状态、错误提示等
+
+**✅ 只读访问用户偏好**
+- 可以直接读取 `user_preferences` 存储
+- 理由：只读操作，不涉及业务逻辑
+
+**✅ 通过消息获取数据**
+- 通过 `getPopupInitData` 获取完整上下文数据
+- 通过 `updateVideoSourceLanguage` 通知Service Worker更新
+
+**✅ 本地UI状态管理**
+- 管理Popup内部的UI状态（如tab切换、折叠展开等）
+- 这些状态不需要持久化或跨组件共享
+
+### Popup禁止的操作
+
+**❌ 直接读取视频源语言缓存**
+```typescript
+// ❌ 禁止：Popup直接读取缓存
+const cache = await chrome.storage.local.get('video_source_language_cache');
+
+// ✅ 正确：通过Service Worker获取
+const response = await chrome.runtime.sendMessage({
+  type: 'getPopupInitData',
+  tabId: currentTabId
+});
+const { availableSourceLanguages } = response.popupContext;
+```
+
+**❌ 直接调用Content Script获取轨道数据**
+```typescript
+// ❌ 禁止：Popup直接调用Content Script
+const trackResponse = await chrome.tabs.sendMessage(tabId, {
+  type: 'getVideoTrackData',
+  videoId
+});
+
+// ✅ 正确：Service Worker负责协调
+// Popup只需要通过getPopupInitData获取数据即可
+```
+
+**❌ 直接保存缓存数据**
+```typescript
+// ❌ 禁止：Popup直接保存缓存
+await VideoSourceLanguageCacheManager.getInstance().upsert({...});
+
+// ✅ 正确：通过Service Worker保存
+await chrome.runtime.sendMessage({
+  type: 'updateVideoSourceLanguage',
+  data: { videoId, selectedSourceTrack }
+});
+```
+
+**❌ 实现业务逻辑**
+```typescript
+// ❌ 禁止：Popup实现智能选择逻辑
+function selectBestSourceLanguage(tracks, targetLang) {
+  // 业务逻辑...
+}
+
+// ✅ 正确：业务逻辑在Service Worker
+// Popup只负责展示Service Worker返回的结果
+```
+
+### 代码组织约束
+
+**Popup模块不允许import以下内容**：
+```typescript
+// ❌ 禁止
+import { VideoSourceLanguageCacheManager } from '../shared/storage/...';
+
+// ❌ 禁止
+import { selectBestSourceLanguage } from '../background/...';
+
+// ✅ 允许
+import { UserPreferencesManager } from '../shared/storage/...'; // 只读使用
+```
+
+### 职责清单对比
+
+| 操作类型 | Popup | Service Worker |
+|---------|-------|----------------|
+| 获取轨道数据 | ❌ | ✅ 唯一负责 |
+| 保存缓存 | ❌ | ✅ 唯一负责 |
+| 智能选择源语言 | ❌ | ✅ 唯一负责 |
+| 读取用户偏好 | ✅ 只读 | ✅ 读写 |
+| UI渲染 | ✅ 唯一负责 | ❌ |
+| 用户交互 | ✅ 唯一负责 | ❌ |
 
 ## 迁移指南
 

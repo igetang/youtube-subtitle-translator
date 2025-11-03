@@ -1,9 +1,71 @@
 # YouTube字幕翻译助手 - 更新日志
 
 > 📝 **版本更新历史与技术演进记录**
-> **最后更新**: 2025-10-30
-> **当前版本**: v4.0.1
-> **架构状态**: ✅ **AbortController V4 + 两阶段翻译**（紧急翻译 + 批量覆盖）
+> **最后更新**: 2025-11-03
+> **当前版本**: v5.24.11
+> **架构状态**: ✅ **AbortController V4 + 两阶段翻译 + 单一数据源原则**（职责清晰分离）
+
+## [5.24.11] - 2025-11-03
+
+### 🏗️ **架构重构**
+
+#### 视频源语言缓存单一数据源重构 ⭐
+- **问题背景**：
+  - 视频源语言缓存被重复写入3次（性能浪费）
+  - Popup通过`getAvailableSourceLanguages()`自己获取并保存轨道数据
+  - Service Worker通过`handleGetPopupInitData()`也获取并保存轨道数据
+  - Cache Manager的`initialize()`会主动创建空缓存并写入
+  - 职责混乱，多处写入导致维护困难
+
+- **架构原则**：**单一数据源原则 (Single Source of Truth)**
+  - 每种数据只有一个权威写入者
+  - UI层只负责展示和用户交互，不直接操作存储
+  - 数据流向单向：数据源 → 业务层 → 存储层 → UI层
+
+- **重构方案**：
+  - ✅ **Service Worker = 唯一写入者**：统一负责获取轨道数据并保存缓存
+  - ✅ **Popup = 纯UI层**：通过消息从Service Worker获取数据，不直接操作缓存
+  - ✅ **Cache Manager = 纯存储层**：只负责存储操作，不主动创建数据
+  - ✅ **统一接口**：`VideoSourceLanguageCacheManager.upsert()` 替代 `set()` 和 `upsertFromPopup()`
+
+- **消息接口变更**：
+  - ✅ 新增：`getPopupInitData` - Popup获取完整上下文数据（包含轨道列表、选中的源语言等）
+  - ✅ 新增：`updateVideoSourceLanguage` - Popup通知Service Worker保存用户选择
+  - ⚠️ 废弃：`getAvailableTracks` - Popup不再直接获取轨道数据
+  - ⚠️ 废弃：Popup中的 `getAvailableSourceLanguages()` 函数
+  - ⚠️ 废弃：Popup中的 `saveVideoSourceLanguageCache()` 函数
+
+- **影响文件**：
+  - `src/popup/popup.ts` - 移除直接缓存操作，改用消息通信
+  - `src/background/service-worker.ts` - 新增消息处理器
+  - `src/shared/storage/video-source-language-cache-manager.ts` - 统一为`upsert()`接口
+  - `docs/architecture/` - 多个架构文档更新
+
+- **架构效果**：
+  - ✅ 3次存储写入 → 1次存储写入（性能提升）
+  - ✅ 职责清晰：Popup = UI层，Service Worker = 业务层，Cache Manager = 存储层
+  - ✅ 数据流向单向，易于维护和测试
+  - ✅ 避免chrome.storage.onChanged的重复触发
+
+### 📚 **文档更新**
+- 更新 `docs/architecture/01-design-principles.md` - 新增"第8条：单一数据源原则"
+- 更新 `docs/architecture/02-core-implementation.md` - 更新Popup架构原则和禁止操作
+- 更新 `docs/architecture/03-component-design.md` - 新增6.1.1节"视频源语言缓存的单一数据源架构"
+- 更新 `docs/architecture/06-simplified-popup-architecture.md` - 新增"Popup职责边界"章节
+- 更新 `docs/architecture/README.md` - 添加架构演进历史第9项
+- 更新 `docs/development/DEVELOPMENT.md` - 添加开发约束和禁止操作清单
+- 更新 `docs/guides/translation-flow.md` - 标注废弃的消息类型
+- 更新 `docs/optimization/popup-ts-size-analysis.md` - 标注Phase 2已完成
+- 更新 `CLAUDE.md` - 新增2.1节"视频源语言缓存架构"
+- 更新 `PROJECT_CONTEXT.md` - 记录架构优化完成状态
+
+### 🔧 **开发约束**
+- ❌ 禁止Popup直接import `VideoSourceLanguageCacheManager`
+- ❌ 禁止Popup直接读取/写入 `video_source_language_cache`
+- ❌ 禁止Popup直接调用Content Script的 `getVideoTrackData` 消息
+- ✅ Popup只能通过 `getPopupInitData` 和 `updateVideoSourceLanguage` 消息操作数据
+
+---
 
 ## [4.0.1] - 2025-10-30
 
