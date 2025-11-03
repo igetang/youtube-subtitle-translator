@@ -169,7 +169,12 @@ export const TRANSLATION_SERVICE_TEMPLATES: Record<TranslationServiceType, Omit<
     formality: 'default',                          // 'default' | 'more' | 'less' | 'prefer_more' | 'prefer_less'
     splitSentences: "0",                           // ⚠️ 字符串类型，默认"0"禁止分句
     preserveFormatting: false,                     // 格式保留
-    showBilledCharacters: true                     // 显示计费字符数（便于监控）
+    showBilledCharacters: true,                    // 显示计费字符数（便于监控）
+
+    // 🔥 真并发配置
+    enableConcurrentTranslation: true,  // 启用并发
+    concurrencyLimit: 10,               // 并发数：10（50 QPS限制下的最佳实践）
+    requestDelay: 0                     // 无延迟（真并发）
   },
   [TranslationServiceType.QWEN]: {
     type: TranslationServiceType.QWEN,
