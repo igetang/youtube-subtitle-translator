@@ -126,6 +126,15 @@ export class TwoPhaseTranslatorV4 {
       return 0; // 返回0表示使用串行处理
     }
 
+    // Gemini特殊处理：根据tier返回不同的并发限制
+    if (service.type === 'gemini' && service.tier) {
+      if (service.tier === 'paid') {
+        return 5;  // 付费层：5并发（真并发）
+      } else {
+        return 999;  // 免费层：999并发（流水线并发，一轮发完）
+      }
+    }
+
     // 优先使用用户自定义的并发限制
     if (service.concurrencyLimit && service.concurrencyLimit > 0) {
       return service.concurrencyLimit;
@@ -159,6 +168,17 @@ export class TwoPhaseTranslatorV4 {
    */
   private getRequestDelay(): number {
     const service = this.translationService;
+    if (!service) return 0;
+
+    // Gemini特殊处理：根据tier返回不同的延迟时间
+    if (service.type === 'gemini' && service.tier) {
+      if (service.tier === 'paid') {
+        return 0;  // 付费层：0ms延迟（真并发）
+      } else {
+        return 6000;  // 免费层：6000ms延迟（流水线并发，确保10 RPM）
+      }
+    }
+
     return service?.requestDelay ?? 0;
   }
 

@@ -140,8 +140,13 @@ export const TRANSLATION_SERVICE_TEMPLATES: Record<TranslationServiceType, Omit<
     maxTokens: 65536,                             // Gemini 2.5的最大输出tokens
     rpm: 60,                                      // 默认RPM（实际会根据tier调整）
     tpm: 120000,                                  // 默认TPM（实际会根据tier调整）
-    tier: 'free',                                 // Phase 1: 手动选择账户类型（默认免费层）
-    batchDelay: 6000                              // Phase 1: 批量翻译延迟（免费层flash: 6秒）
+    tier: 'free',                                 // 'free' | 'paid'（用户选择）
+    batchDelay: 6000,                             // 兼容性保留（并发模式下忽略）
+
+    // 🔥 双模式并发配置（默认免费层）
+    enableConcurrentTranslation: true,  // 启用并发
+    concurrencyLimit: 999,              // 免费层流水线：一轮发完所有批次（paid层运行时调整为5）
+    requestDelay: 6000                  // 免费层流水线：每批延迟6秒（paid层运行时调整为0）
   },
   [TranslationServiceType.DEEPSEEK]: {
     type: TranslationServiceType.DEEPSEEK,
