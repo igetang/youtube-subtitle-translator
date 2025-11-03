@@ -1927,8 +1927,8 @@ async function initializeManagers(): Promise<void> {
     
     // 标记为已初始化
     isInitialized = true;
-    
-    console.debug('[debug][service-worker] ✓ 所有管理器初始化完成');
+
+    console.debug('[debug][service-worker] ✓ 所有管理器就绪');
   } catch (error) {
     console.error(`[service-worker] ✗ 管理器初始化: ${error instanceof Error ? error.message : String(error)}`);
     // 初始化失败时重置标志，允许重试
@@ -1942,16 +1942,7 @@ async function initializeManagers(): Promise<void> {
  */
 async function setupDefaultSettings(): Promise<void> {
   try {
-    // 设置默认用户偏好 - 使用 ensureDefaultPreferences 内部方法
-    // UserPreferencesManager 会自动检查并设置默认偏好，无需手动设置
-    console.log('[service-worker] 默认用户偏好由UserPreferencesManager处理');
-    
-    // 🔧 修复：不要重复设置默认运行时状态
-    // RuntimeStateManager 在初始化时已经处理了默认状态设置
-    // 避免重复调用导致的状态转换冲突
-    console.log('[service-worker] 默认运行时状态由RuntimeStateManager处理');
-    
-    // 🎯 新增：设置默认Popup禁用状态
+    // 🎯 设置默认Popup禁用状态
     // 确保扩展安装时所有页面的popup都是禁用的，只有YouTube页面才会启用
     await chrome.action.setPopup({ popup: '' });
     await chrome.action.setIcon({
@@ -1960,9 +1951,7 @@ async function setupDefaultSettings(): Promise<void> {
         48: 'icons/icon48-disabled.png'
       }
     });
-    console.debug('[debug][service-worker] ✓ 默认Popup状态已禁用');
-    
-    console.debug('[debug][service-worker] ✓ 默认设置已初始化');
+    console.log('[service-worker] ✓ Service Worker就绪 | Popup已禁用');
   } catch (error) {
     console.error(`[service-worker] ✗ 设置默认设置: ${error instanceof Error ? error.message : String(error)}`);
   }

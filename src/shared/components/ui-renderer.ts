@@ -39,7 +39,7 @@ export class UIRenderer {
   // 🚀 移除：状态标志管理已移动到ContentScriptCoordinator
 
   constructor() {
-    console.log('[UIRenderer] UI渲染器已创建');
+    // UI渲染器已创建（无需打印）
   }
 
   /**
@@ -48,8 +48,6 @@ export class UIRenderer {
    * @param runtimeState 运行时状态
    */
   initialize(uiState: any, runtimeState: any): void {
-    console.log('[UIRenderer] 🎨 初始化UI渲染器（纯被动模式）');
-    
     this.uiState = uiState || {};
     this.runtimeState = runtimeState || {};
 
@@ -57,7 +55,7 @@ export class UIRenderer {
     // 只初始化tooltip等无关DOM的UI元素
     this.createTooltip();
 
-    console.log('[UIRenderer] ✅ UI渲染器初始化完成（等待外部指令）');
+    console.log('[UIRenderer] ✅ UI渲染器就绪');
   }
 
   /**
@@ -72,13 +70,11 @@ export class UIRenderer {
    * 由ContentScriptCoordinator调用，只负责UI创建
    */
   public async createButtons(): Promise<boolean> {
-    console.log('[UIRenderer] 🎨 接收到创建按钮指令');
-    
     try {
       // 检查YouTube控制栏是否就绪
       const rightControls = document.querySelector('.ytp-right-controls');
       if (!rightControls) {
-        console.log('[UIRenderer] YouTube控制栏未就绪，无法创建按钮');
+        console.debug('[debug][UIRenderer] YouTube控制栏未就绪，无法创建按钮');
         return false;
       }
 
@@ -87,13 +83,13 @@ export class UIRenderer {
 
       // 创建按钮
       const success = await this.performButtonCreation();
-      
+
       if (success) {
-        console.log('[UIRenderer] ✅ 按钮创建完成');
+        console.log('[UIRenderer] ✅ 按钮已创建');
       } else {
         console.log('[UIRenderer] ❌ 按钮创建失败');
       }
-      
+
       return success;
     } catch (error) {
       console.error('[UIRenderer] ❌ 创建按钮时出错:', error);

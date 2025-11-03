@@ -150,8 +150,6 @@ async function initializeUIComponents(): Promise<void> {
  * 检查并创建按钮
  */
 async function checkAndCreateButtons(): Promise<void> {
-  console.log('[content-script] 检查YouTube控制栏是否就绪...');
-  
   // 尝试立即创建
   const rightControls = document.querySelector('.ytp-right-controls');
   const autoplayButton = document.querySelector('.ytp-autonav-toggle-button');
@@ -220,7 +218,7 @@ function setupVisibilityChangeListener(): void {
   });
 
   hasVisibilityChangeListener = true;
-  console.log('[content-script] 标签页可见性监听器已设置');
+  console.debug('[debug][content-script] 标签页可见性监听器已设置');
 }
 
 // ==================== 用户交互处理 ====================
@@ -928,8 +926,6 @@ function setupMessageHandlers(): void {
       }
     }
   });
-  
-  console.log('[content-script] 消息处理器设置完成');
 }
 
 // handleGetSubtitleData函数已被移除
@@ -1201,10 +1197,10 @@ async function initialize(): Promise<void> {
     setupSourceLanguageChangeListener();
     setupTargetLanguageChangeListener();
     setupTranslationServiceChangeListener();
+    console.log('[content-script] ✅ 变更监听器已注册（源语言、目标语言、翻译服务）');
 
     isInitialized = true;
-    // 保留最终初始化完成日志
-    console.log('[content-script] ✅ 初始化完成');
+    console.log('[content-script] ✅ 内容脚本就绪');
 
     // 🆕 自动恢复翻译状态
     // 注意：必须在refreshStates()之后调用，因为refreshStates()会同步按钮UI状态
@@ -1506,8 +1502,6 @@ function startVideoChangeDetection(): void {
       }
     }
   }, 1000);
-
-  console.log('[content-script] 视频切换检测已启动');
 }
 
 // ==================== 启动 ====================
@@ -1528,8 +1522,6 @@ if (document.readyState === 'loading') {
  * 复用现有的StorageManager监听机制
  */
 function setupSourceLanguageChangeListener(): void {
-  console.log('[content-script] 注册源语言变更处理器（通过StorageManager统一分发）');
-
   // 复用现有的StorageManager监听机制
   StorageManager.getInstance().addChangeListener(
     StorageKeys.VIDEO_SOURCE_LANGUAGE_CACHE,
@@ -1538,8 +1530,6 @@ function setupSourceLanguageChangeListener(): void {
 }
 
 function setupTargetLanguageChangeListener(): void {
-  console.log('[content-script] 注册目标语言变更处理器（通过UserPreferencesManager统一分发）');
-
   const prefsManager = UserPreferencesManager.getInstance();
   prefsManager.addChangeListener(
     UserPreferenceChangeEvent.TARGET_LANG_CHANGED,
@@ -1566,8 +1556,6 @@ function setupTargetLanguageChangeListener(): void {
 }
 
 function setupTranslationServiceChangeListener(): void {
-  console.log('[content-script] 注册翻译服务变更处理器（通过UserPreferencesManager统一分发）');
-
   const prefsManager = UserPreferencesManager.getInstance();
   prefsManager.addChangeListener(
     UserPreferenceChangeEvent.TRANSLATION_SERVICE_CHANGED,

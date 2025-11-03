@@ -40,7 +40,6 @@ export class SubtitleOverlay {
   private playerElement: HTMLElement | null = null;
 
   constructor() {
-    console.log('[SubtitleOverlay] 初始化字幕显示层');
     this.userPreferencesManager = UserPreferencesManager.getInstance();
     this.initializePreferencesListener();
   }

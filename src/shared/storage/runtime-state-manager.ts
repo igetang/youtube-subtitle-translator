@@ -174,15 +174,14 @@ export class RuntimeStateManager {
       if (loadResult.success && loadResult.state) {
         // 加载成功，使用存储的状态
         this.runtimeCache = loadResult.state;
-        console.log('[runtime-state-manager] ✓ 初始化完成:', loadResult.state);
+        console.log('[runtime-state-manager] ✓ 运行时状态已加载');
       } else {
         // 加载失败，使用默认状态
-        console.log(`[runtime-state-manager] 使用默认状态: ${loadResult.reason}`);
         await this.useDefaultState();
+        console.log('[runtime-state-manager] ✓ 运行时状态已加载（默认值）');
       }
-      
+
       this.initialized = true;
-      console.log('[runtime-state-manager] ✓ 初始化完成');
       
     } catch (error) {
       console.error('[runtime-state-manager] ✗ 初始化失败:', error);
@@ -217,18 +216,14 @@ export class RuntimeStateManager {
    * 🔧 优化：移除重复的存储检查，直接使用默认状态
    */
   private async useDefaultState(): Promise<void> {
-    // 删除重复日志，上层调用处已经说明了使用默认状态的原因
-    
     try {
       // 直接使用默认状态，避免重复的存储检查
       const defaultState: RuntimeState = { ...DEFAULT_RUNTIME_STATE };
-      
+
       this.runtimeCache = defaultState;
       // 🔧 同步更新 syncCache
       this.syncCache.popupOpen = defaultState.popupOpen;
       await this.saveToStorage(defaultState);
-      
-      console.log('[runtime-state-manager] ✓ 默认状态已设置:', defaultState);
     } catch (error) {
       console.warn('[runtime-state-manager] ✗ 设置默认状态失败:', error);
       this.runtimeCache = { ...DEFAULT_RUNTIME_STATE };
@@ -455,7 +450,6 @@ export class RuntimeStateManager {
     
     const oldValue = this.runtimeCache.popupOpen;
     if (oldValue === open) {
-      console.log(`[runtime-state-manager] setPopupState(${open}) - 状态无变化，跳过保存`);
       return; // 值未变化，无需保存
     }
     

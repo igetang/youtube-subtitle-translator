@@ -15,13 +15,6 @@ import {
   SubtitleMode
 } from '../types/user-preferences-types';
 
-// 立即验证导入的默认值
-console.debug('[debug][user-preferences-manager] 模块加载时 DEFAULT_USER_PREFERENCES:', {
-  hasDefaultImported: !!DEFAULT_USER_PREFERENCES,
-  hasTranslationService: !!DEFAULT_USER_PREFERENCES?.translationService,
-  translationServiceType: DEFAULT_USER_PREFERENCES?.translationService?.type,
-  fullDefault: DEFAULT_USER_PREFERENCES
-});
 import { findMatchingTargetLanguage } from '../utils/language-processing';
 import { checkMigrationNeeded, convertUserSettingsToUserPreferences } from '../utils/settings-migration';
 
@@ -80,8 +73,6 @@ export class UserPreferencesManager {
       const userPrefsKey = StorageKeys.USER_PREFERENCES_PREFIX;
       Object.keys(changes).forEach((key) => {
         if (key.startsWith(userPrefsKey)) {
-          console.debug('[debug][user-preferences-manager] 检测到UserPreferences存储变更:', key);
-
           // 🔧 补全oldValue和newValue的translationService字段（防御性处理）
           // 原因：旧数据或某些路径可能导致字段缺失，补全后再比较可避免误触发事件
           let newPrefs = changes[key].newValue;
@@ -133,10 +124,6 @@ export class UserPreferencesManager {
 
     // 当旧值缺失时，使用默认配置作为比较基准，保证首次写入也能触发事件
     const previousPrefs = oldPrefs ?? DEFAULT_USER_PREFERENCES;
-
-    if (!oldPrefs) {
-      console.debug('[debug][user-preferences-manager] 未检测到旧的偏好设置，使用默认值作为比较基准');
-    }
 
     // 检查各个字段的变更
 
@@ -296,7 +283,7 @@ export class UserPreferencesManager {
       await this.ensureDefaultPreferences();
 
       this.initialized = true;
-      console.log('[user-preferences-manager] ✓ 初始化完成');
+      console.log('[user-preferences-manager] ✓ 用户偏好已加载');
 
     } catch (error) {
       console.error('[user-preferences-manager] ✗ 初始化失败:', error);
@@ -315,10 +302,7 @@ export class UserPreferencesManager {
       const data = await this.storageManager.get<UserPreferences | null>(storageKey, null);
 
       if (!data) {
-        console.debug('[debug][user-preferences-manager] 未检测到偏好设置，保存默认配置到Local Storage');
         await this.setUserPreferences(DEFAULT_USER_PREFERENCES);
-      } else {
-        console.debug('[debug][user-preferences-manager] 已存在偏好设置，跳过初始化保存');
       }
     } catch (error) {
       console.error('[user-preferences-manager] 设置默认偏好配置失败:', error);
@@ -401,8 +385,6 @@ export class UserPreferencesManager {
       // 保存到存储
       const storageKey = `${StorageKeys.USER_PREFERENCES_PREFIX}main`;
       await this.storageManager.set(storageKey, finalPreferences);
-
-      console.debug('[debug][user-preferences-manager] ✓ setUserPreferences: 成功');
 
     } catch (error) {
       console.error('[user-preferences-manager] ✗ setUserPreferences:', error);

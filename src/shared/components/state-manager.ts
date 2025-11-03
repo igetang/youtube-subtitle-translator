@@ -18,7 +18,7 @@ export class StateManager {
   private userPreferences: any = {};
 
   constructor() {
-    console.log('[StateManager] 状态管理器已创建');
+    // 状态管理器已创建（无需打印）
   }
 
   /**
@@ -27,15 +27,10 @@ export class StateManager {
    * @param userPreferences 用户偏好设置
    */
   initialize(runtimeState: any, userPreferences: any): void {
-    console.log('[StateManager] 📊 初始化状态管理器（被动接收状态）');
-    
     this.runtimeState = runtimeState || {};
     this.userPreferences = userPreferences || {};
 
-    console.log('[StateManager] ✅ 状态管理器初始化完成:', {
-      runtimeStateKeys: Object.keys(this.runtimeState),
-      userPreferencesKeys: Object.keys(this.userPreferences)
-    });
+    console.log('[StateManager] ✅ 状态管理器就绪');
   }
 
   /**
@@ -51,12 +46,10 @@ export class StateManager {
    * @param value 状态值
    */
   async updateState(key: string, value: any): Promise<void> {
-    console.log(`[StateManager] → 更新状态: ${key} = ${value}`);
-
     try {
       // 先检查本地状态是否已经是目标值
       if (this.runtimeState[key] === value) {
-        console.log(`[StateManager] 状态已是 ${value}，直接更新UI`);
+        console.debug(`[debug][StateManager] 状态已是 ${value}，直接更新UI`);
         // 即使状态相同也要通知UI更新，因为UI可能还没有同步
         this.notifyStateChange(key, value);
         return;
