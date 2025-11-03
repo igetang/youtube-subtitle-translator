@@ -849,6 +849,9 @@ function setupMessageHandlers(): void {
 
     // 处理通过Player API设置字幕语言（ISO 639-1）
     if (messageType === 'setSubtitleTrackAPI') {
+      // 🔍 追踪当前videoId
+      const currentVideoId = getVideoId();
+      console.log(`[content-script] 🔍 setSubtitleTrackAPI - 当前videoId: ${currentVideoId}, langCode: ${message.langCode}, kind: ${message.kind}`);
       console.debug(`[debug][content-script] 收到Chrome消息: ${messageType}, langCode: ${message.langCode}` +
                   (message.kind ? `, kind: ${message.kind}` : ''));
       handleSetSubtitleTrackAPI(message.langCode, message.kind, sendResponse);
@@ -936,28 +939,59 @@ function setupMessageHandlers(): void {
  * 处理通过Player API获取字幕轨道
  */
 function handleGetSubtitleTracksAPI(sendResponse: (response: any) => void): void {
+  // 🔍 追踪当前videoId
+  const currentVideoId = getVideoId();
+  console.log(`[content-script] 🔍 handleGetSubtitleTracksAPI - 当前videoId: ${currentVideoId}`);
   console.debug('[debug][content-script] 开始通过API获取字幕轨道');
 
   const requestId = `api_tracks_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  
+  const requestVideoId = currentVideoId;
+
   const timeout = setTimeout(() => {
     apiResponseHandlers.delete(requestId);
+    console.warn(`[content-script] getSubtitleTracksAPI 超时，requestId: ${requestId}, videoId: ${requestVideoId}`);
     sendResponse({
       success: false,
-      error: 'API获取字幕轨道超时'
+      error: 'API获取字幕轨道超时',
+      requestId,
+      videoId: requestVideoId ?? undefined
     });
   }, 5000);
   
   // 设置响应处理器
   apiResponseHandlers.set(requestId, (response) => {
     clearTimeout(timeout);
-    sendResponse(response);
+    apiResponseHandlers.delete(requestId);
+
+    const latestVideoId = getVideoId();
+    if (latestVideoId !== requestVideoId) {
+      console.warn('[content-script] 忽略过期的轨道响应', {
+        requestId,
+        expectedVideoId: requestVideoId,
+        latestVideoId
+      });
+      sendResponse({
+        success: false,
+        error: 'video_changed',
+        reason: 'video_changed',
+        requestId,
+        videoId: latestVideoId ?? undefined
+      });
+      return;
+    }
+
+    sendResponse({
+      ...response,
+      requestId,
+      videoId: requestVideoId ?? undefined
+    });
   });
   
   // 发送消息到main-world
   window.postMessage({
     source: 'content-script',
     type: 'GET_SUBTITLE_TRACKS_API',
+    videoId: requestVideoId,
     _requestId: requestId
   }, '*');
 }
@@ -971,24 +1005,59 @@ function handleGetSubtitleTracksAPI(sendResponse: (response: any) => void): void
 async function setSubtitleTrackAPI(
   langCode: string,
   kind: string | undefined
-): Promise<{ success: boolean; error?: string; langCode?: string; kind?: string }> {
+): Promise<{
+  success: boolean;
+  error?: string;
+  langCode?: string;
+  kind?: string;
+  requestId?: string;
+  videoId?: string;
+  reason?: string;
+}> {
   console.debug(`[debug][content-script] 通过API设置字幕语言: ${langCode}` + (kind ? ` (${kind})` : ''));
 
   return new Promise((resolve) => {
     const requestId = `api_set_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const requestVideoId = getVideoId();
 
     const timeout = setTimeout(() => {
       apiResponseHandlers.delete(requestId);
+      console.warn(`[content-script] setSubtitleTrackAPI 超时，requestId: ${requestId}, videoId: ${requestVideoId}`);
       resolve({
         success: false,
-        error: 'API设置字幕语言超时'
+        error: 'API设置字幕语言超时',
+        requestId,
+        videoId: requestVideoId ?? undefined
       });
     }, 5000);
 
     // 设置响应处理器
     apiResponseHandlers.set(requestId, (response) => {
       clearTimeout(timeout);
-      resolve(response);
+      apiResponseHandlers.delete(requestId);
+
+      const latestVideoId = getVideoId();
+      if (latestVideoId !== requestVideoId) {
+        console.warn('[content-script] 忽略过期的字幕轨道设置响应', {
+          requestId,
+          expectedVideoId: requestVideoId,
+          latestVideoId
+        });
+        resolve({
+          success: false,
+          error: 'video_changed',
+          reason: 'video_changed',
+          requestId,
+          videoId: latestVideoId ?? undefined
+        });
+        return;
+      }
+
+      resolve({
+        ...response,
+        requestId,
+        videoId: requestVideoId ?? undefined
+      });
     });
 
     // 发送消息到main-world
@@ -997,6 +1066,7 @@ async function setSubtitleTrackAPI(
       type: 'SET_SUBTITLE_TRACK_API',
       langCode: langCode,  // ISO 639-1语言代码
       kind: kind,           // 字幕类型（如 asr）
+      videoId: requestVideoId,
       _requestId: requestId
     }, '*');
   });

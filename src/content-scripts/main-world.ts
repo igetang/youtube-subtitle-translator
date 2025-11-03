@@ -344,13 +344,32 @@ class SubtitleAPIController {
       console.warn('[SubtitleAPIController] 播放器或模块未就绪');
       return [];
     }
-    
+
     try {
-      // 获取字幕轨道列表
-      const tracks = this.player.getOption(this.captionsModule, 'tracklist');
-      
+      // 🔍 获取当前videoId用于日志追踪
+      const currentVideoId = new URLSearchParams(window.location.search).get('v');
+      console.log(`[SubtitleAPIController] 🔍 getAvailableTracks - 当前URL的videoId: ${currentVideoId}`);
+
+      // 🔧 等待tracklist加载完成（最多3秒）
+      let tracks = this.player.getOption(this.captionsModule, 'tracklist');
+      let retries = 0;
+      const maxRetries = 6; // 6次 * 500ms = 3秒
+
+      while ((!tracks || !Array.isArray(tracks) || tracks.length === 0) && retries < maxRetries) {
+        console.debug(`[SubtitleAPIController] ⏳ 等待tracklist加载... 尝试 ${retries + 1}/${maxRetries}, 当前: ${tracks?.length || 0}条`);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        tracks = this.player.getOption(this.captionsModule, 'tracklist');
+        retries++;
+      }
+
+      if (!tracks || !Array.isArray(tracks) || tracks.length === 0) {
+        console.warn(`[SubtitleAPIController] ⚠️ tracklist加载超时或为空，已等待${retries * 500}ms (videoId: ${currentVideoId})`);
+        return [];
+      }
+
+      console.log(`[SubtitleAPIController] ✓ tracklist已加载，获取到 ${tracks.length} 个字幕轨道 (videoId: ${currentVideoId}, 等待: ${retries * 500}ms)`);
+
       if (tracks && Array.isArray(tracks)) {
-        console.log(`[SubtitleAPIController] 获取到 ${tracks.length} 个字幕轨道`);
         // 返回包含ISO 639-1语言代码的轨道信息
         return tracks.map(track => {
           const rawKind = track.kind;
@@ -391,59 +410,27 @@ class SubtitleAPIController {
     }
 
     try {
+      // 🔍 获取当前videoId用于日志追踪
+      const currentVideoId = new URLSearchParams(window.location.search).get('v');
+      console.log(`[SubtitleAPIController] 🔍 setSubtitleTrack - 当前URL的videoId: ${currentVideoId}, 目标语言: ${langCode}, kind: ${kind}`);
+
       console.debug('[debug][SubtitleAPIController] 尝试切换字幕语言', {
         langCode,
         kind,
         module: this.captionsModule
       });
 
-      const trackList = this.player.getOption(this.captionsModule, 'tracklist') || [];
-      try {
-        const snapshot = trackList.slice(0, 6).map((track: any) => ({
-          languageCode: track.languageCode ?? track.language_code ?? null,
-          vssId: track.vssId ?? track.vss_id ?? null,
-          kind: track.kind ?? null,
-          hasBaseUrl: Boolean(track.baseUrl)
-        }));
-        console.debug('[debug][SubtitleAPIController] tracklist 快照(前6条)', snapshot);
-      } catch (snapshotError) {
-        console.warn('[SubtitleAPIController] tracklist 快照记录失败:', snapshotError);
-      }
-
-      // 优先精确匹配 langCode + kind，如果找不到再尝试只匹配 langCode
-      let candidateTrack = trackList.find((track: any) => {
-        const trackLang = track.languageCode ?? track.language_code;
-        // 如果指定了 kind，必须同时匹配
-        if (kind !== undefined) {
-          return trackLang === langCode && track.kind === kind;
-        }
-        // 如果没有指定 kind，优先选择非 asr 的轨道
-        return trackLang === langCode && track.kind !== 'asr';
-      });
-
-      // 如果没找到非 asr 轨道，退而求其次选择任何匹配的轨道
-      if (!candidateTrack && kind === undefined) {
-        candidateTrack = trackList.find((track: any) => {
-          const trackLang = track.languageCode ?? track.language_code;
-          return trackLang === langCode;
-        });
-      }
-
-      console.debug('[debug][SubtitleAPIController] tracklist 匹配结果', candidateTrack ? {
-        languageCode: candidateTrack.languageCode ?? candidateTrack.language_code,
-        vssId: candidateTrack.vssId ?? candidateTrack.vss_id ?? null,
-        kind: candidateTrack.kind ?? null
-      } : '未找到');
-
-      if (!candidateTrack) {
-        console.warn('[SubtitleAPIController] tracklist 未找到匹配轨道，准备从playerResponse补足');
-      }
+      // 🔥 核心简化：直接设置，不验证tracklist
+      // Service Worker已经通过getSubtitleTracksAPI验证过轨道存在
+      // YouTube API会自动处理：轨道存在则切换，不存在则静默失败
 
       // 设置字幕轨道（使用ISO 639-1标准）
       const trackConfig: any = { "languageCode": langCode };
       if (kind !== undefined) {
         trackConfig.kind = kind;
       }
+
+      console.log(`[SubtitleAPIController] → 直接设置字幕轨道: ${langCode}${kind ? ' (' + kind + ')' : ''}`);
       this.player.setOption(this.captionsModule, 'track', trackConfig);
 
       // 如果使用的是旧模块，也尝试设置

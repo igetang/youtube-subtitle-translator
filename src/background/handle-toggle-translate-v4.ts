@@ -223,9 +223,11 @@ export async function handleToggleTranslateV4(
       };
 
       try {
+        console.log(`[service-worker-v4] 🔍 准备设置字幕轨道: ${langCode}${kind ? ' (' + kind + ')' : ''} (videoId: ${videoId})`);
         console.debug('[debug][service-worker-v4] → 设置字幕轨道: ' + langCode + (kind ? ' (' + kind + ')' : ''));
         const setResult = await chrome.tabs.sendMessage(tabId, setSubtitlePayload);
         if (setResult?.success) {
+          console.log(`[service-worker-v4] 🔍 setSubtitleTrackAPI成功 (videoId: ${videoId})`);
           console.debug('[debug][service-worker-v4] ← setSubtitleTrackAPI 成功响应', setResult);
         } else {
           console.warn('[service-worker-v4] setSubtitleTrackAPI 返回失败，将依赖字幕按钮触发', setResult);
@@ -293,48 +295,96 @@ export async function handleToggleTranslateV4(
     // 如果没有缓存的轨道信息，或源语言仍是auto，主动获取轨道
     if (!sourceData?.availableSourceLanguages?.length || sourceLanguageCode === 'auto') {
       try {
+        const trackRequestId = `get_tracks_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
         // 获取可用字幕轨道（先尝试playerResponse，再兜底Player API）
         const trackResponse = await session.executeStage(
           'get_tracks',
           async (signal) => {
-            let response = null;
-
-            // 路径1：playerResponse.captionTracks（与Popup一致）
-            try {
-              const requestPayload = {
-                type: 'getVideoTrackData',
-                videoId: videoId
-              };
-              console.debug('[debug][service-worker-v4] → 获取视频轨道数据 (playerResponse)');
-              response = await chrome.tabs.sendMessage(tabId, requestPayload);
-              if (response?.success) {
-                console.debug('[debug][service-worker-v4] ✓ 获取到 ' + (response.tracks?.length || 0) + ' 个轨道（playerResponse）');
-              } else {
-                console.debug('[debug][service-worker-v4] ✗ playerResponse 获取轨道失败');
+            const classifyError = (error: unknown): { category: string; message: string } => {
+              const rawMessage = (error as Error)?.message || String(error);
+              if (rawMessage.includes('Receiving end does not exist')) {
+                return { category: 'tab_unreachable', message: rawMessage };
               }
-            } catch (responseError) {
-              console.warn('[service-worker-v4] playerResponse 获取轨道异常，将尝试Player API', responseError);
-            }
+              if ((error as DOMException)?.name === 'AbortError') {
+                throw error;
+              }
+              return { category: 'runtime_error', message: rawMessage };
+            };
 
-            // 路径2：Player API tracklist（兜底）
-            if (!response?.success || !response.tracks?.length) {
+            const requestWithSignal = async (
+              payload: Record<string, unknown>,
+              source: 'playerResponse' | 'playerApi'
+            ): Promise<any> => {
               try {
-                console.debug('[debug][service-worker-v4] → 获取视频轨道数据 (Player API)');
-                const apiResponse = await chrome.tabs.sendMessage(tabId, {
-                  type: 'getSubtitleTracksAPI'
-                });
-                if (apiResponse?.success && apiResponse.tracks?.length) {
-                  console.debug('[debug][service-worker-v4] ✓ 获取到 ' + apiResponse.tracks.length + ' 个轨道（Player API）');
-                  response = apiResponse;
-                } else {
-                  console.debug('[debug][service-worker-v4] ✗ Player API 获取轨道失败');
+                const response = await sendMessageWithSignal<any>(tabId, {
+                  ...payload,
+                  _requestId: trackRequestId,
+                  videoId
+                }, signal);
+
+                if (response?.success && response.tracks?.length) {
+                  console.debug(`[debug][service-worker-v4] ✓ 获取到 ${response.tracks.length} 个轨道（${source}） | requestId: ${trackRequestId}`);
+                  return { ...response, trackSource: source };
                 }
-              } catch (apiError) {
-                console.warn('[service-worker-v4] Player API 获取轨道异常', apiError);
+
+                if (response?.success) {
+                  console.warn(`[service-worker-v4] ${source} 返回空轨道 | requestId: ${trackRequestId}`);
+                  return {
+                    success: false,
+                    tracks: [],
+                    reason: `${source}_empty`,
+                    trackSource: source
+                  };
+                }
+
+                console.warn(`[service-worker-v4] ${source} 返回失败 | requestId: ${trackRequestId}`, response);
+                return {
+                  success: false,
+                  tracks: [],
+                  reason: `${source}_failure`,
+                  trackSource: source,
+                  error: response?.error
+                };
+              } catch (error) {
+                const { category, message } = classifyError(error);
+                console.warn(`[service-worker-v4] ${source} 获取轨道异常 (${category}) | requestId: ${trackRequestId}`, error);
+                return {
+                  success: false,
+                  tracks: [],
+                  reason: `${source}_${category}`,
+                  trackSource: source,
+                  error: message
+                };
               }
+            };
+
+            console.debug('[debug][service-worker-v4] → 获取视频轨道数据 (playerResponse)');
+            const playerResponseResult = await requestWithSignal({
+              type: 'getVideoTrackData',
+              videoId
+            }, 'playerResponse');
+
+            if (playerResponseResult?.success && playerResponseResult.tracks?.length) {
+              return { ...playerResponseResult, requestId: trackRequestId };
             }
 
-            return response;
+            console.log(`[service-worker-v4] 🔍 准备通过Player API获取轨道 (videoId: ${videoId}) | requestId: ${trackRequestId}`);
+            const playerApiResult = await requestWithSignal({
+              type: 'getSubtitleTracksAPI'
+            }, 'playerApi');
+
+            if (playerApiResult?.success && playerApiResult.tracks?.length) {
+              return { ...playerApiResult, requestId: trackRequestId };
+            }
+
+            const failureResult = playerApiResult ?? playerResponseResult ?? {
+              success: false,
+              tracks: [],
+              reason: 'no_tracks',
+              trackSource: 'playerApi'
+            };
+            return { ...failureResult, requestId: trackRequestId };
           },
           { timeoutMs: 15000 }
         );
@@ -369,7 +419,8 @@ export async function handleToggleTranslateV4(
           console.log('[service-worker-v4] ✓ 智能选择并设置: ' + sourceLanguageName +
                       ' [' + sourceLanguageCode + ']' +
                       (sourceKind ? ' (' + sourceKind + ')' : '') +
-                      ' | 可用: ' + trackResponse.tracks.length + '个');
+                      ' | 可用: ' + trackResponse.tracks.length + '个' +
+                      ` | requestId: ${trackResponse.requestId}`);
 
           await sendSetSubtitleTrack(sourceLanguageCode, sourceKind);  // ✅ YouTube API使用code
 
@@ -396,7 +447,8 @@ export async function handleToggleTranslateV4(
             }
           });
         } else {
-          console.warn('[service-worker-v4] 未能获取轨道信息，继续使用auto');
+          const failureReason = trackResponse?.reason || 'no_tracks';
+          console.warn(`[service-worker-v4] ✗ 未获取到字幕轨道，reason=${failureReason} | requestId: ${trackResponse?.requestId ?? 'n/a'}`);
           sourceLanguageCode = 'auto';
           sourceLanguageName = 'auto';
         }

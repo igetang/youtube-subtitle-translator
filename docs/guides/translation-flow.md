@@ -147,6 +147,10 @@ class SubtitleAPIController {
 }
 ```
 
+> **备注（v5.24.12+）**  
+> - `getAvailableTracks()` 仅作为 Service Worker 兜底调用的实现，主流程优先依赖 `playerResponse.captionTracks`。  
+> - `setSubtitleTrack()` 不再同步校验 tracklist，确保与 Service Worker 的“单一验证入口”策略一致；若轨道缺失，YouTube 会静默失败，Service Worker 会在后续阶段走字幕按钮兜底。
+
 ### 2.2 优化后的缓存检查策略（基于原始字幕复用）
 
 系统实现了优化的缓存架构，核心优势是**原始字幕只需获取一次**：
@@ -198,47 +202,60 @@ flowchart TD
 
 ### 2.3 执行流程（Service Worker中的10步骤）
 
-完整的翻译执行流程在Service Worker中实现：
+完整的翻译执行流程在 Service Worker 中实现，当前（v5.24.12+）关键步骤如下：
 
 ```typescript
-// Step 1: 设置PENDING状态
+// Step 1: 设置 PENDING 状态
 await runtimeStateManager.setTranslateState(TranslateActiveState.PENDING);
 
-// Step 2: 获取用户偏好设置
-const userPreferences = await userPreferencesManager.getUserPreferences();
+// Step 2: 读取翻译偏好与缓存
+const preferences = await userPreferencesManager.getUserPreferences();
+const sourceCache = await videoSourceLanguageCacheManager.get(videoId);
 
-// Step 3: 获取字幕数据（优先缓存）
-let subtitleData = await getSubtitleDataWithCache(videoId, sourceLang);
+// Step 3: 获取字幕轨道（单一入口，带 requestId）
+const trackResponse = await session.executeStage('get_tracks', async (signal) => {
+  const requestId = `get_tracks_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-// Step 4: 执行翻译（优先缓存）
-const translatedData = await translateWithCache(subtitleData, params);
+  // 3.1 首选 playerResponse.captionTracks
+  const fromPlayerResponse = await sendMessageWithSignal(tabId, {
+    type: 'getVideoTrackData',
+    videoId,
+    _requestId: requestId
+  }, signal);
 
-// Step 5: 智能源语言选择（新增Player API）
-// Step 5.1: 通过Player API获取轨道
-const apiTracks = await chrome.tabs.sendMessage(tabId, {
-  type: 'getSubtitleTracksAPI'
-});
+  if (fromPlayerResponse?.success && fromPlayerResponse.tracks?.length) {
+    return { ...fromPlayerResponse, trackSource: 'playerResponse', requestId };
+  }
 
-// Step 5.2: 智能选择源语言
-const sourceLang = selectBestSourceLanguage(
-  apiTracks,
-  userPreferences.targetLang,
-  lastSelectedLanguage
-);
+  // 3.2 兜底 Player API tracklist
+  const fromPlayerApi = await sendMessageWithSignal(tabId, {
+    type: 'getSubtitleTracksAPI',
+    _requestId: requestId
+  }, signal);
 
-// Step 5.3: 通过API设置字幕语言
-await chrome.tabs.sendMessage(tabId, {
+  return { ...(fromPlayerApi ?? fromPlayerResponse ?? {}), requestId, trackSource: 'playerApi' };
+}, { timeoutMs: 15000 });
+
+// Step 4: 智能选择源语言 + 缓存写入
+const sourceTrack = selectBestSourceLanguage(trackResponse.tracks, preferences.targetLang, sourceCache?.selectedSourceTrack);
+await videoSourceLanguageCacheManager.set({ videoId, ...sourceTrackMetadata });
+
+// Step 5: 设置字幕轨道（只负责执行，不再重复校验）
+await sendMessageWithSignal(tabId, {
   type: 'setSubtitleTrackAPI',
-  langCode: sourceLang  // ISO 639-1
-});
+  langCode: sourceTrack.languageCode,
+  kind: sourceTrack.kind
+}, session.createStageSignal('set_track', 5000));
 
-// Step 6: 根据结果设置最终状态
-if (success) {
-  await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
-} else {
-  await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
-}
+// Step 6: 获取字幕内容 → 翻译 → 写入缓存 → 设置 ACTIVE 状态
 ```
+
+**核心变化（对比 v5.24.10 以前的流程）**
+
+- Service Worker 是**唯一**获取/验证轨道的层级，先访问 `playerResponse`，不足时再落到 Player API；所有请求共享 `_requestId + videoId`，并受 `AbortController` 统一管理。
+- Content Script 在收到响应时会校验 `_requestId` 与当前 `videoId`：若用户已跳到下一条视频，则忽略并向 Service Worker 返回 `video_changed`，避免 “下一条视频吃到上一条轨道”。
+- Main World 的 `SubtitleAPIController.setSubtitleTrack` 只负责 `setOption`，不再同步等待 `tracklist` 加载；tracklist 验证已经在 Service Worker 完成。
+- 所有轨道与翻译缓存依旧以 Service Worker 为单一写入者，UI/Content Script 仅消费。
 
 ### 2.4 语言冲突解决策略
 
