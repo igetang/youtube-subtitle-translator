@@ -453,6 +453,13 @@ export class SubtitleOverlay {
       return;
     }
 
+    // 清除pending消息定时器（重要：防止定时器触发hide()）
+    if (this.pendingMessageTimer) {
+      clearTimeout(this.pendingMessageTimer);
+      this.pendingMessageTimer = null;
+      console.debug('[debug][SubtitleOverlay] 已清除pending定时器');
+    }
+
     // 确保覆盖层已初始化
     if (!this.overlayElement) {
       this.initialize();
@@ -559,7 +566,7 @@ export class SubtitleOverlay {
    * 显示PENDING状态消息
    * 用于源语言切换等需要重新加载的场景
    * @param message 要显示的消息
-   * @param timeout 超时时间（毫秒），默认5秒
+   * @param timeout 超时时间（毫秒），默认5秒。设置为0表示不超时，依赖外部清除或Service Worker错误处理
    */
   public showPendingMessage(message: string, timeout: number = 5000): void {
     // 清除之前的定时器
@@ -607,14 +614,16 @@ export class SubtitleOverlay {
         document.head.appendChild(style);
       }
 
-      console.debug(`[debug][SubtitleOverlay] 显示PENDING消息: ${message}`);
+      console.debug(`[debug][SubtitleOverlay] 显示PENDING消息: ${message}, 超时: ${timeout > 0 ? timeout + 'ms' : '无超时'}`);
 
-      // 设置自动隐藏定时器
-      this.pendingMessageTimer = window.setTimeout(() => {
-        console.debug('[debug][SubtitleOverlay] Pending消息超时，自动隐藏');
-        this.hide();
-        this.pendingMessageTimer = null;
-      }, timeout);
+      // 只有timeout > 0才设置自动隐藏定时器
+      if (timeout > 0) {
+        this.pendingMessageTimer = window.setTimeout(() => {
+          console.debug('[debug][SubtitleOverlay] Pending消息超时，自动隐藏');
+          this.hide();
+          this.pendingMessageTimer = null;
+        }, timeout);
+      }
     }
   }
 

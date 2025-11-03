@@ -552,8 +552,8 @@ async function autoRestoreTranslationIfNeeded(forceRestore: boolean = false): Pr
       await stateManager.updateState('translateActive', TranslateActiveState.PENDING);
     }
 
-    // === 步骤8：显示"翻译中"提示 ===
-    subtitleOverlay.showPendingMessage('正在恢复翻译...');
+    // === 步骤8：显示"翻译中"提示（无超时，依赖Service Worker错误处理）===
+    subtitleOverlay.showPendingMessage('正在恢复翻译...', 0);
 
     // === 步骤9：直接发送翻译消息到Service Worker ===
     const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;

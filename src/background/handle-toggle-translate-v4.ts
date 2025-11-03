@@ -37,7 +37,7 @@ import {
   triggerSubtitleLoadWithSignal 
 } from './components/message-with-signal';
 import { TwoPhaseTranslatorV4, GOOGLE_TRANSLATE_BATCH_TIMEOUT_MS } from './components/two-phase-translator-v4';
-import { createVttString, parseVttString } from '../shared/utils/vtt-utils';
+import { createVttString, parseVttString, mergeVttStrings } from '../shared/utils/vtt-utils';
 
 /**
  * 处理翻译开关切换 - 使用AbortController架构v4.0
@@ -249,6 +249,28 @@ export async function handleToggleTranslateV4(
 
       // 即使缓存命中也要切换字幕轨道
       await sendSetSubtitleTrack(sourceLanguageCode, sourceKind);  // ✅ YouTube API使用code
+
+      // 解析缓存的VTT数据为SubtitleEntry数组
+      const cachedSubtitles = mergeVttStrings(
+        cachedResult.originalSubtitles,
+        cachedResult.translatedSubtitles
+      );
+
+      console.log(`[service-worker-v4] → 发送缓存的字幕数据: ${cachedSubtitles.length} 条`);
+
+      // 发送缓存的字幕数据到Content Script
+      try {
+        await chrome.tabs.sendMessage(tabId, {
+          type: 'TRANSLATION_UPDATE',
+          data: {
+            updateType: 'progressive',  // 使用progressive类型，完整覆盖
+            translatedSubtitles: cachedSubtitles  // SubtitleEntry[]格式
+          }
+        });
+        console.log('[service-worker-v4] ✓ 已发送缓存字幕数据');
+      } catch (err) {
+        console.error('[service-worker-v4] 发送缓存字幕数据失败:', err);
+      }
 
       console.log('[service-worker-v4] → 设置状态为 ACTIVE（缓存命中）');
       await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
