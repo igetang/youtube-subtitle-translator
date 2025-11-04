@@ -1707,11 +1707,8 @@ async function requestPopupContextData(): Promise<any> {
 
       // 更新全局变量
       if (popupContext) {
-        console.log('[DEBUG-INIT] 从popupContext更新currentVideoId:', popupContext.videoId);
         currentVideoId = popupContext.videoId;
-        console.log('[DEBUG-INIT] currentVideoId更新后的值:', currentVideoId);
-      } else {
-        console.log('[DEBUG-INIT] popupContext为空，currentVideoId未更新');
+        console.log('[popup] 从 PopupContext 更新 videoId:', currentVideoId);
       }
       
       return popupContext;
@@ -1729,13 +1726,9 @@ async function requestPopupContextData(): Promise<any> {
  * 加载源语言数据并更新UI
  */
 async function loadSourceLanguageData(popupContext: any): Promise<void> {
-  console.log('[DEBUG-LOAD] loadSourceLanguageData开始，currentVideoId:', currentVideoId);
-  console.log('[DEBUG-LOAD] 收到的popupContext:', popupContext);
-
   try {
     if (!currentVideoId) {
       console.log('[popup] 无法加载源语言数据: 缺少视频ID');
-      console.log('[DEBUG-LOAD] currentVideoId确实为空，无法继续');
       return;
     }
 
@@ -1751,19 +1744,10 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
       setSourceLanguageSelectorDisabled(false);
     }
     
-    // 优先使用 popupContext 中的数据，如果没有则从本地缓存获取
-    let availableLanguages = [];
-    
-    // 先尝试使用 popupContext 中的数据
-    if (popupContext && popupContext.availableSourceLanguages && popupContext.availableSourceLanguages.length > 0) {
-      availableLanguages = popupContext.availableSourceLanguages;
-      console.log('[popup] 使用 PopupContext 中的源语言数据:', availableLanguages);
-    } else {
-      // 如果 popupContext 中没有数据，则从本地缓存获取
-      availableLanguages = await getAvailableSourceLanguages(currentVideoId);
-      console.log('[popup] 从本地缓存获取源语言数据:', availableLanguages);
-    }
-    
+    // ✅ 完全依赖 popupContext 中的数据（单一数据源架构）
+    const availableLanguages = popupContext?.availableSourceLanguages || [];
+    console.log('[popup] 从 PopupContext 获取源语言数据:', availableLanguages.length, '个轨道');
+
     if (availableLanguages.length > 0) {
       // 转换为UI格式
       uiTrackData = availableLanguages.map((track: any) => {
@@ -1775,23 +1759,21 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
           kind: normalizedKind
         };
       });
-      console.log('[popup] 源语言列表已获取:', uiTrackData);
+      console.log('[popup] 源语言列表已转换为UI格式:', uiTrackData);
     }
-    
-    // 先加载用户之前选择的源语言，设置全局变量
-    console.log('[DEBUG-LOAD-1] 准备加载用户之前的源语言选择, videoId:', currentVideoId);
-    const selectedTrack = await getSelectedSourceTrack(currentVideoId);
-    console.log('[DEBUG-LOAD-2] getSelectedSourceTrack 返回:', selectedTrack);
+
+    // ✅ 从 popupContext 加载用户之前选择的源语言
+    const selectedTrack = popupContext?.selectedSourceTrack;
+    console.log('[popup] 从 PopupContext 获取用户选择:', selectedTrack);
 
     if (selectedTrack) {
       currentSourceLang = selectedTrack.languageCode;
       currentSourceTrackKind = selectedTrack.kind === 'asr' || selectedTrack.kind === 'forced'
         ? selectedTrack.kind
         : undefined;
-      console.log('[popup] 已恢复用户选择的源语言:', selectedTrack);
-      console.log('[popup] 当前全局变量 - currentSourceLang:', currentSourceLang, 'currentSourceTrackKind:', currentSourceTrackKind);
+      console.log('[popup] ✓ 已恢复用户选择的源语言:', selectedTrack);
     } else {
-      console.log('[popup] 未找到用户之前选择的源语言，保持默认值 auto');
+      console.log('[popup] 用户未选择源语言，将使用智能选择结果');
     }
     
     // 然后填充源语言选择器（此时 currentSourceLang 已经设置正确）
@@ -1826,12 +1808,12 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
 async function handleDetectedSourceLanguage(detectedLang: string): Promise<void> {
   try {
     console.log('[popup] 处理检测到的源语言:', detectedLang);
-    
-    // 自动设置源语言（如果用户没有手动选择过）
-    // 使用与loadSourceLanguageData相同的检查机制
-    const savedSourceTrack = await getSelectedSourceTrack(currentVideoId || '');
-    
-    if (!savedSourceTrack && detectedLang !== 'auto') {
+
+    // ✅ 自动设置源语言（如果用户没有手动选择过）
+    // 注意：不再读取缓存，依赖全局变量 currentSourceLang
+    const hasUserSelection = currentSourceLang && currentSourceLang !== 'auto';
+
+    if (!hasUserSelection && detectedLang !== 'auto') {
       // 在uiTrackData中查找对应的轨道
       const detectedTrack = uiTrackData.find(track => track.languageCode === detectedLang);
       
@@ -2447,88 +2429,11 @@ function calculateDeepLBatchDelay(tier: 'free' | 'pro'): number {
 
 // === 步骤2：源语言缓存管理函数 ===
 
-/**
- * 获取视频的可用源语言列表（Local Storage → API）
- * 只返回元数据，不包含baseUrl
- */
-async function getAvailableSourceLanguages(videoId: string): Promise<TrackMetadata[]> {
-  try {
-    // 1. 检查Local Storage缓存
-    const result = await chrome.storage.local.get('video_source_language_cache');
-    const cache: VideoSourceLanguageCache = result.video_source_language_cache || { items: [], maxSize: 10 };
-    
-    // 查找该视频的缓存
-    const cachedItem = cache.items.find(item => item.videoId === videoId);
-    if (cachedItem && cachedItem.availableSourceLanguages.length > 0) {
-      console.log('[popup] 使用缓存的源语言列表:', cachedItem.availableSourceLanguages);
-      return cachedItem.availableSourceLanguages;
-    }
-    
-    // 2. Local Storage没有，调用API获取
-    console.log('[popup] 缓存未命中，从API获取源语言列表...');
-    
-    if (!currentTabId) {
-      console.error('[popup] currentTabId为空，无法发送消息');
-      return [];
-    }
-    
-    const response = await chrome.tabs.sendMessage(currentTabId, {
-      type: 'getVideoTrackData',
-      videoId
-    });
-    
-    const trackList = response?.tracks ?? response?.trackData;
+// ❌ 已删除：getAvailableSourceLanguages() - 违反单一数据源架构
+// ✅ 改用：从 popupContext.availableSourceLanguages 获取数据
 
-    if (response && response.success && Array.isArray(trackList)) {
-      // 3. 转换为TrackMetadata格式（不含baseUrl）
-      const availableSourceLanguages: TrackMetadata[] = trackList.map((track: any) => ({
-        languageCode: track.languageCode || 'unknown',
-        name: track.languageName || track.name || 'Unknown',
-        kind: track.kind
-        // 注意：不存储 baseUrl
-      }));
-      
-      // 4. 存储到缓存（只存储元数据）
-      await saveVideoSourceLanguageCache(videoId, availableSourceLanguages, null);
-      
-      console.log('[popup] API获取源语言列表成功:', availableSourceLanguages);
-      return availableSourceLanguages;
-    }
-    
-    console.warn('[popup] API返回数据无效:', response);
-    return [];
-    
-  } catch (error) {
-    console.error('[popup] 获取源语言列表失败:', error);
-    return [];
-  }
-}
-
-/**
- * 获取用户选择的源语言轨道
- * 只返回元数据，不包含baseUrl
- */
-async function getSelectedSourceTrack(videoId: string): Promise<TrackMetadata | null> {
-  console.log('[DEBUG-READ-1] getSelectedSourceTrack 被调用, videoId:', videoId);
-  try {
-    const result = await chrome.storage.local.get('video_source_language_cache');
-    console.log('[DEBUG-READ-2] 从 chrome.storage.local 读取到的原始数据:', result);
-    const cache: VideoSourceLanguageCache = result.video_source_language_cache || { items: [], maxSize: 10 };
-
-    console.log('[DEBUG-READ-3] 解析后的缓存对象:', cache);
-    console.log('[DEBUG-READ-4] 缓存中的所有项:', cache.items);
-
-    const cachedItem = cache.items.find(item => item.videoId === videoId);
-    console.log('[DEBUG-READ-5] 找到的缓存项:', cachedItem);
-
-    const selectedTrack = cachedItem?.selectedSourceTrack || null;
-    console.log('[DEBUG-READ-6] 提取的 selectedSourceTrack:', selectedTrack);
-    return selectedTrack;
-  } catch (error) {
-    console.error('[popup] 获取选中源语言失败:', error);
-    return null;
-  }
-}
+// ❌ 已删除：getSelectedSourceTrack() - 违反单一数据源架构
+// ✅ 改用：从 popupContext.selectedSourceTrack 获取数据
 
 /**
  * 保存源语言缓存（FIFO策略）
@@ -2574,26 +2479,19 @@ async function saveVideoSourceLanguageCache(
  */
 async function saveSelectedSourceTrack(videoId: string, selectedTrack: TrackMetadata): Promise<void> {
   try {
-    // 获取当前缓存
-    let availableLanguages = await getAvailableSourceLanguages(videoId);
+    // ✅ 使用 uiTrackData（已从 popupContext 加载）构建轨道列表
+    const availableLanguages = uiTrackData
+      .filter(track => track.languageCode !== 'auto')
+      .map(track => ({
+        languageCode: track.languageCode,
+        name: track.languageName,
+        kind: track.kind === 'asr' || track.kind === 'forced' ? track.kind : undefined
+      }));
 
-    // 如果通过API/缓存未能获取到列表，退化为使用当前UI数据（剔除自动检测项）
-    if (!availableLanguages || availableLanguages.length === 0) {
-      availableLanguages = uiTrackData
-        .filter(track => track.languageCode !== 'auto')
-        .map(track => ({
-          languageCode: track.languageCode,
-          name: track.languageName,
-          kind: track.kind === 'asr' || track.kind === 'forced' ? track.kind : undefined
-        }));
-      console.log('[popup] saveSelectedSourceTrack: 使用UI数据回填源语言列表');
-    }
-    
     console.log('[popup][source] saveSelectedSourceTrack 入参', {
       videoId,
       selectedTrack,
-      availableCount: availableLanguages.length,
-      availableLanguages
+      availableCount: availableLanguages.length
     });
 
     // 更新选中的轨道
@@ -2602,9 +2500,10 @@ async function saveSelectedSourceTrack(videoId: string, selectedTrack: TrackMeta
       kind: selectedTrack.kind === 'asr' || selectedTrack.kind === 'forced' ? selectedTrack.kind : undefined
     };
 
+    // ✅ 通过消息通知 Service Worker 保存
     await saveVideoSourceLanguageCache(videoId, availableLanguages, sanitizedSelected);
-    
-    console.log('[popup] 用户选择的源语言已保存:', selectedTrack);
+
+    console.log('[popup] ✓ 用户选择的源语言已保存:', selectedTrack);
   } catch (error) {
     console.error('[popup] 保存用户选择失败:', error);
   }
@@ -2625,12 +2524,9 @@ async function initializePopupUI(): Promise<void> {
     console.log(`[popup] 当前标签页ID: ${currentTabId}`);
     
     // 2. 检查是否为YouTube页面
-    console.log('[DEBUG-INIT] 检查URL:', tab.url);
-    console.log('[DEBUG-INIT] isYoutubeUrl结果:', tab.url ? isYoutubeUrl(tab.url) : 'URL为空');
     if (tab.url && isYoutubeUrl(tab.url)) {
       isYouTubePage = true;
       currentVideoId = extractVideoIdFromUrl(tab.url);
-      console.log('[DEBUG-INIT] extractVideoIdFromUrl返回:', currentVideoId);
       console.log(`[popup] YouTube页面，视频ID: ${currentVideoId || '未检测到'}`);
       
       // 初始化YouTube功能界面

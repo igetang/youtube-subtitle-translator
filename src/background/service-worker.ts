@@ -1095,6 +1095,7 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
         languageListState: { isLocked: false }
       },
       availableSourceLanguages,
+      selectedSourceTrack: lastSelectedTrack,  // 添加用户上次选择的源语言轨道
       isAdPlaying
     };
     
@@ -1127,12 +1128,14 @@ async function handleUpdateVideoSourceLanguage(data: any): Promise<any> {
   }
 
   try {
-    await videoSourceLanguageCacheManager.upsertFromPopup({
+    // ✅ 统一使用 set() 方法（包含 upsert 逻辑）
+    await videoSourceLanguageCacheManager.set({
       videoId,
-      availableSourceLanguages,
-      selectedSourceTrack
+      availableSourceLanguages: availableSourceLanguages || [],
+      selectedSourceTrack: selectedSourceTrack || undefined
     });
 
+    console.log(`[service-worker] ✓ 视频源语言已保存: ${videoId}, 源语言: ${selectedSourceTrack?.languageCode || 'auto'}`);
     return { success: true };
   } catch (error) {
     console.error('[service-worker] updateVideoSourceLanguage 失败:', error);

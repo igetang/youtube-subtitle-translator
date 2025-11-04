@@ -57,10 +57,12 @@
 - `CLAUDE.md` - 新增2.1节视频源语言缓存架构
 - `PROJECT_CONTEXT.md` - 本条记录
 
-**下一步**：
-- 实施代码重构（删除Popup中的getAvailableSourceLanguages和saveVideoSourceLanguageCache）
-- 统一Cache Manager接口（合并set和upsertFromPopup为upsert）
-- 修改initialize()不主动写入空数据
+**代码实施**（2025-11-04完成）：
+- ✅ 删除Popup中违规函数（getAvailableSourceLanguages、getSelectedSourceTrack）
+- ✅ Popup改为完全依赖popupContext获取数据
+- ✅ Service Worker统一使用set()方法保存缓存
+- ✅ 清理调试日志，优化代码注释
+- ✅ 提交记录：8c8d0d2（代码净减少91行）
 
 ### 最近修复的Bug (2025-10-30)
 
