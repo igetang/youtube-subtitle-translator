@@ -632,6 +632,14 @@ export async function handleToggleTranslateV4(
                 if (!resolved) {
                   resolved = true;
                   chrome.runtime.onMessage.removeListener(messageListener);
+
+                  // 检查是否为拦截器超时错误
+                  if (message.data?.error === 'INTERCEPTOR_TIMEOUT') {
+                    console.log('[service-worker-v4] ✗ 拦截器5秒超时，立即终止');
+                    reject(new Error('拦截器超时: ' + (message.data?.errorMessage || '5秒超时')));
+                    return true;
+                  }
+
                   console.log('[service-worker-v4] ✓ 接收字幕数据: ' +
                               (message.data?.subtitles?.length || 0) + ' 条' +
                               (message.data?.sourceLang ? ' (' + message.data.sourceLang + ')' : ''));
@@ -647,7 +655,7 @@ export async function handleToggleTranslateV4(
               if (!resolved) {
                 resolved = true;
                 chrome.runtime.onMessage.removeListener(messageListener);
-                reject(new StageTimeoutError('subtitle_fetch', 5000));
+                reject(new StageTimeoutError('subtitle_fetch', 15000));
               }
             });
           });

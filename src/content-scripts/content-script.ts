@@ -907,6 +907,24 @@ function setupMessageHandlers(): void {
     // 处理拦截器超时
     if (source === 'main-world' && type === 'INTERCEPTOR_TIMEOUT') {
       console.warn('[content-script] ⏱️ 拦截器超时自动销毁:', payload);
+
+      // 立即通知Service Worker失败（避免Service Worker继续等待15秒）
+      const videoId = getVideoId();
+      if (videoId) {
+        console.log('[content-script] → 向Service Worker发送超时失败通知');
+        chrome.runtime.sendMessage({
+          type: 'SUBTITLE_DATA',
+          data: {
+            videoId: videoId,
+            subtitles: [],
+            error: 'INTERCEPTOR_TIMEOUT',
+            errorMessage: '拦截器5秒超时'
+          }
+        }).catch(err => {
+          console.error('[content-script] 发送超时通知失败:', err);
+        });
+      }
+
       showErrorMessage({
         message: '字幕获取超时',
         level: 'warning',
