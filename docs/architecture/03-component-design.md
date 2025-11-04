@@ -203,7 +203,8 @@ class VideoSourceLanguageCacheManager {
    - **即使命中，也会调用 `setSubtitleTrackAPI`**（`sendSetSubtitleTrack` → `chrome.tabs.sendMessage`）同步播放器轨道，确保字幕按钮与缓存使用的源语言一致。  
    - 命中后直接切换状态为 ACTIVE 并返回缓存内容；流程在此结束。
 
-4. **Stage 3 — 轨道拉取与缓存回写**  
+4. **Stage 3 — 广告检测 + 轨道拉取**  
+   - 在真正发出轨道请求前，先通过 `checkPlayerAdState` 判断是否有广告播放；若是广告直接抛出 `ad_playing`，状态回退为 inactive 并提示用户。  
    - 未命中时，通过内容脚本的 `getVideoTrackData` → `getSubtitleTracksAPI` 获取播放器轨道。  
    - 选出最佳轨道后再次调用 `setSubtitleTrackAPI`，并异步写回 `VideoSourceLanguageCacheManager.set()`，维持 FIFO + TTL。
 

@@ -4,6 +4,22 @@
 
 ## 🎯 当前状态
 
+### 最新广告拦截流程（2025-11-06）
+
+**✅ 已完成：翻译开关广告阶段阻断（v5.24.12）**
+
+- **目标**：避免广告字幕被翻译，同时保持按钮状态与用户提示一致。
+- **实现要点**：
+  1. **入口广告检测**：Service Worker 在 Stage 0 通过 `checkPlayerAdState` 判断广告，广告播放时直接回退 `translateActive` 为 inactive 并提示“广告播放中，翻译已暂停”。
+  2. **全链路消息扩展**：新增 `CHECK_AD_STATUS` 消息，Content Script 与 Main World 都会在 `GET_SUBTITLE_TRACKS_API` / `SET_SUBTITLE_TRACK_API` 前检测广告，并返回 `reason: 'ad_playing'`。
+  3. **Popup UX 优化**：广告期间源语言下拉被锁定显示“自动选择（广告播放中）”，避免用户误操作。
+- **文档同步**：
+  - `docs/guides/translation-flow.md` - 更新阶段流程，加入广告检测 Stage 0。
+  - `docs/architecture/03-component-design.md` - Stage 3 新增广告判定说明。
+  - `docs/guides/ui-button-injection-analysis.md` - 消息流与广告提示描述。
+  - 新增 `docs/guides/ad-detection-test.md` 提供控制台检测脚本。
+- **下一步**：持续验证多种广告类型（前贴、Mid-roll、覆盖式）确保流程鲁棒；如需自动恢复，可在广告结束事件上再触发一次 toggle。
+
 ### 最近完成的架构优化 (2025-11-03)
 
 **✅ 已完成：视频源语言缓存单一数据源重构（v5.24.11）** ⭐

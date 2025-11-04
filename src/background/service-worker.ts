@@ -984,11 +984,27 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
       };
     }
     
-    // 4. 获取用户偏好设置
+    // 4. 检测是否正在播放广告
+    let isAdPlaying = false;
+    try {
+      const adStateResponse = await chrome.tabs.sendMessage(tabId, {
+        type: 'checkPlayerAdState'
+      });
+      if (adStateResponse?.success) {
+        isAdPlaying = Boolean(adStateResponse.isAdPlaying);
+      } else if (typeof adStateResponse?.isAdPlaying === 'boolean') {
+        isAdPlaying = adStateResponse.isAdPlaying;
+      }
+      console.debug(`[debug][service-worker] Popup检测广告状态: ${isAdPlaying}`);
+    } catch (error) {
+      console.warn('[service-worker] 检测广告状态失败:', error);
+    }
+
+    // 5. 获取用户偏好设置
     const userPreferencesResult = await handleUserPreferencesGet({});
     const userPreferences = userPreferencesResult.success ? userPreferencesResult.data : {};
     
-    // 5. 两层缓存获取字幕轨道数据
+    // 6. 两层缓存获取字幕轨道数据
     let availableSourceLanguages = [];
     let detectedSourceLang = 'auto';
     let lastSelectedTrack: { languageCode: string; kind?: string } | null = null;  // 从 selectedSourceTrack 获取
@@ -1007,8 +1023,8 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
       console.warn(`[service-worker] Local Storage读取失败:`, error);
     }
     
-    // 层级2: Content Script API
-    if (availableSourceLanguages.length === 0) {
+    // 层级2: Content Script API（仅在非广告状态下触发）
+    if (availableSourceLanguages.length === 0 && !isAdPlaying) {
       try {
         console.debug(`[debug][service-worker] 缓存未命中，从Content Script获取`);
         const trackResponse = await chrome.tabs.sendMessage(tabId, {
@@ -1044,9 +1060,12 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
       }
     }
     
-    // 6. 智能选择源语言
+    // 7. 智能选择源语言
     // 如果用户有历史选择，使用它；否则智能选择
-    if (lastSelectedTrack) {
+    if (isAdPlaying) {
+      detectedSourceLang = 'auto';
+      console.debug('[debug][service-worker] 广告播放中，源语言保持自动检测');
+    } else if (lastSelectedTrack) {
       detectedSourceLang = lastSelectedTrack.languageCode;
       console.debug(`[debug][service-worker] 使用用户历史选择的源语言: ${detectedSourceLang}` +
         (lastSelectedTrack.kind ? ` (${lastSelectedTrack.kind})` : ''));
@@ -1065,7 +1084,7 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
       console.debug(`[debug][service-worker] 无可用轨道，保持自动检测`);
     }
     
-    // 7. 构建PopupContext
+    // 8. 构建PopupContext
     const popupContext = {
       videoId,
       tabId,
@@ -1075,7 +1094,8 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
         conflictState: { hasConflict: false },
         languageListState: { isLocked: false }
       },
-      availableSourceLanguages
+      availableSourceLanguages,
+      isAdPlaying
     };
     
     console.debug(`[debug][service-worker] PopupContext已构建:`, popupContext);

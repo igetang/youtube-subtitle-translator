@@ -47,6 +47,7 @@ class MainWorldMessenger {
     this.messageHandlers.set('REQUEST_CAPTION_TRACKS', (data) => this.handleRequestCaptionTracks(data));
     this.messageHandlers.set('GET_SUBTITLE_TRACKS_API', (data) => this.handleGetSubtitleTracksAPI(data));
     this.messageHandlers.set('SET_SUBTITLE_TRACK_API', (data) => this.handleSetSubtitleTrackAPI(data));
+    this.messageHandlers.set('CHECK_AD_STATUS', (data) => this.handleCheckAdStatus(data));
   }
 
   /**
@@ -196,11 +197,25 @@ class MainWorldMessenger {
       subtitleAPIController = new SubtitleAPIController();
     }
 
-    try {
-      const tracks = await subtitleAPIController.getAvailableTracks();
+    // 先检测广告状态
+    if (subtitleAPIController.isAdPlaying()) {
+      console.warn('[Main World] 当前处于广告阶段，返回 ad_playing');
       this.sendResponse('SUBTITLE_TRACKS_API_RESPONSE', {
-        tracks: tracks,
-        success: true
+        success: false,
+        tracks: [],
+        reason: 'ad_playing',
+        error: 'ad_playing'
+      }, requestId);
+      return;
+    }
+
+    try {
+      const result = await subtitleAPIController.getAvailableTracks();
+      this.sendResponse('SUBTITLE_TRACKS_API_RESPONSE', {
+        tracks: result.tracks,
+        success: result.success,
+        reason: result.reason,
+        error: result.error
       }, requestId);
     } catch (error: any) {
       this.sendResponse('SUBTITLE_TRACKS_API_RESPONSE', {
@@ -241,6 +256,21 @@ class MainWorldMessenger {
         reason: error?.reason || (error?.category === 'player_not_ready' ? 'player_not_ready' : undefined)
       }, requestId);
     }
+  }
+
+  /**
+   * 处理广告状态查询
+   */
+  private handleCheckAdStatus(data: any): void {
+    const requestId = data?._requestId;
+    if (!subtitleAPIController) {
+      subtitleAPIController = new SubtitleAPIController();
+    }
+    const isAdPlaying = subtitleAPIController.isAdPlaying();
+    this.sendResponse('CHECK_AD_STATUS_RESPONSE', {
+      isAdPlaying,
+      detectedAt: Date.now()
+    }, requestId);
   }
 }
 
@@ -306,6 +336,7 @@ class SubtitleAPIController {
   private captionsModule: string | null = null;
   private readonly READY_TIMEOUT_MS = 5000;
   private readonly READY_POLL_INTERVAL_MS = 250;
+  private readonly AD_CLASS_NAMES = ['ad-showing', 'ad-interrupting', 'ad-playing', 'playing-ad'];
   
   constructor() {
     this.refreshPlayerReference();
@@ -382,8 +413,18 @@ class SubtitleAPIController {
     const startTime = Date.now();
     const currentVideoId = new URLSearchParams(window.location.search).get('v');
 
+    // 如果正在播放广告，立即返回
+    if (this.isAdPlaying()) {
+      console.warn('[SubtitleAPIController] 当前处于广告阶段，跳过字幕轨道设置');
+      return { ready: false, reason: 'ad_playing' };
+    }
+
     while (Date.now() - startTime < timeoutMs) {
       this.refreshPlayerReference();
+      if (this.isAdPlaying()) {
+        console.warn('[SubtitleAPIController] 等待播放器就绪时检测到广告播放');
+        return { ready: false, reason: 'ad_playing' };
+      }
       if (this.isPlayerReady()) {
         return { ready: true };
       }
@@ -392,6 +433,10 @@ class SubtitleAPIController {
 
     // 最后再尝试一次
     this.refreshPlayerReference();
+    if (this.isAdPlaying()) {
+      console.warn('[SubtitleAPIController] 等待播放器就绪超时并检测到广告播放');
+      return { ready: false, reason: 'ad_playing' };
+    }
     if (this.isPlayerReady()) {
       return { ready: true };
     }
@@ -399,15 +444,57 @@ class SubtitleAPIController {
     console.warn(`[SubtitleAPIController] ⏱️ 等待播放器就绪超时 (videoId: ${currentVideoId}, timeout: ${timeoutMs}ms)`);
     return { ready: false, reason: 'timeout' };
   }
+
+  /**
+   * 判断当前是否有广告播放
+   */
+  public isAdPlaying(): boolean {
+    this.refreshPlayerReference();
+    if (!this.player) {
+      return false;
+    }
+
+    try {
+      const classList: DOMTokenList | undefined = this.player.classList;
+      if (classList) {
+        const hasAdClass = this.AD_CLASS_NAMES.some(cls => classList.contains(cls));
+        if (hasAdClass) {
+          return true;
+        }
+      }
+
+      if (typeof this.player.getVideoData === 'function') {
+        const videoData = this.player.getVideoData();
+        if (videoData?.isAdPlaying === true) {
+          return true;
+        }
+      }
+
+      if (typeof this.player.getAdState === 'function') {
+        const adState = this.player.getAdState();
+        if (adState !== undefined && adState !== -1) {
+          return true;
+        }
+      }
+    } catch (error) {
+      console.warn('[SubtitleAPIController] 检测广告状态失败:', error);
+    }
+
+    return false;
+  }
   
   /**
    * 获取可用的字幕轨道列表（使用ISO 639-1语言代码）
    */
-  async getAvailableTracks(): Promise<any[]> {
+  async getAvailableTracks(): Promise<{ success: boolean; tracks: any[]; reason?: string; error?: string }> {
     const readyResult = await this.waitForPlayerReady(3000);
     if (!readyResult.ready) {
-      console.warn('[SubtitleAPIController] 播放器未就绪，无法获取轨道列表');
-      return [];
+      console.warn(`[SubtitleAPIController] 播放器未就绪，无法获取轨道列表 (reason: ${readyResult.reason})`);
+      return {
+        success: false,
+        tracks: [],
+        reason: readyResult.reason
+      };
     }
 
     try {
@@ -429,14 +516,18 @@ class SubtitleAPIController {
 
       if (!tracks || !Array.isArray(tracks) || tracks.length === 0) {
         console.warn(`[SubtitleAPIController] ⚠️ tracklist加载超时或为空，已等待${retries * 500}ms (videoId: ${currentVideoId})`);
-        return [];
+        return {
+          success: false,
+          tracks: [],
+          reason: 'tracklist_empty'
+        };
       }
 
       console.log(`[SubtitleAPIController] ✓ tracklist已加载，获取到 ${tracks.length} 个字幕轨道 (videoId: ${currentVideoId}, 等待: ${retries * 500}ms)`);
 
       if (tracks && Array.isArray(tracks)) {
         // 返回包含ISO 639-1语言代码的轨道信息
-        return tracks.map(track => {
+        const normalizedTracks = tracks.map(track => {
           const rawKind = track.kind;
           const normalizedKind = rawKind === 'asr' || rawKind === 'forced' ? rawKind : undefined;
           return {
@@ -448,12 +539,24 @@ class SubtitleAPIController {
             vssId: track.vss_id || track.vssId || ''
           };
         });
+        return {
+          success: true,
+          tracks: normalizedTracks
+        };
       }
       
-      return [];
+      return {
+        success: true,
+        tracks: []
+      };
     } catch (error) {
       console.error('[SubtitleAPIController] 获取字幕轨道失败:', error);
-      return [];
+      return {
+        success: false,
+        tracks: [],
+        reason: 'exception',
+        error: (error as Error)?.message
+      };
     }
   }
   
@@ -463,12 +566,21 @@ class SubtitleAPIController {
    * @param kind 字幕类型，如: asr (自动生成), 无值表示人工字幕
    */
   async setSubtitleTrack(langCode: string, kind?: string): Promise<{ success: boolean; reason?: string; error?: string }> {
-    const readyResult = await this.waitForPlayerReady(this.READY_TIMEOUT_MS);
-    if (!readyResult.ready) {
-      console.error('[SubtitleAPIController] 播放器或模块未就绪，设置字幕失败');
+    if (this.isAdPlaying()) {
+      console.warn('[SubtitleAPIController] 当前正在播放广告，跳过字幕切换');
       return {
         success: false,
-        reason: 'player_not_ready'
+        reason: 'ad_playing'
+      };
+    }
+
+    const readyResult = await this.waitForPlayerReady(this.READY_TIMEOUT_MS);
+    if (!readyResult.ready) {
+      const failureReason = readyResult.reason || 'player_not_ready';
+      console.error(`[SubtitleAPIController] 播放器或模块未就绪，设置字幕失败 (reason: ${failureReason})`);
+      return {
+        success: false,
+        reason: failureReason
       };
     }
 

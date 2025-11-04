@@ -408,21 +408,25 @@ class SubtitleAPIController {
 }
 ```
 
-### API消息处理流程
+### API消息处理流程（含广告检测）
 
-1. **Service Worker发起请求**
-   - 发送`getSubtitleTracksAPI`或`setSubtitleTrackAPI`消息
+1. **Service Worker 入口判定**
+   - 首先发送 `checkPlayerAdState`；广告播放时直接提示用户并回退按钮状态。
+   - 非广告情况下才继续 `getVideoTrackData` / `getSubtitleTracksAPI`。
 
-2. **Content Script中转**
-   - 接收Service Worker消息
-   - 通过window.postMessage发送到main-world
+2. **Content Script 中转**
+   - 接收 Service Worker 消息，先本地再次检查广告（避免 race）。
+   - 通过 `window.postMessage` 转发 `CHECK_AD_STATUS`、`GET_SUBTITLE_TRACKS_API`、`SET_SUBTITLE_TRACK_API` 等消息到 main-world。
 
-3. **Main World执行API调用**
-   - SubtitleAPIController调用YouTube Player API
-   - 返回结果给Content Script
+3. **Main World 执行 API 调用**
+   - `SubtitleAPIController` 先根据 `classList` / `getVideoData().isAdPlaying` 判断广告。
+   - 广告阶段返回 `{ success:false, reason:'ad_playing' }`；否则调用 YouTube Player API。
 
-4. **Content Script响应**
-   - 将结果返回给Service Worker
+4. **Content Script 响应**
+   - 将结果原样返回给 Service Worker，保留 `reason`（如 `ad_playing` / `player_not_ready`）。
+
+5. **Service Worker 终态处理**
+   - 收到 `reason` 后决定是否继续流程或提示用户。
 
 ## 总结
 

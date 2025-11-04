@@ -857,6 +857,12 @@ function setupMessageHandlers(): void {
       handleSetSubtitleTrackAPI(message.langCode, message.kind, sendResponse);
       return true; // 异步响应
     }
+
+    // 检测播放器广告状态
+    if (messageType === 'checkPlayerAdState') {
+      handleCheckPlayerAdState(sendResponse);
+      return true;
+    }
     
     // 转发其他消息给UI组件（这些消息会在handleChromeMessage中打印日志，这里不再重复打印）
     if (uiRenderer || stateManager) {
@@ -927,6 +933,14 @@ function setupMessageHandlers(): void {
           apiResponseHandlers.delete(_requestId);
         }
       }
+
+      if (type === 'CHECK_AD_STATUS_RESPONSE' && _requestId) {
+        const handler = apiResponseHandlers.get(_requestId);
+        if (handler) {
+          handler(payload);
+          apiResponseHandlers.delete(_requestId);
+        }
+      }
     }
   });
 }
@@ -944,54 +958,98 @@ function handleGetSubtitleTracksAPI(sendResponse: (response: any) => void): void
   console.log(`[content-script] 🔍 handleGetSubtitleTracksAPI - 当前videoId: ${currentVideoId}`);
   console.debug('[debug][content-script] 开始通过API获取字幕轨道');
 
-  const requestId = `api_tracks_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  const requestVideoId = currentVideoId;
-
-  const timeout = setTimeout(() => {
-    apiResponseHandlers.delete(requestId);
-    console.warn(`[content-script] getSubtitleTracksAPI 超时，requestId: ${requestId}, videoId: ${requestVideoId}`);
-    sendResponse({
-      success: false,
-      error: 'API获取字幕轨道超时',
-      requestId,
-      videoId: requestVideoId ?? undefined
-    });
-  }, 5000);
-  
-  // 设置响应处理器
-  apiResponseHandlers.set(requestId, (response) => {
-    clearTimeout(timeout);
-    apiResponseHandlers.delete(requestId);
-
-    const latestVideoId = getVideoId();
-    if (latestVideoId !== requestVideoId) {
-      console.warn('[content-script] 忽略过期的轨道响应', {
-        requestId,
-        expectedVideoId: requestVideoId,
-        latestVideoId
-      });
+  handleCheckPlayerAdState((adResult) => {
+    if (adResult?.success && adResult.isAdPlaying) {
+      console.warn('[content-script] 检测到广告播放，跳过轨道获取');
       sendResponse({
         success: false,
-        error: 'video_changed',
-        reason: 'video_changed',
-        requestId,
-        videoId: latestVideoId ?? undefined
+        reason: 'ad_playing',
+        error: 'ad_playing',
+        videoId: currentVideoId ?? undefined
       });
       return;
     }
 
+    const requestId = `api_tracks_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const requestVideoId = currentVideoId;
+
+    const timeout = setTimeout(() => {
+      apiResponseHandlers.delete(requestId);
+      console.warn(`[content-script] getSubtitleTracksAPI 超时，requestId: ${requestId}, videoId: ${requestVideoId}`);
+      sendResponse({
+        success: false,
+        error: 'API获取字幕轨道超时',
+        requestId,
+        videoId: requestVideoId ?? undefined
+      });
+    }, 5000);
+    
+    // 设置响应处理器
+    apiResponseHandlers.set(requestId, (response) => {
+      clearTimeout(timeout);
+      apiResponseHandlers.delete(requestId);
+
+      const latestVideoId = getVideoId();
+      if (latestVideoId !== requestVideoId) {
+        console.warn('[content-script] 忽略过期的轨道响应', {
+          requestId,
+          expectedVideoId: requestVideoId,
+          latestVideoId
+        });
+        sendResponse({
+          success: false,
+          error: 'video_changed',
+          reason: 'video_changed',
+          requestId,
+          videoId: latestVideoId ?? undefined
+        });
+        return;
+      }
+
+      sendResponse({
+        ...response,
+        requestId,
+        videoId: requestVideoId ?? undefined
+      });
+    });
+    
+    // 发送消息到main-world
+    window.postMessage({
+      source: 'content-script',
+      type: 'GET_SUBTITLE_TRACKS_API',
+      videoId: requestVideoId,
+      _requestId: requestId
+    }, '*');
+  });
+}
+
+/**
+ * 检测播放器广告状态
+ */
+function handleCheckPlayerAdState(sendResponse: (response: any) => void): void {
+  const requestId = `ad_status_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+  const timeout = setTimeout(() => {
+    apiResponseHandlers.delete(requestId);
     sendResponse({
-      ...response,
-      requestId,
-      videoId: requestVideoId ?? undefined
+      success: false,
+      error: 'CHECK_AD_STATUS_TIMEOUT'
+    });
+  }, 3000);
+
+  apiResponseHandlers.set(requestId, (response) => {
+    clearTimeout(timeout);
+    apiResponseHandlers.delete(requestId);
+    sendResponse({
+      success: true,
+      isAdPlaying: Boolean(response?.isAdPlaying),
+      detectedAt: response?.detectedAt ?? Date.now()
     });
   });
-  
-  // 发送消息到main-world
+
   window.postMessage({
     source: 'content-script',
-    type: 'GET_SUBTITLE_TRACKS_API',
-    videoId: requestVideoId,
+    type: 'CHECK_AD_STATUS',
     _requestId: requestId
   }, '*');
 }

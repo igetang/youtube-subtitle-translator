@@ -810,6 +810,7 @@ let uiTrackData: Array<{ languageCode: string; languageName: string; kind?: 'asr
 let uiLangCode: string | null = null;
 let serviceCardTitle: HTMLSpanElement | null = null;
 let serviceCardBadge: HTMLSpanElement | null = null;
+let isAdPlayback = false;
 
 // === Port连接管理 ===
 const port = chrome.runtime.connect({ name: 'popup-lifecycle' });
@@ -1386,6 +1387,10 @@ function addEventListeners(): void {
   // 源语言下拉菜单
   if (sourceLangTrigger) {
     sourceLangTrigger.addEventListener('click', () => {
+      if (isAdPlayback || sourceLangTrigger.classList.contains('disabled')) {
+        console.log('[popup] 广告播放中，源语言选择已禁用');
+        return;
+      }
       if (sourceLangPanel) {
         const isVisible = sourceLangPanel.style.display === 'block';
         sourceLangPanel.style.display = isVisible ? 'none' : 'block';
@@ -1733,6 +1738,18 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
       console.log('[DEBUG-LOAD] currentVideoId确实为空，无法继续');
       return;
     }
+
+    isAdPlayback = Boolean(popupContext?.isAdPlaying);
+    if (isAdPlayback) {
+      console.log('[popup] 广告播放中，源语言选择器禁用');
+      uiTrackData = [];
+      currentSourceLang = 'auto';
+      currentSourceTrackKind = undefined;
+      setSourceLanguageSelectorDisabled(true);
+      return;
+    } else {
+      setSourceLanguageSelectorDisabled(false);
+    }
     
     // 优先使用 popupContext 中的数据，如果没有则从本地缓存获取
     let availableLanguages = [];
@@ -1890,7 +1907,33 @@ function generateLanguageDisplayName(trackInfo: {
 /**
  * 填充源语言选项
  */
+function setSourceLanguageSelectorDisabled(disabled: boolean, message?: string): void {
+  if (!sourceLangTrigger || !sourceLangSelectedValue) {
+    return;
+  }
+
+  if (disabled) {
+    sourceLangTrigger.classList.add('disabled');
+    sourceLangTrigger.setAttribute('aria-disabled', 'true');
+    const displayText = message || '自动选择（广告播放中）';
+    sourceLangSelectedValue.textContent = displayText;
+    sourceLangSelectedValue.setAttribute('data-value', 'auto');
+    sourceLangSelectedValue.removeAttribute('data-kind');
+    if (sourceLangPanel) {
+      sourceLangPanel.style.display = 'none';
+    }
+  } else {
+    sourceLangTrigger.classList.remove('disabled');
+    sourceLangTrigger.removeAttribute('aria-disabled');
+  }
+}
+
 function populateSourceLanguages(searchTerm: string = ''): void {
+  if (isAdPlayback) {
+    console.log('[popup] 广告播放中，源语言列表禁用');
+    return;
+  }
+
   if (!sourceLangOptions) {
     console.warn('[popup] populateSourceLanguages: sourceLangOptions元素不存在');
     return;

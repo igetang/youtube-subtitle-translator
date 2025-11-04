@@ -67,6 +67,17 @@
 
 ---
 
+## [5.24.12] - 2025-11-06
+
+### 🚫 广告阶段翻译拦截
+- **新增 Stage 0**：在 `handleToggleTranslateV4` 中先通过 `checkPlayerAdState` 判断广告，广告播放时直接回退按钮为 inactive 并提示用户。
+- **消息链扩展**：Content Script 与 Main World 增加 `CHECK_AD_STATUS`，只要检测到广告即返回 `reason: 'ad_playing'`，阻断后续轨道/字幕请求。
+- **字幕逻辑同步**：广告状态会一路透传到 Service Worker，避免继续触发 `REQUEST_SUBTITLE_CAPTURE`。
+- **Popup UX**：广告阶段源语言选择器固定为“自动选择（广告播放中）”并锁定下拉。
+- **文档同步**：更新 `docs/guides/translation-flow.md`、`docs/architecture/03-component-design.md`、`docs/guides/ui-button-injection-analysis.md` 描述广告拦截流程；新增 `docs/guides/ad-detection-test.md`。
+
+---
+
 ## [4.0.1] - 2025-10-30
 
 ### 🐛 **Bug 修复**

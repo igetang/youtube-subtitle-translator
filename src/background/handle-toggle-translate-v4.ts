@@ -82,13 +82,19 @@ export async function handleToggleTranslateV4(
       action: 'error',
       error: '无法获取标签页信息'
     };
-
-    const handlePlayerNotReady = () => {
-      const notReadyError: any = new Error('播放器尚未就绪，请稍后手动重新开启翻译');
-      notReadyError.category = 'player_not_ready';
-      throw notReadyError;
-    };
   }
+
+  const handlePlayerNotReady = () => {
+    const notReadyError: any = new Error('播放器尚未就绪，请稍后手动重新开启翻译');
+    notReadyError.category = 'player_not_ready';
+    throw notReadyError;
+  };
+
+  const handleAdPlaying = () => {
+    const adError: any = new Error('检测到广告播放，翻译已暂停');
+    adError.category = 'ad_playing';
+    throw adError;
+  };
   
   const sessionId = `translate_${tabId}_${videoId}`;
   
@@ -240,10 +246,12 @@ export async function handleToggleTranslateV4(
 
         if (setResult?.reason === 'player_not_ready') {
           console.warn('[service-worker-v4] setSubtitleTrackAPI 返回播放器未就绪，终止自动恢复', setResult);
-          return {
-            success: false,
-            reason: 'player_not_ready'
-          };
+          handlePlayerNotReady();
+        }
+
+        if (setResult?.reason === 'ad_playing') {
+          console.warn('[service-worker-v4] setSubtitleTrackAPI 返回广告播放状态，终止自动恢复', setResult);
+          handleAdPlaying();
         }
 
         console.warn('[service-worker-v4] setSubtitleTrackAPI 返回失败，将依赖字幕按钮触发', setResult);
@@ -255,11 +263,11 @@ export async function handleToggleTranslateV4(
       } catch (apiError) {
         if ((apiError as any)?.category === 'player_not_ready') {
           console.warn('[service-worker-v4] setSubtitleTrackAPI 抛出播放器未就绪错误', apiError);
-          return {
-            success: false,
-            reason: 'player_not_ready',
-            error: (apiError as Error)?.message
-          };
+          handlePlayerNotReady();
+        }
+        if ((apiError as any)?.category === 'ad_playing') {
+          console.warn('[service-worker-v4] setSubtitleTrackAPI 抛出广告播放状态错误', apiError);
+          handleAdPlaying();
         }
         console.warn('[service-worker-v4] setSubtitleTrackAPI 调用异常，将依赖字幕按钮触发', apiError);
         return {
@@ -286,6 +294,9 @@ export async function handleToggleTranslateV4(
       const cachedTrackResult = await sendSetSubtitleTrack(sourceLanguageCode, sourceKind);  // ✅ YouTube API使用code
       if (!cachedTrackResult.success && cachedTrackResult.reason === 'player_not_ready') {
         handlePlayerNotReady();
+      }
+      if (!cachedTrackResult.success && cachedTrackResult.reason === 'ad_playing') {
+        handleAdPlaying();
       }
 
       // 解析缓存的VTT数据为SubtitleEntry数组
@@ -425,6 +436,13 @@ export async function handleToggleTranslateV4(
           { timeoutMs: 15000 }
         );
 
+        if (trackResponse?.reason === 'player_not_ready') {
+          handlePlayerNotReady();
+        }
+        if (trackResponse?.reason === 'ad_playing') {
+          handleAdPlaying();
+        }
+
         if (trackResponse?.success && trackResponse.tracks?.length > 0) {
           try {
             const trackSnapshot = trackResponse.tracks.slice(0, 6).map((track: any) => ({
@@ -462,6 +480,9 @@ export async function handleToggleTranslateV4(
           if (!trackSwitchResult.success && trackSwitchResult.reason === 'player_not_ready') {
             handlePlayerNotReady();
           }
+          if (!trackSwitchResult.success && trackSwitchResult.reason === 'ad_playing') {
+            handleAdPlaying();
+          }
 
           // 异步缓存轨道信息（不阻塞主流程）
           Promise.resolve().then(async () => {
@@ -488,11 +509,23 @@ export async function handleToggleTranslateV4(
         } else {
           const failureReason = trackResponse?.reason || 'no_tracks';
           console.warn(`[service-worker-v4] ✗ 未获取到字幕轨道，reason=${failureReason} | requestId: ${trackResponse?.requestId ?? 'n/a'}`);
+          if (failureReason === 'player_not_ready') {
+            handlePlayerNotReady();
+          }
+          if (failureReason === 'ad_playing') {
+            handleAdPlaying();
+          }
           sourceLanguageCode = 'auto';
           sourceLanguageName = 'auto';
         }
-      } catch (error) {
+      } catch (error: any) {
         console.warn('[service-worker-v4] 获取轨道信息失败，继续使用auto:', error);
+        if (error?.category === 'player_not_ready') {
+          handlePlayerNotReady();
+        }
+        if (error?.category === 'ad_playing') {
+          handleAdPlaying();
+        }
         sourceLanguageCode = 'auto';
         sourceLanguageName = 'auto';
       }
@@ -502,6 +535,9 @@ export async function handleToggleTranslateV4(
       const finalTrackResult = await sendSetSubtitleTrack(sourceLanguageCode, sourceKind);  // ✅ YouTube API使用code
       if (!finalTrackResult.success && finalTrackResult.reason === 'player_not_ready') {
         handlePlayerNotReady();
+      }
+      if (!finalTrackResult.success && finalTrackResult.reason === 'ad_playing') {
+        handleAdPlaying();
       }
     }
 
@@ -873,7 +909,11 @@ export async function handleToggleTranslateV4(
     let userMessage = '';
     let errorLevel = ErrorLevel.ERROR;
 
-    if (isTimeoutError(error)) {
+    if ((error as any)?.category === 'ad_playing') {
+      userMessage = '检测到广告播放，翻译已暂停，请在广告结束后重新开启。';
+      errorLevel = ErrorLevel.INFO;
+      console.log('[service-worker-v4] 广告播放期间停止翻译');
+    } else if (isTimeoutError(error)) {
       userMessage = getUserFriendlyMessage(error);
       errorLevel = getErrorLevel(error);
       console.log('[service-worker-v4] 超时错误:', error.stage);

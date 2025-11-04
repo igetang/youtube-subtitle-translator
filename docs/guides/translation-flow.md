@@ -212,7 +212,13 @@ await runtimeStateManager.setTranslateState(TranslateActiveState.PENDING);
 const preferences = await userPreferencesManager.getUserPreferences();
 const sourceCache = await videoSourceLanguageCacheManager.get(videoId);
 
-// Step 3: 获取字幕轨道（单一入口，带 requestId）
+// Step 3: 判断广告状态（新增 Stage 0）
+const adStatus = await sendMessageWithSignal(tabId, { type: 'checkPlayerAdState' }, signal);
+if (adStatus?.isAdPlaying) {
+  throw new Error('ad_playing');
+}
+
+// Step 4: 获取字幕轨道（单一入口，带 requestId）
 const trackResponse = await session.executeStage('get_tracks', async (signal) => {
   const requestId = `get_tracks_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -236,22 +242,23 @@ const trackResponse = await session.executeStage('get_tracks', async (signal) =>
   return { ...(fromPlayerApi ?? fromPlayerResponse ?? {}), requestId, trackSource: 'playerApi' };
 }, { timeoutMs: 15000 });
 
-// Step 4: 智能选择源语言 + 缓存写入
+// Step 5: 智能选择源语言 + 缓存写入
 const sourceTrack = selectBestSourceLanguage(trackResponse.tracks, preferences.targetLang, sourceCache?.selectedSourceTrack);
 await videoSourceLanguageCacheManager.set({ videoId, ...sourceTrackMetadata });
 
-// Step 5: 设置字幕轨道（只负责执行，不再重复校验）
+// Step 6: 设置字幕轨道（只负责执行，不再重复校验）
 await sendMessageWithSignal(tabId, {
   type: 'setSubtitleTrackAPI',
   langCode: sourceTrack.languageCode,
   kind: sourceTrack.kind
 }, session.createStageSignal('set_track', 5000));
 
-// Step 6: 获取字幕内容 → 翻译 → 写入缓存 → 设置 ACTIVE 状态
+// Step 7: 获取字幕内容 → 翻译 → 写入缓存 → 设置 ACTIVE 状态
 ```
 
 **核心变化（对比 v5.24.10 以前的流程）**
 
+- Service Worker 在真正发起轨道请求前，会先判断广告状态；广告播放中直接抛出 `ad_playing`，翻译按钮保持 inactive。
 - Service Worker 是**唯一**获取/验证轨道的层级，先访问 `playerResponse`，不足时再落到 Player API；所有请求共享 `_requestId + videoId`，并受 `AbortController` 统一管理。
 - Content Script 在收到响应时会校验 `_requestId` 与当前 `videoId`：若用户已跳到下一条视频，则忽略并向 Service Worker 返回 `video_changed`，避免 “下一条视频吃到上一条轨道”。
 - Main World 的 `SubtitleAPIController.setSubtitleTrack` 只负责 `setOption`，不再同步等待 `tracklist` 加载；tracklist 验证已经在 Service Worker 完成。
