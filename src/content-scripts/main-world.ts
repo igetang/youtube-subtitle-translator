@@ -226,16 +226,19 @@ class MainWorldMessenger {
     }
 
     try {
-      const success = await subtitleAPIController.setSubtitleTrack(langCode, kind);
+      const result = await subtitleAPIController.setSubtitleTrack(langCode, kind);
       this.sendResponse('SET_SUBTITLE_TRACK_API_RESPONSE', {
-        success: success,
+        success: result.success,
         langCode: langCode,
-        kind: kind
+        kind: kind,
+        reason: result.reason,
+        error: result.error
       }, requestId);
     } catch (error: any) {
       this.sendResponse('SET_SUBTITLE_TRACK_API_RESPONSE', {
         success: false,
-        error: error.message
+        error: error.message,
+        reason: error?.reason || (error?.category === 'player_not_ready' ? 'player_not_ready' : undefined)
       }, requestId);
     }
   }
@@ -301,10 +304,11 @@ const MessageTypesConst: MessageTypesInterface = {
 class SubtitleAPIController {
   private player: any;
   private captionsModule: string | null = null;
+  private readonly READY_TIMEOUT_MS = 5000;
+  private readonly READY_POLL_INTERVAL_MS = 250;
   
   constructor() {
-    this.player = document.getElementById('movie_player');
-    this.detectModule();
+    this.refreshPlayerReference();
   }
   
   /**
@@ -335,13 +339,74 @@ class SubtitleAPIController {
       console.error('[SubtitleAPIController] 检测模块失败:', error);
     }
   }
+
+  /**
+   * 刷新播放器引用（处理SPA导航）
+   */
+  private refreshPlayerReference(): void {
+    const playerElement = document.getElementById('movie_player');
+    if (!playerElement) {
+      this.player = null;
+      this.captionsModule = null;
+      return;
+    }
+
+    if (playerElement !== this.player) {
+      this.player = playerElement;
+      this.captionsModule = null;
+      this.detectModule();
+    }
+  }
+
+  /**
+   * 判断播放器是否已经就绪
+   */
+  private isPlayerReady(): boolean {
+    if (!this.player) {
+      return false;
+    }
+
+    if (!this.captionsModule) {
+      this.detectModule();
+    }
+
+    const hasSetOption = typeof this.player?.setOption === 'function';
+    const hasGetOption = typeof this.player?.getOption === 'function';
+    return Boolean(this.captionsModule && hasSetOption && hasGetOption);
+  }
+
+  /**
+   * 等待播放器就绪（包含超时）
+   */
+  private async waitForPlayerReady(timeoutMs: number = this.READY_TIMEOUT_MS): Promise<{ ready: boolean; reason?: string }> {
+    const startTime = Date.now();
+    const currentVideoId = new URLSearchParams(window.location.search).get('v');
+
+    while (Date.now() - startTime < timeoutMs) {
+      this.refreshPlayerReference();
+      if (this.isPlayerReady()) {
+        return { ready: true };
+      }
+      await this.sleep(this.READY_POLL_INTERVAL_MS);
+    }
+
+    // 最后再尝试一次
+    this.refreshPlayerReference();
+    if (this.isPlayerReady()) {
+      return { ready: true };
+    }
+
+    console.warn(`[SubtitleAPIController] ⏱️ 等待播放器就绪超时 (videoId: ${currentVideoId}, timeout: ${timeoutMs}ms)`);
+    return { ready: false, reason: 'timeout' };
+  }
   
   /**
    * 获取可用的字幕轨道列表（使用ISO 639-1语言代码）
    */
   async getAvailableTracks(): Promise<any[]> {
-    if (!this.player || !this.captionsModule) {
-      console.warn('[SubtitleAPIController] 播放器或模块未就绪');
+    const readyResult = await this.waitForPlayerReady(3000);
+    if (!readyResult.ready) {
+      console.warn('[SubtitleAPIController] 播放器未就绪，无法获取轨道列表');
       return [];
     }
 
@@ -397,16 +462,21 @@ class SubtitleAPIController {
    * @param langCode ISO 639-1语言代码，如: en, fr, de, zh, ja, ko等
    * @param kind 字幕类型，如: asr (自动生成), 无值表示人工字幕
    */
-  async setSubtitleTrack(langCode: string, kind?: string): Promise<boolean> {
-    if (!this.player || !this.captionsModule) {
-      console.error('[SubtitleAPIController] 播放器或模块未就绪');
-      return false;
+  async setSubtitleTrack(langCode: string, kind?: string): Promise<{ success: boolean; reason?: string; error?: string }> {
+    const readyResult = await this.waitForPlayerReady(this.READY_TIMEOUT_MS);
+    if (!readyResult.ready) {
+      console.error('[SubtitleAPIController] 播放器或模块未就绪，设置字幕失败');
+      return {
+        success: false,
+        reason: 'player_not_ready'
+      };
     }
 
     // 检测ASR轨道，使用UI方法
     if (kind === 'asr') {
       console.log('[SubtitleAPIController] 检测到ASR轨道，使用UI方法');
-      return await this.selectASRViaUI(langCode);
+      const success = await this.selectASRViaUI(langCode);
+      return { success };
     }
 
     try {
@@ -455,11 +525,14 @@ class SubtitleAPIController {
       }
       
       console.log(`[SubtitleAPIController] ✓ 成功切换到语言: ${langCode}`);
-      return true;
+      return { success: true };
       
     } catch (error) {
       console.error('[SubtitleAPIController] 设置字幕语言失败:', error);
-      return false;
+      return {
+        success: false,
+        error: (error as Error)?.message || 'set_option_failed'
+      };
     }
   }
   

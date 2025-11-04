@@ -82,6 +82,12 @@ export async function handleToggleTranslateV4(
       action: 'error',
       error: '无法获取标签页信息'
     };
+
+    const handlePlayerNotReady = () => {
+      const notReadyError: any = new Error('播放器尚未就绪，请稍后手动重新开启翻译');
+      notReadyError.category = 'player_not_ready';
+      throw notReadyError;
+    };
   }
   
   const sessionId = `translate_${tabId}_${videoId}`;
@@ -210,10 +216,10 @@ export async function handleToggleTranslateV4(
                   (requestedSourceLang ? ' [用户指定]' : ' [自动选择]'));
     }
 
-    const sendSetSubtitleTrack = async (langCode?: string, kind?: string) => {
+    const sendSetSubtitleTrack = async (langCode?: string, kind?: string): Promise<{ success: boolean; reason?: string; error?: string }> => {
       if (!langCode || langCode === 'auto') {
         console.log('[service-worker-v4] 跳过设置字幕轨道: 语言=' + (langCode || 'auto'));
-        return;
+        return { success: true };
       }
 
       const setSubtitlePayload = {
@@ -229,11 +235,38 @@ export async function handleToggleTranslateV4(
         if (setResult?.success) {
           console.log(`[service-worker-v4] 🔍 setSubtitleTrackAPI成功 (videoId: ${videoId})`);
           console.debug('[debug][service-worker-v4] ← setSubtitleTrackAPI 成功响应', setResult);
-        } else {
-          console.warn('[service-worker-v4] setSubtitleTrackAPI 返回失败，将依赖字幕按钮触发', setResult);
+          return { success: true };
         }
+
+        if (setResult?.reason === 'player_not_ready') {
+          console.warn('[service-worker-v4] setSubtitleTrackAPI 返回播放器未就绪，终止自动恢复', setResult);
+          return {
+            success: false,
+            reason: 'player_not_ready'
+          };
+        }
+
+        console.warn('[service-worker-v4] setSubtitleTrackAPI 返回失败，将依赖字幕按钮触发', setResult);
+        return {
+          success: false,
+          reason: setResult?.reason,
+          error: setResult?.error
+        };
       } catch (apiError) {
+        if ((apiError as any)?.category === 'player_not_ready') {
+          console.warn('[service-worker-v4] setSubtitleTrackAPI 抛出播放器未就绪错误', apiError);
+          return {
+            success: false,
+            reason: 'player_not_ready',
+            error: (apiError as Error)?.message
+          };
+        }
         console.warn('[service-worker-v4] setSubtitleTrackAPI 调用异常，将依赖字幕按钮触发', apiError);
+        return {
+          success: false,
+          reason: 'exception',
+          error: (apiError as Error)?.message
+        };
       }
     };
 
@@ -250,7 +283,10 @@ export async function handleToggleTranslateV4(
       console.log('[service-worker-v4] ✓ 命中完整缓存');
 
       // 即使缓存命中也要切换字幕轨道
-      await sendSetSubtitleTrack(sourceLanguageCode, sourceKind);  // ✅ YouTube API使用code
+      const cachedTrackResult = await sendSetSubtitleTrack(sourceLanguageCode, sourceKind);  // ✅ YouTube API使用code
+      if (!cachedTrackResult.success && cachedTrackResult.reason === 'player_not_ready') {
+        handlePlayerNotReady();
+      }
 
       // 解析缓存的VTT数据为SubtitleEntry数组
       const cachedSubtitles = mergeVttStrings(
@@ -422,7 +458,10 @@ export async function handleToggleTranslateV4(
                       ' | 可用: ' + trackResponse.tracks.length + '个' +
                       ` | requestId: ${trackResponse.requestId}`);
 
-          await sendSetSubtitleTrack(sourceLanguageCode, sourceKind);  // ✅ YouTube API使用code
+          const trackSwitchResult = await sendSetSubtitleTrack(sourceLanguageCode, sourceKind);  // ✅ YouTube API使用code
+          if (!trackSwitchResult.success && trackSwitchResult.reason === 'player_not_ready') {
+            handlePlayerNotReady();
+          }
 
           // 异步缓存轨道信息（不阻塞主流程）
           Promise.resolve().then(async () => {
@@ -460,7 +499,10 @@ export async function handleToggleTranslateV4(
     } else {
       console.log(`[service-worker-v4] 已有缓存轨道信息，源语言: ${sourceLanguageName}` +
                   (sourceKind ? ` (${sourceKind})` : ''));
-      await sendSetSubtitleTrack(sourceLanguageCode, sourceKind);  // ✅ YouTube API使用code
+      const finalTrackResult = await sendSetSubtitleTrack(sourceLanguageCode, sourceKind);  // ✅ YouTube API使用code
+      if (!finalTrackResult.success && finalTrackResult.reason === 'player_not_ready') {
+        handlePlayerNotReady();
+      }
     }
 
     // ========== Stage 4: 获取字幕（5秒超时）==========
