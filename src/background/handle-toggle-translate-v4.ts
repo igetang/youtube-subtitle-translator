@@ -135,11 +135,11 @@ export async function handleToggleTranslateV4(
     
     // ========== Stage 1: 获取配置（无需超时）==========
     const preferences = await userPreferencesManager.getUserPreferences();
-    
+
     if (!preferences || !preferences.translationService) {
       throw new Error('用户偏好配置不完整：缺少 translationService');
     }
-    
+
     console.debug('[debug][service-worker-v4] → 获取用户偏好:', {
       targetLang: preferences.targetLang,
       service: preferences.translationService?.type,
@@ -147,7 +147,34 @@ export async function handleToggleTranslateV4(
       requestedTargetLang,
       reuseOriginalSubtitles
     });
-    
+
+    // ========== Stage 0: 广告检测（前置）==========
+    console.log('[service-worker-v4] → Stage 0: 广告检测');
+    let adStatusResponse: { success: boolean; isAdPlaying: boolean } | undefined;
+    try {
+      adStatusResponse = await session.executeStage(
+        'check_ad',
+        async (signal) => {
+          return await sendMessageWithSignal<{ success: boolean; isAdPlaying: boolean }>(
+            tabId,
+            { type: 'checkPlayerAdState' },
+            signal
+          );
+        },
+        { timeoutMs: 3000 }
+      );
+    } catch (error: any) {
+      // 广告检测调用失败（网络、超时等），不应阻塞流程
+      console.warn('[service-worker-v4] ⚠️ 广告检测调用失败，继续流程:', error?.message || error);
+    }
+
+    // 检查广告检测结果（移到try-catch外面）
+    if (adStatusResponse?.isAdPlaying) {
+      console.log('[service-worker-v4] ✗ 检测到广告播放，终止翻译流程');
+      handleAdPlaying(); // 这个错误会传播到外层catch（Line 930）
+    }
+    console.log('[service-worker-v4] ✓ 广告检测通过');
+
     // ========== Stage 2: 获取源语言信息 ==========
     console.log('[service-worker-v4] → Stage 2: 获取源语言信息');
     const sourceData = await videoSourceLanguageCacheManager.get(videoId);
@@ -541,8 +568,8 @@ export async function handleToggleTranslateV4(
       }
     }
 
-    // ========== Stage 4: 获取字幕（5秒超时）==========
-    console.log('[service-worker-v4] → Stage 4: 获取字幕');
+    // ========== Stage 4: 获取字幕数据（5秒超时）==========
+    console.log('[service-worker-v4] → Stage 4: 获取字幕数据');
 
     let subtitleData: SubtitleData | null = null;
 
@@ -649,8 +676,8 @@ export async function handleToggleTranslateV4(
       console.log(`[service-worker-v4] 使用字幕数据中的源语言: ${sourceLanguageName}`);
     }
     
-    // ========== Stage 4: 执行翻译 ==========
-    console.log('[service-worker-v4] → Stage 4: 执行翻译');
+    // ========== Stage 5: 执行翻译 ==========
+    console.log('[service-worker-v4] → Stage 5: 执行翻译');
     
     // 创建翻译器
     const translator = new TwoPhaseTranslatorV4();
@@ -822,7 +849,7 @@ export async function handleToggleTranslateV4(
 
     // 批量翻译完成日志已在 TwoPhaseTranslatorV4 中打印
 
-    // ========== Stage 5: 构建和发送最终完整结果 ==========
+    // ========== Stage 6: 构建和发送最终完整结果 ==========
     // 构建完整字幕数据（基于批量翻译结果）
     const finalSubtitles = effectiveSubtitleData.subtitles.map((sub: any, idx: number) => {
       const result = batchResults.find(r => r.index === idx);

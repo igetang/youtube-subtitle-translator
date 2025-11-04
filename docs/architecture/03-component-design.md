@@ -190,29 +190,38 @@ class VideoSourceLanguageCacheManager {
 
 `handle-toggle-translate-v4.ts` 将翻译开关的生命周期拆分为多个阶段，每一阶段都会优先命中缓存，失败时再回落到页面 API：
 
-1. **Stage 1 — 用户偏好加载**  
-   - 通过 `UserPreferencesManager.getUserPreferences()`（`chrome.storage.local`）读取目标语言、字幕模式、翻译服务。  
+1. **Stage 1 — 用户偏好加载**
+   - 通过 `UserPreferencesManager.getUserPreferences()`（`chrome.storage.local`）读取目标语言、字幕模式、翻译服务。
    - 缺失时触发默认值与 Hash 校验逻辑。
 
-2. **Stage 2 — 源语言缓存命中**  
-   - 使用 `VideoSourceLanguageCacheManager.get(videoId)`（`chrome.storage.local` 单键容器）读取可用轨道与上次选择。  
+2. **Stage 0 — 广告检测（v5.24.13+ 前置优化）** ⭐
+   - **位置**：在所有YouTube API调用之前主动检测
+   - **实现**：通过 `checkPlayerAdState` 消息链路（Service Worker → Content Script → Main World）调用 `SubtitleAPIController.isAdPlaying()`
+   - **检测机制**：三层检测（classList、getVideoData().isAdPlaying、getAdState()）
+   - **结果**：若广告播放，抛出 `ad_playing` 错误，直接终止流程回退 INACTIVE；非广告则继续
+   - **优势**：避免广告期间所有API调用（~600ms + 2-3个请求），PENDING时间最短（~100ms）
+
+3. **Stage 2 — 源语言缓存命中**
+   - 使用 `VideoSourceLanguageCacheManager.get(videoId)`（`chrome.storage.local` 单键容器）读取可用轨道与上次选择。
    - 若缓存命中，优先按「用户请求 → 缓存记录 → 智能选择算法」排序匹配，并记录 `sourceLang`/`sourceKind`。
 
-3. **Stage 2.5 — 翻译缓存命中**  
-   - 调用 `TranslationCacheManager.get(videoId, sourceLang, sourceKind, targetLang, service)`。  
-   - **即使命中，也会调用 `setSubtitleTrackAPI`**（`sendSetSubtitleTrack` → `chrome.tabs.sendMessage`）同步播放器轨道，确保字幕按钮与缓存使用的源语言一致。  
+4. **Stage 2.5 — 翻译缓存命中**
+   - 调用 `TranslationCacheManager.get(videoId, sourceLang, sourceKind, targetLang, service)`。
+   - **即使命中，也会调用 `setSubtitleTrackAPI`**（`sendSetSubtitleTrack` → `chrome.tabs.sendMessage`）同步播放器轨道，确保字幕按钮与缓存使用的源语言一致。
+   - **Stage 0保护**：此时广告已在前面被拦截，无需重复检测
    - 命中后直接切换状态为 ACTIVE 并返回缓存内容；流程在此结束。
 
-4. **Stage 3 — 广告检测 + 轨道拉取**  
-   - 在真正发出轨道请求前，先通过 `checkPlayerAdState` 判断是否有广告播放；若是广告直接抛出 `ad_playing`，状态回退为 inactive 并提示用户。  
-   - 未命中时，通过内容脚本的 `getVideoTrackData` → `getSubtitleTracksAPI` 获取播放器轨道。  
+5. **Stage 3 — 轨道拉取（Stage 0保护后）**
+   - **Stage 0保护**：此阶段执行时广告已被前置拦截，无需重复检测
+   - 通过内容脚本的 `getVideoTrackData` → `getSubtitleTracksAPI` 获取播放器轨道。
    - 选出最佳轨道后再次调用 `setSubtitleTrackAPI`，并异步写回 `VideoSourceLanguageCacheManager.set()`，维持 FIFO + TTL。
+   - **被动检测兜底**：各API响应仍检测 `reason === 'ad_playing'`，提供多层保护
 
-5. **Stage 4 — 字幕获取**  
-   - 若未请求复用缓存字幕，则发送 `TRIGGER_SUBTITLE_LOAD`，并监听 `SUBTITLE_DATA` 消息获取最新 VTT。  
+6. **Stage 4 — 字幕获取**
+   - 若未请求复用缓存字幕，则发送 `TRIGGER_SUBTITLE_LOAD`，并监听 `SUBTITLE_DATA` 消息获取最新 VTT。
    - 失败会抛出 `StageTimeoutError`，终止整个流程并回滚状态。
 
-6. **Stage 5 — 两阶段翻译**  
+7. **Stage 5 — 两阶段翻译**  
    - `TwoPhaseTranslatorV4` 使用紧急/批量流程执行翻译，超时与降级由 `TranslationSession` + `AbortTimeoutManager` 控制。  
    - 翻译完成后调用 `TranslationCacheManager.set()` 写入缓存（含 `availableSourceLanguages` 与 `dataHash`），最后通知内容脚本渲染。
 
