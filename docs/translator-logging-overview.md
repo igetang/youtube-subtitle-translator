@@ -7,13 +7,61 @@
 
 | 翻译模型 | 主要代码位置 | 日志内容形式 | 默认行为 / 开关 | V5优化（2025-11-05）|
 | --- | --- | --- | --- | --- |
-| DeepLTranslator | `src/background/components/deepl-translator.ts` | 初始化参数、批次规模、计费字符、批次完成情况（不输出字幕文本） | 默认启用；无字幕详情日志 | 暂未优化 |
+| DeepLTranslator ⭐ | `src/background/components/deepl-translator.ts` | **V5优化后**：入口1条log + 出口1条debug（含计费字符统计） | 默认启用；无字幕详情日志 | **✅ 已优化**：日志从~16条→5条（↓69%） |
 | DeepSeekTranslator ⭐ | `src/background/components/deepseek-translator.ts` | **V5优化后**：入口1条log + 出口1条debug（含Token统计）；`DEBUG_TRANSLATION=true`时打印详细调试信息 | 默认 `DEBUG_TRANSLATION=false` | **✅ 已优化**：日志从~15条→2条（↓87%） |
 | QwenTranslator | `src/background/components/qwen-translator.ts` | `CAPTION_TRANSLATION_DEBUG=true` 时打印输入字幕数组、合并字符串、API原文、译文全文等；否则仅记录批次耗时/成功 | 默认 `CAPTION_TRANSLATION_DEBUG=false` |
 | OpenAITranslator | `src/background/components/openai-translator.ts` | 正常情况下输出模型配置、完成条数；出现异常（数量不匹配、解析失败等）时 `console.error` 原始输入、返回数组、API响应 | 无统一开关，只有错误分支会 dump 字幕 |
 | GeminiTranslator | `src/background/components/gemini-translator.ts` | 记录批次大小、Prompt 长度、性能分析（耗时、token 估算）；不输出字幕文本 | 默认启用，无字幕详情日志 |
 | MicrosoftTranslator | `src/background/components/microsoft-translator.ts` | 输出调用路径、优化流程、缺失文本警告等；不打印字幕内容 | 默认启用，日志较轻 |
 | Google 免费翻译 | `src/background/components/two-phase-translator-v4.ts` (`translateWithGoogleEndpoints`) | 共用 `TwoPhaseTranslatorV4` 的阶段日志；内部不输出字幕详情，仅在错误时抛异常 | 默认无详细字幕日志；无调试开关 | 暂未优化 |
+
+## 🚀 V5日志优化详情（2025-11-05）
+
+### DeepL翻译器优化 ⭐
+
+#### 优化前（~16条日志）
+```
+[DeepLTranslator] → 翻译批次 1: 30条 | free | batch阶段
+[DeepLTranslator] ✓ 批次 1 完成: 30条翻译
+[DeepLTranslator] 💰 计费字符数: 308
+[debug][DeepLTranslator] 批次间延迟 50ms
+[DeepLTranslator] → 翻译批次 2: 30条 | free | batch阶段
+[DeepLTranslator] ✓ 批次 2 完成: 30条翻译
+[DeepLTranslator] 💰 计费字符数: 315
+[debug][DeepLTranslator] 批次间延迟 50ms
+[DeepLTranslator] → 翻译批次 3: 30条 | free | batch阶段
+[DeepLTranslator] ✓ 批次 3 完成: 30条翻译
+[DeepLTranslator] 💰 计费字符数: 312
+[debug][DeepLTranslator] 批次间延迟 50ms
+[DeepLTranslator] → 翻译批次 4: 10条 | free | batch阶段
+[DeepLTranslator] ✓ 批次 4 完成: 10条翻译
+[DeepLTranslator] 💰 计费字符数: 104
+```
+
+#### 优化后（5条日志）⭐
+```
+[DeepLTranslator] → 翻译 100条 | batch阶段 | EN → ZH-CN | free
+[debug][DeepLTranslator] 批次间延迟 50ms
+[debug][DeepLTranslator] 批次间延迟 50ms
+[debug][DeepLTranslator] 批次间延迟 50ms
+[debug][DeepLTranslator] ✅ 翻译完成: 100/100条 | 计费字符: 1039 | 批次数: 4
+```
+
+#### 优化效果
+- **日志数量**：16条 → 5条（减少 69%）
+- **信息密度**：更高，总览一目了然
+- **计费统计**：从分散到集中，显示总计费字符
+- **格式统一**：与DeepSeek/Gemini保持一致
+
+#### 关键改进点
+1. **批次日志合并**：4个批次不再分别打印开始/完成日志
+2. **计费统计合并**：从每批次显示 → 最终统一显示总计
+3. **保留批次延迟日志**：使用debug级别，不影响可读性
+4. **语言参数显示**：入口日志显示完整翻译方向
+
+---
+
+### DeepSeek翻译器优化
 
 ## 🚀 DeepSeek V5日志优化详情（2025-11-05）
 
