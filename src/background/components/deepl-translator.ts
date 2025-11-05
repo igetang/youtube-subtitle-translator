@@ -118,8 +118,8 @@ export class DeepLTranslator {
   /**
    * 批量翻译文本（支持 AbortSignal 和两阶段翻译）
    * @param texts 待翻译文本数组
-   * @param sourceLang 源语言代码（YouTube 标准）
-   * @param targetLang 目标语言代码（YouTube 标准）
+   * @param sourceLang 源语言代码（DeepL 标准，如 'EN', 'ZH'）
+   * @param targetLang 目标语言代码（DeepL 标准，如 'ZH-HANS', 'EN-US'）
    * @param stage 翻译阶段：urgent（无延迟） | batch（有延迟）
    * @param signal AbortSignal 用于取消操作
    */
@@ -134,14 +134,20 @@ export class DeepLTranslator {
       return [];
     }
 
+    // ✅ 直接使用上层传入的DeepL标准CODE（已在prepareLanguageParams中统一转换）
+    console.log(
+      `[DeepLTranslator] → 翻译 ${texts.length}条 | ${stage}阶段 | ${sourceLang} → ${targetLang} | ${this.tier}`
+    );
+
     // 检查初始信号状态
     if (signal.aborted) {
       throw new DOMException('DeepL 翻译开始前已取消', 'AbortError');
     }
 
     const results: string[] = [];
+    let totalBilledCharacters = 0;  // 总计费字符统计
 
-    // 分批处理（50 条/批）
+    // 分批处理（30 条/批）
     for (let i = 0; i < texts.length; i += DeepLTranslator.BATCH_SIZE) {
       if (signal.aborted) {
         throw new DOMException('DeepL 翻译已取消', 'AbortError');
@@ -149,15 +155,10 @@ export class DeepLTranslator {
 
       const batch = texts.slice(i, i + DeepLTranslator.BATCH_SIZE);
 
-      console.log(
-        `[DeepLTranslator] → 翻译批次 ${Math.floor(i / DeepLTranslator.BATCH_SIZE) + 1}: ` +
-        `${batch.length}条 | ${this.tier} | ${stage}阶段`
-      );
-
-      // 调用 DeepL API
+      // 调用 DeepL API（直接使用已转换的DeepL标准CODE）
       const requestBody: DeepLRequest = {
         text: batch,
-        target_lang: this.mapTargetLanguage(targetLang),
+        target_lang: targetLang,  // ✅ 直接使用（上层已转换）
         split_sentences: this.splitSentences,           // ⚠️ 字符串类型
         preserve_formatting: this.preserveFormatting,
         model_type: this.modelType as any,              // 模型类型
@@ -170,8 +171,8 @@ export class DeepLTranslator {
       }
 
       // 源语言可选（省略则自动检测）
-      if (sourceLang && sourceLang !== 'auto') {
-        requestBody.source_lang = this.mapSourceLanguage(sourceLang);
+      if (sourceLang && sourceLang !== 'auto' && sourceLang !== 'AUTO') {
+        requestBody.source_lang = sourceLang;  // ✅ 直接使用（上层已转换）
       }
 
       const response = await this.callAPI(requestBody, signal);
@@ -193,10 +194,10 @@ export class DeepLTranslator {
 
       results.push(...translations);
 
-      console.log(
-        `[DeepLTranslator] ✓ 批次 ${Math.floor(i / DeepLTranslator.BATCH_SIZE) + 1} 完成: ` +
-        `${translations.length}条翻译`
-      );
+      // 累加计费字符
+      if (response.billed_characters) {
+        totalBilledCharacters += response.billed_characters;
+      }
 
       // 批次间延迟（仅 batch 阶段）
       if (stage === 'batch' && i + DeepLTranslator.BATCH_SIZE < texts.length) {
@@ -204,6 +205,13 @@ export class DeepLTranslator {
         await this.delayWithSignal(this.batchDelay, signal);
       }
     }
+
+    // 出口日志
+    const batchCount = Math.ceil(texts.length / DeepLTranslator.BATCH_SIZE);
+    console.debug(
+      `[debug][DeepLTranslator] ✅ 翻译完成: ${results.length}/${texts.length}条 | ` +
+      `计费字符: ${totalBilledCharacters} | 批次数: ${batchCount}`
+    );
 
     return results;
   }
@@ -256,12 +264,7 @@ export class DeepLTranslator {
       );
     }
 
-    // 记录字符使用情况（如果有）
-    if (data.billed_characters && data.billed_characters > 0) {
-      console.log(`[DeepLTranslator] 💰 计费字符数: ${data.billed_characters}`);
-    }
-
-    // 记录检测到的源语言
+    // 记录检测到的源语言（仅第一批次记录一次）
     if (data.translations[0]?.detected_source_language) {
       console.debug(
         `[debug][DeepLTranslator] 检测到源语言: ${data.translations[0].detected_source_language}`
@@ -368,103 +371,13 @@ export class DeepLTranslator {
   }
 
   /**
-   * 语言代码映射 - 源语言（YouTube 标准 → DeepL 标准）
-   */
-  private mapSourceLanguage(ytCode: string): string {
-    const mapping: Record<string, string> = {
-      'zh-CN': 'ZH',
-      'zh-Hans': 'ZH',
-      'zh-Hant': 'ZH',
-      'en': 'EN',
-      'ja': 'JA',
-      'ko': 'KO',
-      'es': 'ES',
-      'fr': 'FR',
-      'de': 'DE',
-      'pt': 'PT',
-      'ru': 'RU',
-      'ar': 'AR',
-      'it': 'IT',
-      'nl': 'NL',
-      'pl': 'PL',
-      'tr': 'TR',
-      'vi': 'VI',
-      'th': 'TH',
-      'id': 'ID',
-      'cs': 'CS',
-      'da': 'DA',
-      'el': 'EL',
-      'et': 'ET',
-      'fi': 'FI',
-      'hu': 'HU',
-      'lt': 'LT',
-      'lv': 'LV',
-      'nb': 'NB',
-      'ro': 'RO',
-      'sk': 'SK',
-      'sl': 'SL',
-      'sv': 'SV',
-      'uk': 'UK',
-      'bg': 'BG'
-    };
-
-    return mapping[ytCode] || ytCode.toUpperCase();
-  }
-
-  /**
-   * 语言代码映射 - 目标语言（YouTube 标准 → DeepL 标准）
-   * 注意：DeepL 目标语言有更细的变体（如 EN-US/EN-GB）
-   */
-  private mapTargetLanguage(ytCode: string): string {
-    const mapping: Record<string, string> = {
-      'zh-CN': 'ZH-HANS',      // 简体中文
-      'zh-Hans': 'ZH-HANS',
-      'zh-TW': 'ZH-HANT',      // 繁体中文
-      'zh-Hant': 'ZH-HANT',
-      'en': 'EN-US',           // 默认美式英语
-      'en-US': 'EN-US',
-      'en-GB': 'EN-GB',
-      'pt': 'PT-BR',           // 默认巴西葡萄牙语
-      'pt-BR': 'PT-BR',
-      'pt-PT': 'PT-PT',
-      'ja': 'JA',
-      'ko': 'KO',
-      'es': 'ES',
-      'fr': 'FR',
-      'de': 'DE',
-      'ru': 'RU',
-      'ar': 'AR',
-      'it': 'IT',
-      'nl': 'NL',
-      'pl': 'PL',
-      'tr': 'TR',
-      'id': 'ID',
-      'cs': 'CS',
-      'da': 'DA',
-      'el': 'EL',
-      'et': 'ET',
-      'fi': 'FI',
-      'hu': 'HU',
-      'lt': 'LT',
-      'lv': 'LV',
-      'nb': 'NB',
-      'ro': 'RO',
-      'sk': 'SK',
-      'sl': 'SL',
-      'sv': 'SV',
-      'uk': 'UK',
-      'bg': 'BG'
-    };
-
-    return mapping[ytCode] || ytCode.toUpperCase();
-  }
-
-  /**
    * 检查目标语言是否支持 formality 参数
+   * 注意：targetLang 现在是 DeepL 标准CODE（大写），如 'DE', 'FR', 'PT-BR'
    */
   private isFormalitySupported(targetLang: string): boolean {
-    const supportedLangs = ['de', 'fr', 'it', 'es', 'nl', 'pl', 'pt', 'pt-BR', 'pt-PT', 'ja', 'ru'];
-    return supportedLangs.includes(targetLang.toLowerCase());
+    // DeepL 标准CODE（大写）
+    const supportedLangs = ['DE', 'FR', 'IT', 'ES', 'NL', 'PL', 'PT', 'PT-BR', 'PT-PT', 'JA', 'RU'];
+    return supportedLangs.includes(targetLang);
   }
 }
 

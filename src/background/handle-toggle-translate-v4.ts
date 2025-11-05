@@ -76,12 +76,24 @@ function prepareLanguageParams(
         target: targetCode.toLowerCase()
       };
 
-    case 'deepl':
-      // DeepL 使用大写 CODE
+    case 'deepl': {
+      // DeepL 使用映射后的大写 CODE（与DeepSeek/Gemini保持一致的架构）
+      const deeplSource = LanguageCodeMapper.toDeepLSourceCode(normalizedSourceCode);
+      const deeplTarget = LanguageCodeMapper.toDeepLTargetCode(targetCode);
+
+      // ✅ 统一打印：整个翻译流程只打印1次语言转换日志
+      console.debug(
+        `[debug][LanguageCodeMapper] ${normalizedSourceCode} → ${deeplSource}, ${targetCode} → ${deeplTarget}`
+      );
+      console.log(
+        `[service-worker-v4] 📋 DeepL API语言参数: ${deeplSource} → ${deeplTarget}`
+      );
+
       return {
-        source: normalizedSourceCode.toUpperCase(),
-        target: targetCode.toUpperCase()
+        source: deeplSource,
+        target: deeplTarget
       };
+    }
 
     case 'deepseek':
     case 'gemini':
