@@ -105,7 +105,7 @@ export async function handleToggleTranslateV4(
     
     // 取消当前会话
     if (abortTimeoutManager.hasSession(sessionId)) {
-      abortTimeoutManager.abortSession(sessionId);
+      abortTimeoutManager.abortSession(sessionId, '用户主动关闭翻译');
       console.log('[service-worker-v4] ✓ 会话已取消');
     }
     
@@ -708,26 +708,29 @@ export async function handleToggleTranslateV4(
       );
     } catch (error) {
       urgentError = error;
-      console.warn('[service-worker-v4] ⚠️ 紧急翻译失败:', error);
+      const errorObj = error as any;
+
+      // 简化日志：只打印摘要，详细信息由最外层catch打印
+      console.warn('[service-worker-v4] ⚠️ 紧急翻译失败:', errorObj?.message || error);
 
       // 判断是否为致命错误（API密钥问题）
-      const category = (error as { category?: string })?.category;
+      const category = errorObj?.category;
       const errorMsg = (error as Error)?.message || '';
       const isFatalError =
         category === 'fatal' ||
         errorMsg.includes('API密钥') ||
         errorMsg.includes('密钥未配置') ||
         errorMsg.includes('密钥无效') ||
-        (error as any).status === 401 ||
-        (error as any).status === 403;
+        errorObj.status === 401 ||
+        errorObj.status === 403;
 
       if (isFatalError) {
         console.error('[service-worker-v4] ❌ 致命错误（API密钥问题），终止翻译流程');
         throw error; // 直接抛出，进入外层catch
       }
 
-      // 可重试错误（如超时），继续执行批量翻译
-      console.log('[service-worker-v4] 非致命错误（如超时），将继续尝试批量翻译');
+      // 可重试错误（如超时、取消），继续执行批量翻译
+      console.log('[service-worker-v4] 非致命错误（如超时/取消），将继续尝试批量翻译');
     }
 
     // 紧急翻译完成日志已在 TwoPhaseTranslatorV4 中打印
@@ -927,7 +930,7 @@ export async function handleToggleTranslateV4(
     };
     
   } catch (error: any) {
-    console.error('[service-worker-v4] 翻译失败:', error);
+    console.error('[service-worker-v4] 翻译失败:', error?.message || error);
 
     // 分析错误类型，使用 getUserFriendlyMessage 统一处理
     let userMessage = '';
@@ -943,17 +946,35 @@ export async function handleToggleTranslateV4(
       console.log('[service-worker-v4] 超时错误:', error.stage);
     } else if (isAbortError(error)) {
       // 用户取消会话，提示用户并记录信息
-      userMessage = '翻译已取消';
+      const abortReason = error.abortReason || '未知原因';
+      userMessage = `翻译已取消: ${abortReason}`;
       errorLevel = ErrorLevel.INFO;
-      console.log('[service-worker-v4] 用户取消翻译');
+      console.log('[service-worker-v4] 翻译被取消:', abortReason);
     } else if ((error as any).category) {
       const category = (error as any).category;
       userMessage = error.message || getUserFriendlyMessage(error);
       errorLevel = category === 'fatal' ? ErrorLevel.ERROR : ErrorLevel.WARNING;
+
+      // 只对非 AbortError 的错误打印详细信息
+      console.error('[service-worker-v4] 错误详情:', {
+        name: error?.name,
+        message: error?.message,
+        category: error?.category,
+        service: error?.service,
+        code: error?.code,
+        stack: error?.stack?.split('\n').slice(0, 3).join('\n') // 只保留前3行堆栈
+      });
     } else {
       // 使用统一的错误消息映射（去掉技术细节）
       userMessage = getUserFriendlyMessage(error);
       errorLevel = getErrorLevel(error);
+
+      // 未知错误，打印完整详情
+      console.error('[service-worker-v4] 未知错误详情:', {
+        name: error?.name,
+        message: error?.message,
+        stack: error?.stack?.split('\n').slice(0, 3).join('\n')
+      });
     }
 
     // 取消会话

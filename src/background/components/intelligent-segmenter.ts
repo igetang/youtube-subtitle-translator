@@ -227,7 +227,7 @@ export class IntelligentSegmenter {
       if (weakBreakCandidates.length > 0) {
         const firstWeakBreak = weakBreakCandidates[weakBreakCandidates.length - 1];  // 最后一个是最靠前的
         const batchSize = firstWeakBreak - startIdx;
-        console.log(`[IntelligentSegmenter] ⚠️ 使用首个弱断点: 索引${firstWeakBreak}（批次${batchSize}条<10条）`);
+        console.log(`[IntelligentSegmenter] 使用首个弱断点: 索引${firstWeakBreak}（批次${batchSize}条<10条）`);
         return firstWeakBreak;
       }
     } else {

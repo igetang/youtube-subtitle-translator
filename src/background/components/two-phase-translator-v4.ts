@@ -317,9 +317,9 @@ export class TwoPhaseTranslatorV4 {
       
     } catch (error: any) {
       if (error.name === 'AbortError') {
-        console.log('[TwoPhaseTranslatorV4] ✗ 紧急翻译被取消');
+        console.debug('[debug][TwoPhaseTranslatorV4] ✗ 紧急翻译被取消:', error.message || '未知原因');
       } else {
-        console.error('[TwoPhaseTranslatorV4] ✗ 紧急翻译失败:', error);
+        console.error('[TwoPhaseTranslatorV4] ✗ 紧急翻译失败:', error?.message || error);
       }
       throw error;
     }
@@ -623,9 +623,10 @@ export class TwoPhaseTranslatorV4 {
       
     } catch (error: any) {
       if (error.name === 'AbortError') {
-        console.log('[TwoPhaseTranslatorV4] ✗ 批量翻译被取消');
+        console.debug('[debug][TwoPhaseTranslatorV4] ✗ 批量翻译被取消:', error.message || '未知原因');
+      } else {
+        console.error('[TwoPhaseTranslatorV4] ✗ 批量翻译失败:', error?.message || error);
       }
-      // 删除重复的错误日志（已在批次层和最外层打印）
       throw error;
     }
     
@@ -868,7 +869,9 @@ export class TwoPhaseTranslatorV4 {
 
     } catch (error: any) {
       if (error.name === 'AbortError') {
-        console.log('[TwoPhaseTranslatorV4] ✗ 批量翻译被取消');
+        console.debug('[debug][TwoPhaseTranslatorV4] ✗ 流水线并发翻译被取消:', error.message || '未知原因');
+      } else {
+        console.error('[TwoPhaseTranslatorV4] ✗ 流水线并发翻译失败:', error?.message || error);
       }
       throw error;
     }
@@ -1097,7 +1100,9 @@ export class TwoPhaseTranslatorV4 {
 
     } catch (error: any) {
       if (error.name === 'AbortError') {
-        console.log('[TwoPhaseTranslatorV4] ✗ 批量翻译被取消');
+        console.debug('[debug][TwoPhaseTranslatorV4] ✗ 并发批量翻译被取消:', error.message || '未知原因');
+      } else {
+        console.error('[TwoPhaseTranslatorV4] ✗ 并发批量翻译失败:', error?.message || error);
       }
       throw error;
     }
@@ -1526,7 +1531,18 @@ export class TwoPhaseTranslatorV4 {
       
       // 监听取消
       const abortHandler = () => {
-        reject(new DOMException('翻译API调用被取消', 'AbortError'));
+        // 从signal.reason获取详细的取消原因
+        const reason = signal.reason;
+        let errorMsg = '翻译API调用被取消';
+
+        if (reason instanceof Error) {
+          errorMsg = `翻译API调用被取消: ${reason.message}`;
+          // 删除内层详细日志，避免与外层重复
+        } else if (reason) {
+          errorMsg = `翻译API调用被取消: ${String(reason)}`;
+        }
+
+        reject(new DOMException(errorMsg, 'AbortError'));
       };
       signal.addEventListener('abort', abortHandler, { once: true });
       

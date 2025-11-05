@@ -209,10 +209,11 @@ export class TranslationSession {
    */
   abort(reason: string = '手动取消'): void {
     if (!this.aborted) {
-      console.log(`[TranslationSession] ✗ 取消会话 ${this.sessionId}: ${reason}`);
+      // 改为debug，避免与AbortTimeoutManager重复打印
+      console.debug(`[debug][TranslationSession] ✗ 取消会话 ${this.sessionId}: ${reason}`);
       this.aborted = true;
       this.mainController.abort();
-      this.manager.abortSession(this.sessionId);
+      this.manager.abortSession(this.sessionId, reason);
     }
   }
   

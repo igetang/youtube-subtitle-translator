@@ -22,6 +22,7 @@ export class LanguageCodeMapper {
    * 将语言代码转换为英文名称
    *
    * @param code - BCP-47语言代码 (如: zh-CN, ru, ja, en-US)
+   * @param silent - 是否静默模式（不打印debug日志），默认false
    * @returns 英文语言名称 (如: Chinese, Russian, Japanese, English)
    *
    * 注意事项：
@@ -29,7 +30,7 @@ export class LanguageCodeMapper {
    * - 变体代码会被标准化（zh-CN/zh-TW 都返回 Chinese）
    * - 使用单例模式避免重复创建 DisplayNames 实例
    */
-  static toEnglishName(code: string): string {
+  static toEnglishName(code: string, silent: boolean = false): string {
     if (!code) {
       console.warn('[LanguageCodeMapper] 空语言代码，返回空字符串');
       return '';
@@ -48,7 +49,9 @@ export class LanguageCodeMapper {
         return code;
       }
 
-      console.debug(`[debug][LanguageCodeMapper] ${code} → ${name}`);
+      if (!silent) {
+        console.debug(`[debug][LanguageCodeMapper] ${code} → ${name}`);
+      }
       return name;
 
     } catch (error) {

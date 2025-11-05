@@ -10,6 +10,7 @@ import {
   TranslationError,
 } from '@shared/types/translation-errors';
 import { LanguageCodeMapper } from '@shared/utils/language-code-mapper';
+import { TokenEstimator } from '@shared/utils/token-estimator';
 
 /**
  * DeepSeek API 消息接口
@@ -103,13 +104,23 @@ export class DeepSeekTranslator {
       throw new DOMException('DeepSeek翻译开始前已取消', 'AbortError');
     }
 
+    // ✅ 优化1：将语言代码映射移到循环外部（只执行1次）
+    const mappedSourceLang = this.mapLanguageCode(sourceLang);
+    const mappedTargetLang = this.mapLanguageCode(targetLang);
+    const sourceLangName = LanguageCodeMapper.toEnglishName(mappedSourceLang, true); // 静默模式
+    const targetLangName = LanguageCodeMapper.toEnglishName(mappedTargetLang, true); // 静默模式
+
+    // ✅ 优化3：只显示API实际使用的参数（映射后的英文名称）
     console.log(
-      `[DeepSeekTranslator] 开始翻译 ${texts.length} 条字幕 (${stage}阶段)`
+      `[DeepSeekTranslator] → 翻译 ${texts.length}条 | ${stage}阶段 | ${sourceLangName} → ${targetLangName}`
     );
 
     const results: string[] = [];
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let totalEstimatedOutputTokens = 0;
 
-    // 分批处理（统一 20 条/批）
+    // 分批处理（统一 10 条/批）
     const totalBatches = Math.ceil(texts.length / DeepSeekTranslator.BATCH_SIZE);
     for (let i = 0; i < texts.length; i += DeepSeekTranslator.BATCH_SIZE) {
       if (signal.aborted) {
@@ -118,11 +129,6 @@ export class DeepSeekTranslator {
 
       const batch = texts.slice(i, i + DeepSeekTranslator.BATCH_SIZE);
       const batchNumber = Math.floor(i / DeepSeekTranslator.BATCH_SIZE) + 1;
-
-      console.debug(
-        `[debug][DeepSeekTranslator] 翻译批次 ${batchNumber}/${totalBatches}: ` +
-        `${batch.length} 条字幕 (${stage}阶段)`
-      );
 
       // 🔧 调试日志：打印输入字幕（完整拼接字符串）
       const combinedInput = batch.join(DeepSeekTranslator.SEPARATOR);
@@ -133,14 +139,28 @@ export class DeepSeekTranslator {
         console.log(`${'='.repeat(60)}`);
       }
 
-      // 构建提示词并调用 API
+      // 构建提示词并调用 API（使用英文语言名称）
       const messages = this.buildTranslationPrompt(
         batch,
-        this.mapLanguageCode(sourceLang),
-        this.mapLanguageCode(targetLang)
+        sourceLangName,
+        targetLangName
       );
 
-      const response = await this.callAPI(messages, signal);
+      // 估算输出token（使用统一的TokenEstimator工具）
+      const combinedText = batch.join(DeepSeekTranslator.SEPARATOR);
+      const estimatedMaxTokens = TokenEstimator.estimateOutputTokens(
+        combinedText,
+        DeepSeekTranslator.MAX_TOKENS
+      );
+
+      const { content: response, usage } = await this.callAPI(messages, signal, estimatedMaxTokens);
+
+      // 累计token使用
+      if (usage) {
+        totalInputTokens += usage.prompt_tokens;
+        totalOutputTokens += usage.completion_tokens;
+        totalEstimatedOutputTokens += estimatedMaxTokens;
+      }
 
       // 🔧 调试日志：打印API返回的原始响应（完整字符串）
       if (DeepSeekTranslator.DEBUG_TRANSLATION) {
@@ -196,7 +216,12 @@ export class DeepSeekTranslator {
       }
     }
 
-    console.log(`[DeepSeekTranslator] ✅ 翻译完成: ${results.length}/${texts.length} 条成功`);
+    // ✅ 合并Token使用和翻译完成日志
+    const remainingTokens = totalEstimatedOutputTokens - totalOutputTokens;
+    console.debug(
+      `[debug][DeepSeekTranslator] ✅ 翻译完成: ${results.length}/${texts.length}条 | ` +
+      `Token: 输入=${totalInputTokens}, 估算=${totalEstimatedOutputTokens}, 输出=${totalOutputTokens}, 余量=${remainingTokens}`
+    );
 
     return results;
   }
@@ -204,26 +229,22 @@ export class DeepSeekTranslator {
   /**
    * 构建翻译提示词
    * @param texts 待翻译文本数组
-   * @param sourceLang 源语言（已映射）
-   * @param targetLang 目标语言（已映射）
+   * @param sourceLangName 源语言英文名称（如 'English', 'Chinese'）
+   * @param targetLangName 目标语言英文名称（如 'Chinese', 'Japanese'）
    * @returns DeepSeek 消息数组
    */
   private buildTranslationPrompt(
     texts: string[],
-    sourceLang: string,
-    targetLang: string
+    sourceLangName: string,
+    targetLangName: string
   ): DeepSeekMessage[] {
     const combinedText = texts.join(DeepSeekTranslator.SEPARATOR);
     const count = texts.length;
 
-    // 转换目标语言代码为英文名称（Chat API要求）
-    const targetLangName = LanguageCodeMapper.toEnglishName(targetLang);
-    console.log(`[DeepSeekTranslator] 📝 翻译语言参数: ${sourceLang} → ${targetLangName}`);
-
     return [
       {
         role: 'system',
-        content: `You are a professional translator. Translate ALL ${count} subtitles from ${sourceLang} to ${targetLangName}.
+        content: `You are a professional translator. Translate ALL ${count} subtitles from ${sourceLangName} to ${targetLangName}.
 
 CRITICAL RULES:
 1. Return EXACTLY ${count} translations (one per input text)
@@ -250,12 +271,14 @@ No explanations. Only translations.`
    * 调用 DeepSeek API（支持 AbortSignal）
    * @param messages 消息数组
    * @param signal AbortSignal 用于取消操作
-   * @returns 翻译结果（已拼接）
+   * @param maxTokens 动态计算的最大输出tokens
+   * @returns 翻译结果和token使用信息
    */
   private async callAPI(
     messages: DeepSeekMessage[],
-    signal: AbortSignal
-  ): Promise<string> {
+    signal: AbortSignal,
+    maxTokens: number
+  ): Promise<{ content: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }> {
     let response: Response | undefined;
 
     try {
@@ -269,7 +292,7 @@ No explanations. Only translations.`
           model: DeepSeekTranslator.MODEL,
           messages,
           temperature: DeepSeekTranslator.TEMPERATURE,
-          max_tokens: DeepSeekTranslator.MAX_TOKENS,
+          max_tokens: maxTokens,  // 使用动态估算的值
           stream: false
         } as DeepSeekRequest),
         signal
@@ -311,9 +334,10 @@ No explanations. Only translations.`
       );
     }
 
-    this.logTokenUsage(data);
-
-    return data.choices[0].message.content;
+    return {
+      content: data.choices[0].message.content,
+      usage: data.usage
+    };
   }
 
   /**
@@ -453,16 +477,4 @@ No explanations. Only translations.`
     }
   }
 
-  private logTokenUsage(data: DeepSeekResponse): void {
-    if (!data.usage) {
-      return;
-    }
-
-    console.debug(
-      `[debug][DeepSeekTranslator] Token使用: ` +
-      `输入=${data.usage.prompt_tokens}, ` +
-      `输出=${data.usage.completion_tokens}, ` +
-      `总计=${data.usage.total_tokens}`
-    );
-  }
 }
