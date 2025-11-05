@@ -109,11 +109,8 @@ export async function handleToggleTranslateV4(
     }
     
     // 设置状态为INACTIVE
-    console.log('[service-worker-v4] → 设置状态为 INACTIVE');
+    console.debug('[service-worker-v4] → 设置状态为 INACTIVE');
     await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
-    
-    // 通知UI状态变更
-    console.log('[service-worker-v4] → 通知UI状态变更: INACTIVE');
     await notifyStateChange(tabId, 'translateActive', TranslateActiveState.INACTIVE);
     
     return {
@@ -149,7 +146,6 @@ export async function handleToggleTranslateV4(
     });
 
     // ========== Stage 0: 广告检测（前置）==========
-    console.log('[service-worker-v4] → Stage 0: 广告检测');
     let adStatusResponse: { success: boolean; isAdPlaying: boolean } | undefined;
     try {
       adStatusResponse = await session.executeStage(
@@ -176,13 +172,12 @@ export async function handleToggleTranslateV4(
     console.log('[service-worker-v4] ✓ 广告检测通过');
 
     // ========== Stage 2: 获取源语言信息 ==========
-    console.log('[service-worker-v4] → Stage 2: 获取源语言信息');
     const sourceData = await videoSourceLanguageCacheManager.get(videoId);
-    // 输出缓存查询结果
+    // 缓存查询结果（debug级别）
     console.debug(
       sourceData
-        ? `[debug][service-worker-v4] Stage 2: 源语言缓存 [命中] | 可用轨道: ${sourceData.availableSourceLanguages?.length || 0}个${sourceData.selectedSourceTrack ? ' | 已选: ' + sourceData.selectedSourceTrack.languageCode + (sourceData.selectedSourceTrack.kind ? ' (' + sourceData.selectedSourceTrack.kind + ')' : '') : ''}`
-        : '[debug][service-worker-v4] Stage 2: 源语言缓存 [未命中]'
+        ? `[debug][service-worker-v4] 源语言缓存 [命中] | 可用轨道: ${sourceData.availableSourceLanguages?.length || 0}个${sourceData.selectedSourceTrack ? ' | 已选: ' + sourceData.selectedSourceTrack.languageCode + (sourceData.selectedSourceTrack.kind ? ' (' + sourceData.selectedSourceTrack.kind + ')' : '') : ''}`
+        : '[debug][service-worker-v4] 源语言缓存 [未命中]'
     );
     // ✅ 新架构：同时保存 languageCode 和 name
     let sourceLanguageCode = 'auto';  // 用于YouTube API
@@ -243,10 +238,10 @@ export async function handleToggleTranslateV4(
       sourceLanguageCode = sourceTrack!.languageCode;  // 用于YouTube API（如 "en"）
       sourceLanguageName = sourceTrack!.name;          // 用于翻译API（如 "English"）
       sourceKind = sourceTrack!.kind;
-      console.log('[service-worker-v4] ✓ 选择源语言: ' + sourceLanguageName +
+      console.log('[service-worker-v4] ✓ 源语言: ' + sourceLanguageName +
                   ' [' + sourceLanguageCode + ']' +
                   (sourceKind ? ' (' + sourceKind + ')' : '') +
-                  (requestedSourceLang ? ' [用户指定]' : ' [自动选择]'));
+                  ' | ' + (requestedSourceLang ? '用户指定' : '缓存选择'));
     }
 
     const sendSetSubtitleTrack = async (langCode?: string, kind?: string): Promise<{ success: boolean; reason?: string; error?: string }> => {
@@ -262,12 +257,9 @@ export async function handleToggleTranslateV4(
       };
 
       try {
-        console.log(`[service-worker-v4] 🔍 准备设置字幕轨道: ${langCode}${kind ? ' (' + kind + ')' : ''} (videoId: ${videoId})`);
-        console.debug('[debug][service-worker-v4] → 设置字幕轨道: ' + langCode + (kind ? ' (' + kind + ')' : ''));
+        // 删除"准备设置"和"成功"日志（与外层智能选择日志重复）
         const setResult = await chrome.tabs.sendMessage(tabId, setSubtitlePayload);
         if (setResult?.success) {
-          console.log(`[service-worker-v4] 🔍 setSubtitleTrackAPI成功 (videoId: ${videoId})`);
-          console.debug('[debug][service-worker-v4] ← setSubtitleTrackAPI 成功响应', setResult);
           return { success: true };
         }
 
@@ -348,12 +340,10 @@ export async function handleToggleTranslateV4(
         console.error('[service-worker-v4] 发送缓存字幕数据失败:', err);
       }
 
-      console.log('[service-worker-v4] → 设置状态为 ACTIVE（缓存命中）');
+      console.debug('[service-worker-v4] → 设置状态为 ACTIVE（缓存命中）');
       await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
       session.complete();
 
-      // 通知UI
-      console.log('[service-worker-v4] → 通知UI状态变更: ACTIVE（缓存命中）');
       await notifyStateChange(tabId, 'translateActive', TranslateActiveState.ACTIVE);
 
       return {
@@ -364,8 +354,6 @@ export async function handleToggleTranslateV4(
     }
 
     // ========== Stage 3: 获取字幕轨道（如果需要）==========
-    console.log('[service-worker-v4] → Stage 3: 获取字幕轨道');
-
     // 如果没有缓存的轨道信息，或源语言仍是auto，主动获取轨道
     if (!sourceData?.availableSourceLanguages?.length || sourceLanguageCode === 'auto') {
       try {
@@ -443,7 +431,8 @@ export async function handleToggleTranslateV4(
               return { ...playerResponseResult, requestId: trackRequestId };
             }
 
-            console.log(`[service-worker-v4] 🔍 准备通过Player API获取轨道 (videoId: ${videoId}) | requestId: ${trackRequestId}`);
+            // 删除"准备通过Player API获取轨道"日志（改为debug级别）
+            console.debug(`[debug][service-worker-v4] 准备通过Player API获取轨道 (videoId: ${videoId}) | requestId: ${trackRequestId}`);
             const playerApiResult = await requestWithSignal({
               type: 'getSubtitleTracksAPI'
             }, 'playerApi');
@@ -497,11 +486,10 @@ export async function handleToggleTranslateV4(
           sourceLanguageCode = sourceTrack.languageCode;  // 用于YouTube API（如 "en"）
           sourceLanguageName = sourceTrack.name;          // 用于翻译API（如 "English"）
           sourceKind = sourceTrack.kind;
-          console.log('[service-worker-v4] ✓ 智能选择并设置: ' + sourceLanguageName +
+          console.log('[service-worker-v4] ✓ 源语言: ' + sourceLanguageName +
                       ' [' + sourceLanguageCode + ']' +
                       (sourceKind ? ' (' + sourceKind + ')' : '') +
-                      ' | 可用: ' + trackResponse.tracks.length + '个' +
-                      ` | requestId: ${trackResponse.requestId}`);
+                      ' | 智能选择 (' + trackResponse.tracks.length + '个可用)');
 
           const trackSwitchResult = await sendSetSubtitleTrack(sourceLanguageCode, sourceKind);  // ✅ YouTube API使用code
           if (!trackSwitchResult.success && trackSwitchResult.reason === 'player_not_ready') {
@@ -569,7 +557,6 @@ export async function handleToggleTranslateV4(
     }
 
     // ========== Stage 4: 获取字幕数据（5秒超时）==========
-    console.log('[service-worker-v4] → Stage 4: 获取字幕数据');
 
     let subtitleData: SubtitleData | null = null;
 
@@ -676,7 +663,7 @@ export async function handleToggleTranslateV4(
 
     const effectiveSubtitleData = subtitleData as SubtitleData;
 
-    console.log(`[service-worker-v4] Stage 4: 字幕数据 [就绪] | ${effectiveSubtitleData.subtitles.length} 条 | 源语言: ${sourceLanguageName}`);
+    console.log(`[service-worker-v4] 字幕数据就绪 | ${effectiveSubtitleData.subtitles.length} 条 | 源语言: ${sourceLanguageName}`);
 
     // 如果字幕数据中包含源语言信息，且当前是auto，更新源语言
     if (effectiveSubtitleData.sourceLang && sourceLanguageName === 'auto') {
@@ -685,7 +672,6 @@ export async function handleToggleTranslateV4(
     }
     
     // ========== Stage 5: 执行翻译 ==========
-    console.log('[service-worker-v4] → Stage 5: 执行翻译');
     
     // 创建翻译器
     const translator = new TwoPhaseTranslatorV4();
@@ -922,12 +908,10 @@ export async function handleToggleTranslateV4(
     );
 
     // ========== Stage 6: 完成 ==========
-    console.log('[service-worker-v4] → 设置状态为 ACTIVE');
+    console.debug('[service-worker-v4] → 设置状态为 ACTIVE');
     await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
     session.complete();
 
-    // 通知UI
-    console.log('[service-worker-v4] → 通知UI状态变更: ACTIVE');
     await notifyStateChange(tabId, 'translateActive', TranslateActiveState.ACTIVE);
 
     return {
@@ -945,7 +929,7 @@ export async function handleToggleTranslateV4(
     let errorLevel = ErrorLevel.ERROR;
 
     if ((error as any)?.category === 'ad_playing') {
-      userMessage = '检测到广告播放，翻译已暂停，请在广告结束后重新开启。';
+      userMessage = '正在播放广告，无需翻译';
       errorLevel = ErrorLevel.INFO;
       console.log('[service-worker-v4] 广告播放期间停止翻译');
     } else if (isTimeoutError(error)) {
@@ -1000,11 +984,9 @@ export async function handleToggleTranslateV4(
     }
 
     // 🔥 第三步：回退状态（此时UI变更不会再清除字幕）
-    console.log('[service-worker-v4] → 设置状态为 INACTIVE（错误回退）');
+    console.debug('[service-worker-v4] → 设置状态为 INACTIVE（错误回退）');
     await runtimeStateManager.setTranslateState(TranslateActiveState.INACTIVE);
 
-    // 通知UI状态变更
-    console.log('[service-worker-v4] → 通知UI状态变更: INACTIVE（错误回退）');
     await notifyStateChange(tabId, 'translateActive', TranslateActiveState.INACTIVE);
     
     return {
@@ -1040,7 +1022,6 @@ function saveTranslationCacheAsync(
         lastUsed: Date.now(),
         dataHash: ''
       });
-      console.log('[service-worker-v4] ✓ 翻译结果已异步缓存');
     } catch (err) {
       console.error('[service-worker-v4] 缓存保存失败:', err);
     }

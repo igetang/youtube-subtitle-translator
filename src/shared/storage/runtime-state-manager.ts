@@ -394,6 +394,10 @@ export class RuntimeStateManager {
       return;
     }
 
+    console.log(
+      `[runtime-state-manager] translateActive 变更: ${String(currentState)} → ${String(state)}`
+    );
+
     // 立即更新运行时缓存
     this.runtimeCache.translateActive = state;
 

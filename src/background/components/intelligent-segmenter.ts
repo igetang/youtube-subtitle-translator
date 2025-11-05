@@ -66,43 +66,32 @@ export class IntelligentSegmenter {
     }
 
     // 超过阈值需要智能断句
-    console.log(`[IntelligentSegmenter] 开始智能分批:`, {
-      总字幕数: subtitles.length,
-      批次大小: this.maxBatchSize
-    });
-    
     const batches: Array<{
       startIdx: number;
       endIdx: number;
       subtitles: typeof subtitles;
     }> = [];
-    
+
     let currentIdx = 0;
-    
+    const startTime = Date.now();
+    const strongBreakpoints: number[] = [];  // 记录强断点位置
+
     while (currentIdx < subtitles.length) {
-      const cutPoint = this.findOptimalCutPoint(subtitles, currentIdx);
+      const cutPoint = this.findOptimalCutPoint(subtitles, currentIdx, strongBreakpoints, batches.length + 1);
       const batch = {
         startIdx: currentIdx,
         endIdx: cutPoint,
         subtitles: subtitles.slice(currentIdx, cutPoint)
       };
-      
-      batches.push(batch);
-      
-      const batchStartTime = batch.subtitles[0]?.start || 0;
-      const lastSubtitle = batch.subtitles[batch.subtitles.length - 1];
-      const batchEndTime = lastSubtitle?.end ||
-                          (lastSubtitle?.start + (lastSubtitle?.duration || 0)) || 0;
 
-      console.debug(`[debug][IntelligentSegmenter] 批次${batches.length}: [${currentIdx}-${cutPoint}), ${batch.subtitles.length}条, ${batchStartTime.toFixed(1)}-${batchEndTime.toFixed(1)}s`);
-      
+      batches.push(batch);
+      // 批次信息已在findOptimalCutPoint中打印，此处不再重复
+
       currentIdx = cutPoint;
     }
-    
-    console.log(`[IntelligentSegmenter] ✓ 分批完成:`, {
-      批次数: batches.length,
-      平均大小: Math.round(subtitles.length / batches.length)
-    });
+
+    const elapsed = Date.now() - startTime;
+    console.log(`[IntelligentSegmenter] 完成分割 | ${subtitles.length}条 → ${batches.length}批 | 强断点: ${strongBreakpoints.length}个 | 用时: ${elapsed}ms`);
     
     return batches;
   }
@@ -121,7 +110,9 @@ export class IntelligentSegmenter {
       duration?: number;
       text: string;
     }>,
-    startIdx: number
+    startIdx: number,
+    strongBreakpoints?: number[],  // 用于记录强断点位置
+    batchNumber?: number  // 批次编号（用于日志）
   ): number {
     const BATCH_SIZE = this.maxBatchSize;  // 使用实例配置的批次大小
     const MIN_BATCH_SIZE = 10;  // 最小批次大小
@@ -154,7 +145,14 @@ export class IntelligentSegmenter {
 
         if (batchSize >= MIN_BATCH_SIZE) {
           // 找到满足条件的强断点，立即返回
-          console.debug(`[debug][IntelligentSegmenter] ✓ 找到强断点: 索引${i}, 间隔${(gap * 1000).toFixed(1)}ms, 批次${batchSize}条`);
+          if (strongBreakpoints) {
+            strongBreakpoints.push(i);  // 记录强断点位置
+          }
+
+          // 合并日志：强断点 + 批次信息
+          const batchStartTime = subtitles[startIdx].start;
+          const batchEndTime = currentEnd;
+          console.debug(`[debug][IntelligentSegmenter] 批次${batchNumber || '?'}: [${startIdx}~${i}), ${batchSize}条, ${batchStartTime.toFixed(1)}~${batchEndTime.toFixed(1)}s | ✓ 强断点: 间隔${(gap * 1000).toFixed(1)}ms`);
 
           if (IntelligentSegmenter.DEBUG_SUBTITLE_TIMING) {
             console.log(`[IntelligentSegmenter] 断句时间点: ${currentEnd.toFixed(3)}s | 间隔${(gap * 1000).toFixed(1)}ms | ${nextSubtitle.start.toFixed(3)}s`);
@@ -202,7 +200,10 @@ export class IntelligentSegmenter {
 
           if (batchSize >= MIN_BATCH_SIZE) {
             // 找到满足条件的弱断点，立即返回
-            console.debug(`[debug][IntelligentSegmenter] ✓ 找到弱断点: 索引${i}, 间隔差${((gap - minGap) * 1000).toFixed(1)}ms, 批次${batchSize}条`);
+            // 合并日志：弱断点 + 批次信息
+            const batchStartTime = subtitles[startIdx].start;
+            const batchEndTime = currentEnd;
+            console.debug(`[debug][IntelligentSegmenter] 批次${batchNumber || '?'}: [${startIdx}~${i}), ${batchSize}条, ${batchStartTime.toFixed(1)}~${batchEndTime.toFixed(1)}s | ✓ 弱断点: 间隔差${((gap - minGap) * 1000).toFixed(1)}ms`);
 
             if (IntelligentSegmenter.DEBUG_SUBTITLE_TIMING) {
               console.log(`[IntelligentSegmenter] 断句时间点: ${currentEnd.toFixed(3)}s | 间隔${(gap * 1000).toFixed(1)}ms | ${nextSubtitle.start.toFixed(3)}s`);
@@ -239,14 +240,15 @@ export class IntelligentSegmenter {
 
     // 没找到任何断点，BATCH_SIZE条全部发送
     const batchStartTime = subtitles[startIdx].start;
-    const batchEndTime = subtitles[Math.min(endIdx - 1, subtitles.length - 1)].end ||
-                        (subtitles[Math.min(endIdx - 1, subtitles.length - 1)].start +
-                         (subtitles[Math.min(endIdx - 1, subtitles.length - 1)].duration || 0));
+    const lastSubtitle = subtitles[Math.min(endIdx - 1, subtitles.length - 1)];
+    const batchEndTime = lastSubtitle.end || (lastSubtitle.start + (lastSubtitle.duration || 0));
+    const batchSize = endIdx - startIdx;
 
-    console.log(`[IntelligentSegmenter] 未找到合适断点，${BATCH_SIZE}条一起发送`);
+    // 合并日志：无断点 + 批次信息
+    console.debug(`[debug][IntelligentSegmenter] 批次${batchNumber || '?'}: [${startIdx}~${endIdx}), ${batchSize}条, ${batchStartTime.toFixed(1)}~${batchEndTime.toFixed(1)}s | 未找到合适断点`);
 
     if (IntelligentSegmenter.DEBUG_SUBTITLE_TIMING) {
-      console.log(`[IntelligentSegmenter] 批次${Math.floor(startIdx / BATCH_SIZE) + 1}: `, {
+      console.log(`[IntelligentSegmenter] 批次${batchNumber || '?'}: `, {
         批次时间范围: `${batchStartTime.toFixed(3)}s - ${batchEndTime.toFixed(3)}s (总长${(batchEndTime - batchStartTime).toFixed(3)}s)`,
         批次索引范围: `[${startIdx}-${endIdx})`,
         说明: '字幕间隔太小，没有合适的断点'
@@ -266,21 +268,16 @@ export class IntelligentSegmenter {
     subtitles: Array<any>,
     currentIndex: number
   ): Array<any> {
-    // 前9后30，共40条
+    // 前2后5，共~8条
     const start = Math.max(0, currentIndex - IntelligentSegmenter.URGENT_BEFORE);
     const end = Math.min(
-      subtitles.length, 
+      subtitles.length,
       currentIndex + IntelligentSegmenter.URGENT_AFTER + 1
     );
-    
-    console.log(`[IntelligentSegmenter] 紧急批次:`, {
-      当前位置: currentIndex,
-      批次范围: `[${start}-${end})`,
-      批次大小: end - start,
-      前向: currentIndex - start,
-      后向: end - currentIndex - 1
-    });
-    
+
+    const batchSize = end - start;
+    console.debug(`[debug][IntelligentSegmenter] 紧急批次: 当前${currentIndex} | 范围[${start}-${end}) | ${batchSize}条 | 前${currentIndex - start}后${end - currentIndex - 1}`);
+
     return subtitles.slice(start, end);
   }
   

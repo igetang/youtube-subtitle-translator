@@ -65,7 +65,7 @@ export class AbortTimeoutManager {
     const sessionInfo = this.sessions.get(sessionId);
     if (sessionInfo) {
       sessionInfo.stage = stage;
-      console.log(`[AbortTimeoutManager] 会话 ${sessionId} 进入阶段: ${stage}`);
+      // 删除外层"进入阶段"日志（内层TranslationSession已打印"开始执行"）
     }
   }
   

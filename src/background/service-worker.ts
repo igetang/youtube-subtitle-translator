@@ -2004,7 +2004,7 @@ function setupStateChangeListeners(): void {
   runtimeStateManager.addChangeListener(
     RuntimeStateChangeEvent.TRANSLATE_ACTIVE_CHANGED,
     (newValue, oldValue) => {
-      console.log(`[service-worker] 状态变更: translateState [${oldValue} → ${newValue}]`);
+      console.debug(`[service-worker] 状态变更: translateState [${oldValue} → ${newValue}]`);
       // 可以在这里添加状态变更后的处理逻辑
     }
   );
@@ -2013,7 +2013,7 @@ function setupStateChangeListeners(): void {
   runtimeStateManager.addChangeListener(
     RuntimeStateChangeEvent.POPUP_STATE_CHANGED,
     (newValue, oldValue) => {
-      console.log(`[service-worker] 状态变更: popupOpen [${oldValue} → ${newValue}]`);
+      console.debug(`[service-worker] 状态变更: popupOpen [${oldValue} → ${newValue}]`);
       if (newValue === false) {
         forceCloseAllPopups();
       }

@@ -69,7 +69,7 @@ export class StateManager {
         this.notifyStateChange(key, value);
         
         // 只在成功时输出一条简洁日志
-        console.log(`[StateManager] ✅ ${key}: ${value}`);
+        console.debug(`[StateManager] ✅ ${key}: ${value}`);
       } else {
         console.error(`[StateManager] ✗ ${key}: ${result?.error}`);
       }
@@ -110,7 +110,7 @@ export class StateManager {
       // 只输出关键信息
       const keys = Object.keys(updates);
       if (keys.length > 0) {
-        console.log(`[StateManager] ✅ 批量更新: ${keys.join(', ')}`);
+        console.debug(`[StateManager] ✅ 批量更新: ${keys.join(', ')}`);
       }
     } catch (error) {
       console.error(`[StateManager] ✗ 批量更新失败:`, error);
@@ -136,7 +136,7 @@ export class StateManager {
         this.userPreferences[key] = value;
         this.notifyStateChange(key, value);
         // 简化成功日志
-        console.log(`[StateManager] ✅ 偏好设置: ${key}=${value}`);
+        console.debug(`[StateManager] ✅ 偏好设置: ${key}=${value}`);
       } else {
         console.error(`[StateManager] ✗ 偏好设置失败: ${key}`, result?.error);
       }

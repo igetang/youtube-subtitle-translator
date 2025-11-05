@@ -849,11 +849,9 @@ function setupMessageHandlers(): void {
 
     // 处理通过Player API设置字幕语言（ISO 639-1）
     if (messageType === 'setSubtitleTrackAPI') {
-      // 🔍 追踪当前videoId
-      const currentVideoId = getVideoId();
-      console.log(`[content-script] 🔍 setSubtitleTrackAPI - 当前videoId: ${currentVideoId}, langCode: ${message.langCode}, kind: ${message.kind}`);
-      console.debug(`[debug][content-script] 收到Chrome消息: ${messageType}, langCode: ${message.langCode}` +
-                  (message.kind ? `, kind: ${message.kind}` : ''));
+      // 删除emoji日志（与service-worker日志重复）
+      console.debug(`[debug][content-script] 收到setSubtitleTrackAPI: ${message.langCode}` +
+                  (message.kind ? ` (${message.kind})` : ''));
       handleSetSubtitleTrackAPI(message.langCode, message.kind, sendResponse);
       return true; // 异步响应
     }
@@ -1090,7 +1088,7 @@ async function setSubtitleTrackAPI(
   videoId?: string;
   reason?: string;
 }> {
-  console.debug(`[debug][content-script] 通过API设置字幕语言: ${langCode}` + (kind ? ` (${kind})` : ''));
+  // 删除"通过API设置字幕语言"日志（与接收消息日志重复）
 
   return new Promise((resolve) => {
     const requestId = `api_set_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -1475,7 +1473,7 @@ function showErrorMessage(data: { message: string; duration?: number; level?: st
 
     // 设置消息文本样式（使用与字幕相同的响应式字体大小）
     const textStyles = {
-      info: `color: #4CAF50; font-size: ${fontSize}; line-height: 1.4; font-weight: 500;`,
+      info: `color: rgba(255, 255, 255, 0.9); font-size: ${fontSize}; line-height: 1.4; font-weight: 500;`,
       warning: `color: #ffeb3b; font-size: ${fontSize}; line-height: 1.4; font-weight: 500;`,
       error: `color: #ff5252; font-size: ${fontSize}; line-height: 1.4; font-weight: 500;`
     };

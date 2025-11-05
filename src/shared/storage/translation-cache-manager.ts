@@ -253,7 +253,7 @@ export class TranslationCacheManager {
     try {
       await this._enforceLruPolicy();
       await chrome.storage.local.set({ [key]: dataToStore });
-      console.log(`[translation-cache-manager] ✓ set: cached`);
+      console.log('[translation-cache-manager] ✓ 缓存写入成功');
     } catch (error) {
       // logger.error('[translation-cache-manager] Error setting cache item:', error);
       console.error('[translation-cache-manager] ✗ set:', error);

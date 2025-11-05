@@ -51,6 +51,11 @@ export class SubtitleOverlay {
     // 初始化UserPreferencesManager
     await this.userPreferencesManager.initialize();
 
+    // 读取初始用户偏好（只在初始化时读取一次）
+    const userPrefs = await this.userPreferencesManager.getUserPreferences();
+    this.currentLanguageMode = userPrefs.subtitleMode === SubtitleMode.BILINGUAL ? 'bilingual' : 'targetOnly';
+    console.debug(`[debug][SubtitleOverlay] 初始化字幕模式: ${this.currentLanguageMode}`);
+
     // 监听字幕模式变化，实现实时切换
     this.userPreferencesManager.addChangeListener(
       UserPreferenceChangeEvent.SUBTITLE_MODE_CHANGED,
@@ -473,10 +478,7 @@ export class SubtitleOverlay {
       this.overlayElement.style.display = '';
     }
 
-    // 同步读取最新的用户字幕模式设置
-    const userPrefs = await this.userPreferencesManager.getUserPreferences();
-    this.currentLanguageMode = userPrefs.subtitleMode === SubtitleMode.BILINGUAL ? 'bilingual' : 'targetOnly';
-    console.debug(`[debug][SubtitleOverlay] 更新翻译时字幕模式: ${this.currentLanguageMode}`);
+    // 使用已缓存的字幕模式（由监听器实时更新，无需重复读取）
 
     if (replaceAll) {
       // 完全替换模式：用于紧急翻译和批量翻译

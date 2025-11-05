@@ -101,17 +101,8 @@ class MainWorldMessenger {
    * 处理字幕捕获请求
    */
   private handleSubtitleCapture(data: any): void {
-    console.debug('[debug][MainWorld] 收到字幕捕获请求', data);
-
     const { sourceLang, sourceKind, originalSubtitleState } = data;
-    console.debug('[debug][MainWorld] 目标字幕参数', {
-      sourceLang,
-      sourceKind,
-      originalSubtitleState
-    });
-    if (originalSubtitleState !== undefined) {
-      console.debug('[debug][MainWorld] 字幕按钮原始状态', originalSubtitleState);
-    }
+    console.debug(`[debug][MainWorld] 收到字幕捕获请求 | sourceLang: ${sourceLang}, sourceKind: ${sourceKind}, originalSubtitleState: ${originalSubtitleState}`);
 
     // 并发控制：防止重复初始化
     if (!SubtitleInterceptor.isActive() && !isInitializing) {
@@ -124,7 +115,6 @@ class MainWorldMessenger {
       isInitializing = false;
 
       if (success) {
-        console.debug('[debug][MainWorld] 拦截器初始化成功，准备触发字幕按钮');
         interceptor.triggerSubtitleButton();
       } else {
         console.error('[Main World] 初始化失败');
@@ -230,11 +220,7 @@ class MainWorldMessenger {
    */
   private async handleSetSubtitleTrackAPI(data: any): Promise<void> {
     const { langCode, kind, _requestId: requestId } = data;
-    console.debug('[debug][MainWorld] 收到设置字幕语言API请求', {
-      langCode,
-      kind,
-      requestId
-    });
+    // 删除"收到设置字幕语言API请求"日志（与content-script日志重复）
 
     if (!subtitleAPIController) {
       subtitleAPIController = new SubtitleAPIController();
@@ -592,15 +578,8 @@ class SubtitleAPIController {
     }
 
     try {
-      // 🔍 获取当前videoId用于日志追踪
-      const currentVideoId = new URLSearchParams(window.location.search).get('v');
-      console.log(`[SubtitleAPIController] 🔍 setSubtitleTrack - 当前URL的videoId: ${currentVideoId}, 目标语言: ${langCode}, kind: ${kind}`);
-
-      console.debug('[debug][SubtitleAPIController] 尝试切换字幕语言', {
-        langCode,
-        kind,
-        module: this.captionsModule
-      });
+      // 删除emoji日志（与service-worker日志重复）
+      console.debug(`[debug][SubtitleAPIController] 设置字幕轨道: ${langCode}${kind ? ' (' + kind + ')' : ''}`);
 
       // 🔥 核心简化：直接设置，不验证tracklist
       // Service Worker已经通过getSubtitleTracksAPI验证过轨道存在
@@ -612,7 +591,6 @@ class SubtitleAPIController {
         trackConfig.kind = kind;
       }
 
-      console.log(`[SubtitleAPIController] → 直接设置字幕轨道: ${langCode}${kind ? ' (' + kind + ')' : ''}`);
       this.player.setOption(this.captionsModule, 'track', trackConfig);
 
       // 如果使用的是旧模块，也尝试设置
@@ -633,10 +611,10 @@ class SubtitleAPIController {
       const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLButtonElement;
       if (subtitleBtn && subtitleBtn.getAttribute('aria-pressed') !== 'true') {
         subtitleBtn.click();
-        console.log('[SubtitleAPIController] 已开启字幕显示');
+        console.debug('[debug][SubtitleAPIController] 已开启字幕显示');
       }
-      
-      console.log(`[SubtitleAPIController] ✓ 成功切换到语言: ${langCode}`);
+
+      // 删除"成功切换"日志（与service-worker日志重复）
       return { success: true };
       
     } catch (error) {
@@ -862,18 +840,10 @@ class SubtitleInterceptor {
     this.targetSourceLang = sourceLang || null;
     this.targetSourceKind = sourceKind || null;
     this.originalSubtitleState = originalSubtitleState ?? null;
-    console.debug('[debug][SubtitleInterceptor] 目标字幕', {
-      targetSourceLang: this.targetSourceLang,
-      targetSourceKind: this.targetSourceKind
-    });
-    if (this.originalSubtitleState !== null) {
-      console.debug('[debug][SubtitleInterceptor] 原始字幕按钮状态', this.originalSubtitleState);
-    }
 
     if (!subtitleAPIController) {
       try {
         subtitleAPIController = new SubtitleAPIController();
-        console.debug('[debug][SubtitleInterceptor] 初始化 SubtitleAPIController 实例');
       } catch (controllerError) {
         console.warn('[SubtitleInterceptor] SubtitleAPIController 初始化失败:', controllerError);
       }
@@ -881,13 +851,8 @@ class SubtitleInterceptor {
 
     try {
       const currentTrack = subtitleAPIController?.getCurrentTrack?.();
-      console.debug('[debug][SubtitleInterceptor] 初始化前播放器当前轨道', currentTrack);
-    } catch (trackError) {
-      console.warn('[SubtitleInterceptor] 获取当前轨道失败:', trackError);
-    }
-
-    try {
-      console.log('[SubtitleInterceptor] 🚀 按需初始化拦截器...');
+      const buttonState = this.originalSubtitleState !== null ? (this.originalSubtitleState ? '已开启' : '已关闭') : '未知';
+      console.log(`[SubtitleInterceptor] 🚀 初始化 | 当前轨道: ${currentTrack || '无'} | 按钮状态: ${buttonState}`);
 
       const self = this;
 
@@ -897,7 +862,6 @@ class SubtitleInterceptor {
 
         // 直接拦截所有timedtext请求，因为YouTube已经在请求我们通过API选定的字幕轨道
         if (url && url.includes('timedtext')) {
-          console.log('[SubtitleInterceptor] 🎯 捕获到字幕URL (Fetch):', url);
           self.capturedUrl = url;
 
           const response = await originalFetch(...args);
@@ -917,7 +881,6 @@ class SubtitleInterceptor {
         const urlString = url.toString();
         // 直接拦截所有timedtext请求，因为YouTube已经在请求我们通过API选定的字幕轨道
         if (urlString && urlString.includes('timedtext')) {
-          console.log('[SubtitleInterceptor] 🎯 捕获到字幕URL (XHR):', urlString);
           self.capturedUrl = urlString;
 
           const xhr = this;
@@ -943,7 +906,6 @@ class SubtitleInterceptor {
         }, '*');
       }, TIMEOUT_CONFIG.INTERCEPTOR);
 
-      console.log('[SubtitleInterceptor] ✅ 初始化成功');
       return true;
 
     } catch (error) {
@@ -1006,14 +968,12 @@ class SubtitleInterceptor {
           // JSON3格式
           const subtitles = this.parseJson3Subtitles(data);
           this.saveAndNotify(subtitles);
-          console.log('[SubtitleInterceptor] ✅ JSON3格式字幕解析成功，共', subtitles.length, '条');
         }
       } catch (e) {
         // 可能是XML格式
         const subtitles = this.parseXmlSubtitles(text);
         if (subtitles.length > 0) {
           this.saveAndNotify(subtitles);
-          console.log('[SubtitleInterceptor] ✅ XML格式字幕解析成功，共', subtitles.length, '条');
         }
       }
     } catch (error) {
@@ -1038,14 +998,12 @@ class SubtitleInterceptor {
           // JSON3格式
           const subtitles = this.parseJson3Subtitles(data);
           this.saveAndNotify(subtitles);
-          console.log('[SubtitleInterceptor] ✅ XHR JSON3格式字幕解析成功，共', subtitles.length, '条');
         }
       } catch (e) {
         // 可能是XML格式
         const subtitles = this.parseXmlSubtitles(responseText);
         if (subtitles.length > 0) {
           this.saveAndNotify(subtitles);
-          console.log('[SubtitleInterceptor] ✅ XHR XML格式字幕解析成功，共', subtitles.length, '条');
         }
       }
     } catch (error) {
@@ -1123,49 +1081,28 @@ class SubtitleInterceptor {
       }
     }, '*');
     
-    console.log('[SubtitleInterceptor] 📝 字幕已保存并通知，共', subtitles.length, '条');
-    console.log('[SubtitleInterceptor] 📝 前3条示例:', subtitles.slice(0, 3));
+    // 提取语言代码（从URL中）
+    const langMatch = this.capturedUrl?.match(/[&?]lang=([^&]+)/);
+    const lang = langMatch ? langMatch[1] : 'unknown';
+    console.log(`[SubtitleInterceptor] 🎯 捕获字幕 | ${subtitles.length}条 | ${lang}`);
   }
 
   triggerSubtitleButton(): void {
-    console.debug('[debug][SubtitleInterceptor] 尝试自动触发字幕按钮', {
-      targetSourceLang: this.targetSourceLang,
-      targetSourceKind: this.targetSourceKind
-    });
-
-    const logCurrentTrack = (stage: string) => {
-      try {
-        if (subtitleAPIController) {
-          const current = subtitleAPIController.getCurrentTrack();
-          console.debug('[debug][SubtitleInterceptor] 播放器轨道状态', { stage, current });
-        }
-      } catch (error) {
-        console.warn('[SubtitleInterceptor] 获取播放器轨道失败', { stage, error });
-      }
-    };
-
-    logCurrentTrack('before-toggle');
-
     setTimeout(() => {
       const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
       if (subtitleBtn) {
         const isPressed = subtitleBtn.getAttribute('aria-pressed') === 'true';
-        console.debug('[debug][SubtitleInterceptor] 字幕按钮当前状态', {
-          isPressed,
-          targetSourceLang: this.targetSourceLang
-        });
+        console.log(`[SubtitleInterceptor] → 触发字幕按钮 | 当前状态: ${isPressed ? 'ON' : 'OFF'} | 操作: ${!isPressed ? 'enable' : 'toggle-off→toggle-on'}`);
 
-        const clickOnce = (stage: string) => {
+        const clickOnce = () => {
           subtitleBtn.click();
-          console.debug('[debug][SubtitleInterceptor] 已点击字幕按钮', { stage });
-          setTimeout(() => logCurrentTrack(stage), 150);
         };
 
         if (!isPressed) {
-          clickOnce('enable');
+          clickOnce();
         } else {
-          clickOnce('toggle-off');
-          setTimeout(() => clickOnce('toggle-on'), 500);
+          clickOnce();
+          setTimeout(() => clickOnce(), 500);
         }
       } else {
         console.warn('[SubtitleInterceptor] 未找到字幕按钮');

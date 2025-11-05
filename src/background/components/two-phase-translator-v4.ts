@@ -706,13 +706,12 @@ export class TwoPhaseTranslatorV4 {
       );
       const targetLabel = this.getTargetLanguageLabel(serviceType, preferences.targetLang);
 
-      console.log(
-        `[TwoPhaseTranslatorV4] → 批量翻译: ${subtitles.length}条 | 流水线并发 | ${batches.length}批次 | 间隔${requestDelay}ms | ${sourceLabel} → ${targetLabel}`
-      );
+      // 删除"批量翻译开始"日志（与每批完成日志合并）
 
       // 🔑 流水线发送阶段
       const promises: Promise<any>[] = [];
       let sendStartTime = Date.now();
+      let completedCount = 0;  // 已完成批次数
 
       for (let i = 0; i < batches.length; i++) {
         // 检查主信号
@@ -776,6 +775,12 @@ export class TwoPhaseTranslatorV4 {
               fractionalSecondDigits: 3
             });
 
+            // 合并日志：批次进度 + 翻译服务 + 语言对 + 结果数量
+            completedCount++;
+            const progress = Math.floor((completedCount / batches.length) * 100);
+            const serviceName = serviceType === 'google' || serviceType === 'google-free' ? 'Google' : serviceType;
+            console.log(`[TwoPhaseTranslatorV4] ✓ 批次${completedCount}/${batches.length} | ${serviceName} | ${sourceLabel} → ${targetLabel} | ${translatedTexts.length}条 (${progress}%)`);
+
             return {
               success: true,
               batchIndex: i,
@@ -795,6 +800,9 @@ export class TwoPhaseTranslatorV4 {
               fractionalSecondDigits: 3
             });
 
+            // 失败时不打印进度日志（错误已在其他地方打印）
+            completedCount++;
+
             return {
               success: false,
               batchIndex: i,
@@ -806,32 +814,25 @@ export class TwoPhaseTranslatorV4 {
         })();
 
         promises.push(batchPromise);
-
-        console.debug(`[debug][TwoPhaseTranslatorV4] 📤 批次${i + 1}/${batches.length} 已发送`);
+        // 删除"已发送"日志（冗余：发送和调用是同一操作）
       }
 
-      const sendEndTime = Date.now();
-      const sendDuration = sendEndTime - sendStartTime;
-      console.debug(`[debug][TwoPhaseTranslatorV4] ✓ 所有批次发送完成，耗时${sendDuration}ms`);
-
       // 🔑 Promise.all统一等待所有结果
-      console.debug(`[debug][TwoPhaseTranslatorV4] ⏳ 等待所有批次返回...`);
       const batchResults = await Promise.all(promises);
 
-      const totalDuration = Date.now() - sendStartTime;
-      console.debug(`[debug][TwoPhaseTranslatorV4] ✓ 所有批次返回完成，总耗时${totalDuration}ms`);
-
-      // 打印返回顺序分析
-      console.debug(`[debug][TwoPhaseTranslatorV4] 📊 返回顺序分析:`);
-      const sortedByReturnTime = [...batchResults].sort((a, b) =>
+      // 打印实际返回顺序（按时间排序）
+      const sortedByTime = [...batchResults].sort((a, b) =>
         a.returnTime.localeCompare(b.returnTime)
       );
-      sortedByReturnTime.forEach((result, idx) => {
+
+      console.debug(`[debug][TwoPhaseTranslatorV4] 📊 流水线并发实际返回顺序（按时间）:`);
+      sortedByTime.forEach((result, idx) => {
         const status = result.success ? '✅' : '❌';
-        const delay = result.returnTime ?
-          `(发送${result.sendTime} → 返回${result.returnTime})` : '';
-        console.debug(`  ${idx + 1}. 批次${result.batchIndex + 1} ${status} ${delay}`);
+        console.debug(`  ${idx + 1}. [${result.returnTime}] 批次${result.batchIndex + 1} ${status}`);
       });
+
+      const totalDuration = Date.now() - sendStartTime;
+      console.log(`[TwoPhaseTranslatorV4] ✓ 批量翻译完成 | ${subtitles.length}条 | 总耗时: ${totalDuration}ms`);
 
       // 处理结果（按逻辑顺序）
       for (const result of batchResults) {
@@ -1660,9 +1661,7 @@ export class TwoPhaseTranslatorV4 {
           const stage = options?.stage ?? 'batch';
           const order = this.getGoogleEndpointOrder(stage);
           const allowFallback = stage !== 'batch';
-          console.log(
-            `[TwoPhaseTranslatorV4] Google翻译调用 stage=${stage} ${normalizedSourceLanguageCode} → ${targetLang} | 文本数=${texts.length}`
-          );
+          // 删除"Google翻译调用"日志（与成功日志重复，已合并到成功日志）
           const { translations } = await this.translateWithGoogleEndpoints(
             texts,
             normalizedSourceLanguageCode,
@@ -1676,17 +1675,68 @@ export class TwoPhaseTranslatorV4 {
           );
           translatedTexts = translations;
         } else if (service.type === 'microsoft' || service.type === 'microsoft-free') {
-          // 使用 Microsoft 免费翻译
-          const translator = new MicrosoftTranslator();
+          // 使用 Microsoft 免费翻译（走优化器路径）
           const stage = options?.stage ?? 'batch';
 
-          // 调用翻译（传递 stage）
-          translatedTexts = await translator.translateTexts(
-            texts,
-            normalizedSourceLanguageCode,
-            targetLang,
-            stage
-          );
+          // 🚀 使用5000字符窗口优化器
+          if (TwoPhaseTranslatorV4.USE_MICROSOFT_OPTIMIZER) {
+            console.debug(
+              `[debug][TwoPhaseTranslatorV4] 使用优化器处理微软翻译: ${texts.length}条 (${stage}阶段)`
+            );
+
+            // 将 texts 转换为字幕格式（优化器需要）
+            const subtitles = texts.map((text, index) => ({
+              id: `${index}`,
+              start: index,
+              text: text
+            }));
+
+            // 调用优化器
+            const optimizedBatches = this.microsoftOptimizer.optimizeBatches(subtitles);
+
+            console.debug(
+              `[debug][TwoPhaseTranslatorV4] 优化效果: ${texts.length}条 → ${optimizedBatches.length}个批次`
+            );
+
+            // 处理所有优化批次
+            const allTranslatedTexts: string[] = [];
+            const allIndexMappings: number[][] = [];
+
+            for (let batchIdx = 0; batchIdx < optimizedBatches.length; batchIdx++) {
+              const optimizedBatch = optimizedBatches[batchIdx];
+
+              // 调用优化版翻译
+              const batchTranslations = await this.microsoftTranslator.translateOptimized(
+                optimizedBatch.texts,
+                normalizedSourceLanguageCode,
+                targetLang,
+                stage
+              );
+
+              allTranslatedTexts.push(...batchTranslations);
+              allIndexMappings.push(...optimizedBatch.indexMapping);
+            }
+
+            // 映射回原始顺序
+            translatedTexts = this.microsoftOptimizer.mapResults(
+              allTranslatedTexts,
+              allIndexMappings,
+              texts.length
+            );
+
+            console.debug(
+              `[debug][TwoPhaseTranslatorV4] 优化翻译完成: ${translatedTexts.length}条`
+            );
+          } else {
+            // 降级：使用传统方法
+            const translator = new MicrosoftTranslator();
+            translatedTexts = await translator.translateTexts(
+              texts,
+              normalizedSourceLanguageCode,
+              targetLang,
+              stage
+            );
+          }
 
         } else {
           // 未知服务类型，返回原文
@@ -1811,9 +1861,7 @@ export class TwoPhaseTranslatorV4 {
           );
         }
 
-        console.debug(
-          `[debug][TwoPhaseTranslatorV4] Google端点=${endpoint.id} 成功 stage=${stage} ${normalizedSourceLanguageCode} → ${targetLang} (${normalized.length}条)`
-        );
+        // 删除Google端点日志（已合并到外层的批次完成日志）
 
         if (options?.recordStatistics) {
           this.preferredGoogleEndpoint = endpoint.id;

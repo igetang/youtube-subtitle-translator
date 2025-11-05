@@ -221,7 +221,7 @@ export class TranslationSession {
    */
   complete(): void {
     if (!this.aborted) {
-      console.log(`[TranslationSession] ✓ 完成会话 ${this.sessionId}`);
+      console.debug(`[TranslationSession] ✓ 完成会话 ${this.sessionId}`);
       this.manager.completeSession(this.sessionId);
     }
   }
