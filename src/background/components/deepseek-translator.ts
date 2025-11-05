@@ -82,16 +82,16 @@ export class DeepSeekTranslator {
   /**
    * 批量翻译文本（支持 AbortSignal 和两阶段翻译）
    * @param texts 待翻译文本数组
-   * @param sourceLang 源语言代码（YouTube标准）
-   * @param targetLang 目标语言代码（YouTube标准）
+   * @param sourceLangName 源语言英文名称（如 'English', 'Chinese'）
+   * @param targetLangName 目标语言英文名称（如 'Chinese', 'Japanese'）
    * @param stage 翻译阶段：urgent（无延迟） | batch（200ms延迟）
    * @param signal AbortSignal 用于取消操作
    * @returns 翻译结果数组
    */
   public async translate(
     texts: string[],
-    sourceLang: string,
-    targetLang: string,
+    sourceLangName: string,
+    targetLangName: string,
     stage: 'urgent' | 'batch',
     signal: AbortSignal
   ): Promise<string[]> {
@@ -104,13 +104,7 @@ export class DeepSeekTranslator {
       throw new DOMException('DeepSeek翻译开始前已取消', 'AbortError');
     }
 
-    // ✅ 优化1：将语言代码映射移到循环外部（只执行1次）
-    const mappedSourceLang = this.mapLanguageCode(sourceLang);
-    const mappedTargetLang = this.mapLanguageCode(targetLang);
-    const sourceLangName = LanguageCodeMapper.toEnglishName(mappedSourceLang, true); // 静默模式
-    const targetLangName = LanguageCodeMapper.toEnglishName(mappedTargetLang, true); // 静默模式
-
-    // ✅ 优化3：只显示API实际使用的参数（映射后的英文名称）
+    // ✅ 直接使用上层传入的英文名称（已在callTranslationAPI中统一转换）
     console.log(
       `[DeepSeekTranslator] → 翻译 ${texts.length}条 | ${stage}阶段 | ${sourceLangName} → ${targetLangName}`
     );
@@ -360,41 +354,6 @@ No explanations. Only translations.`
 
       signal.addEventListener('abort', abortHandler);
     });
-  }
-
-  /**
-   * 语言代码映射（YouTube标准 → DeepSeek标准）
-   * DeepSeek 使用标准 ISO 639-1 语言代码
-   * @param code YouTube 语言代码
-   * @returns DeepSeek 语言代码
-   */
-  private mapLanguageCode(code: string): string {
-    const mapping: Record<string, string> = {
-      'zh-CN': 'zh',
-      'zh-TW': 'zh',
-      'zh-Hans': 'zh',
-      'zh-Hant': 'zh',
-      'en': 'en',
-      'ja': 'ja',
-      'ko': 'ko',
-      'es': 'es',
-      'fr': 'fr',
-      'de': 'de',
-      'ru': 'ru',
-      'ar': 'ar',
-      'pt': 'pt',
-      'it': 'it',
-      'nl': 'nl',
-      'hi': 'hi',
-      'vi': 'vi',
-      'th': 'th',
-      'id': 'id',
-      'tr': 'tr',
-      'pl': 'pl',
-      'uk': 'uk'
-    };
-
-    return mapping[code] || code;
   }
 
   private async handleAPIError(response: Response): Promise<never> {

@@ -1553,6 +1553,27 @@ export class TwoPhaseTranslatorV4 {
         const normalizedSourceLanguageCode =
           sourceLanguageCode && sourceLanguageCode.trim() !== '' ? sourceLanguageCode : 'auto';
 
+        // ✅ 统一转换点：为Chat API准备英文名称（只执行1次）
+        // 注意：Qwen虽然使用chat/completions端点，但需要code而非name（translation_options）
+        const isChatAPI = ['openai', 'deepseek', 'gemini'].includes(service.type);
+
+        let sourceLangName = sourceLanguageName;  // 默认使用传入的name
+        let targetLangName = targetLang;           // 默认使用传入的code
+
+        if (isChatAPI) {
+          // Chat API需要英文名称，在这里统一转换（静默模式，稍后统一打印）
+          sourceLangName = LanguageCodeMapper.toEnglishName(normalizedSourceLanguageCode, true);
+          targetLangName = LanguageCodeMapper.toEnglishName(targetLang, true);
+
+          // ✅ 合并打印：一次性显示两个语言转换结果
+          console.debug(
+            `[debug][LanguageCodeMapper] ${normalizedSourceLanguageCode} → ${sourceLangName}, ${targetLang} → ${targetLangName}`
+          );
+          console.log(
+            `[TwoPhaseTranslatorV4] 📋 Chat API语言参数: ${sourceLangName} → ${targetLangName}`
+          );
+        }
+
         if (service.type === 'openai') {
           // 使用OpenAI翻译（V4架构）
           if (!service.apiKey) {
@@ -1568,11 +1589,11 @@ export class TwoPhaseTranslatorV4 {
 
           const stage = options?.stage ?? 'batch';
 
-          // 调用翻译（传递stage、批次信息和signal）
+          // 调用翻译（传递已转换的英文名称）
           translatedTexts = await translator.translate(
             texts,
-            sourceLanguageName,
-            targetLang,
+            sourceLangName,    // ✅ 使用转换后的英文名称
+            targetLangName,    // ✅ 使用转换后的英文名称
             stage,
             signal,
             {
@@ -1590,11 +1611,11 @@ export class TwoPhaseTranslatorV4 {
           const translator = new DeepSeekTranslator(service.apiKey);
           const stage = options?.stage ?? 'batch';
 
-          // 调用翻译（传递 signal）
+          // 调用翻译（传递已转换的英文名称）
           translatedTexts = await translator.translate(
             texts,
-            sourceLanguageName,
-            targetLang,
+            sourceLangName,    // ✅ 使用转换后的英文名称
+            targetLangName,    // ✅ 使用转换后的英文名称
             stage,
             signal
           );
@@ -1615,11 +1636,11 @@ export class TwoPhaseTranslatorV4 {
 
           const stage = options?.stage ?? 'batch';
 
-          // 调用翻译（传递 stage 和 signal）
+          // 调用翻译（传递已转换的英文名称）
           translatedTexts = await translator.translate(
             texts,
-            sourceLanguageName,
-            targetLang,
+            sourceLangName,    // ✅ 使用转换后的英文名称
+            targetLangName,    // ✅ 使用转换后的英文名称
             stage,
             signal
           );
@@ -1664,11 +1685,11 @@ export class TwoPhaseTranslatorV4 {
 
           const stage = options?.stage ?? 'batch';
 
-          // 调用翻译（传递 stage 和 signal）
+          // 调用翻译（Qwen需要code，不是name）
           translatedTexts = await translator.translate(
             texts,
-            sourceLanguageName,
-            targetLang,
+            normalizedSourceLanguageCode,  // ❌ Qwen需要code
+            targetLang,                     // ❌ Qwen需要code
             stage,
             signal
           );
@@ -2028,7 +2049,8 @@ export class TwoPhaseTranslatorV4 {
       case 'deepseek':
       case 'gemini':
       case 'qwen':
-        return LanguageCodeMapper.toEnglishName(targetLanguageCode);
+        // ✅ 使用静默模式，避免与callTranslationAPI()中的转换重复打印
+        return LanguageCodeMapper.toEnglishName(targetLanguageCode, true);
       default:
         return targetLanguageCode;
     }

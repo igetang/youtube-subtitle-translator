@@ -250,7 +250,7 @@ export class QwenTranslator {
         `${batch.length}条 | qwen-mt-plus | ${stage}阶段`
       );
 
-      // 调用 API 翻译单批
+      // 调用 API 翻译单批（Qwen需要code）
       const translations = await this.translateBatch(
         batch,
         sourceLang,

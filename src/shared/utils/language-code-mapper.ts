@@ -49,10 +49,13 @@ export class LanguageCodeMapper {
         return code;
       }
 
+      // ✅ 去掉括号内的地区信息（如 "Chinese (China)" → "Chinese"）
+      const cleanName = name.replace(/\s*\([^)]*\)/g, '').trim();
+
       if (!silent) {
-        console.debug(`[debug][LanguageCodeMapper] ${code} → ${name}`);
+        console.debug(`[debug][LanguageCodeMapper] ${code} → ${cleanName}`);
       }
-      return name;
+      return cleanName;
 
     } catch (error) {
       console.error(`[LanguageCodeMapper] 转换失败: ${code}`, error);

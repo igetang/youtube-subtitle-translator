@@ -151,8 +151,8 @@ export class OpenAITranslator {
    */
   public async translate(
     texts: string[],
-    sourceLang: string,
-    targetLang: string,
+    sourceLangName: string,
+    targetLangName: string,
     stage: 'urgent' | 'batch',
     signal: AbortSignal,
     meta?: { batchIndex?: number; batchCount?: number }
@@ -194,13 +194,12 @@ export class OpenAITranslator {
       const jsonInput = JSON.stringify(numberedTexts);
       console.debug(`[debug][OpenAITranslator] JSON输入长度: ${jsonInput.length}字符, ${numberedTexts.length}条带编号字幕`);
 
-      const targetLangName = LanguageCodeMapper.toEnglishName(targetLang);
-
+      // ✅ 直接使用传入的英文名称（不再内部转换）
       const messages = [
         {
           role: 'system',
           content: `You are a professional subtitle translator.
-Translate ${texts.length} subtitles from ${sourceLang} to ${targetLangName}.
+Translate ${texts.length} subtitles from ${sourceLangName} to ${targetLangName}.
 
 INPUT FORMAT: JSON array with ${texts.length} numbered items: ["[0] text1", "[1] text2", ...]
 OUTPUT FORMAT: JSON array with ${texts.length} translations: ["[0] 翻译1", "[1] 翻译2", ...]
@@ -324,7 +323,7 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
         text
       }));
 
-      const targetLangName = LanguageCodeMapper.toEnglishName(targetLang);
+      // ✅ 直接使用传入的英文名称（不再内部转换）
       const inputData: StructuredInput = {
         targetLang: targetLangName,
         items

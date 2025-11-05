@@ -113,6 +113,7 @@ export class GeminiTranslator {
     this.batchDelay = batchDelay;
     this.modelConfig = MODEL_CONFIGS[model] || MODEL_CONFIGS['gemini-2.5-flash'];
 
+    // ✅ 已改为debug级别（避免在两阶段翻译中重复打印）
     console.debug(
       `[debug][GeminiTranslator] 初始化: 模型=${model}, temperature=${temperature}, ` +
       `上下文=${this.modelConfig.contextWindow} tokens, 最大输出=${this.maxOutputTokens} tokens, ` +
@@ -123,16 +124,16 @@ export class GeminiTranslator {
   /**
    * 翻译文本数组 - V4架构接口
    * @param texts 待翻译的文本数组
-   * @param sourceLang 源语言代码 (YouTube标准)
-   * @param targetLang 目标语言代码 (YouTube标准)
+   * @param sourceLangName 源语言英文名称（如 'English', 'Chinese'）
+   * @param targetLangName 目标语言英文名称（如 'Chinese', 'Japanese'）
    * @param stage 翻译阶段 ('urgent' | 'batch')
    * @param signal AbortSignal用于中断请求
    * @returns 翻译后的文本数组
    */
   public async translate(
     texts: string[],
-    sourceLang: string,
-    targetLang: string,
+    sourceLangName: string,
+    targetLangName: string,
     stage: 'urgent' | 'batch',
     signal: AbortSignal
   ): Promise<string[]> {
@@ -145,8 +146,9 @@ export class GeminiTranslator {
       throw new DOMException('Gemini翻译开始前已取消', 'AbortError');
     }
 
+    // ✅ 直接使用上层传入的英文名称（已在callTranslationAPI中统一转换）
     console.log(
-      `[GeminiTranslator] → 开始翻译: ${texts.length}条字幕 (${stage}阶段) | ` +
+      `[GeminiTranslator] → 翻译 ${texts.length}条 | ${stage}阶段 | ${sourceLangName} → ${targetLangName} | ` +
       `批次大小=${this.modelConfig.batchSize}, 延迟=${this.batchDelay}ms`
     );
 
@@ -162,10 +164,6 @@ export class GeminiTranslator {
       const batch = texts.slice(i, i + this.modelConfig.batchSize);
       const batchNumber = Math.floor(i / this.modelConfig.batchSize) + 1;
 
-      console.debug(
-        `[debug][GeminiTranslator] 翻译批次 ${batchNumber}/${totalBatches}: ${batch.length}条字幕`
-      );
-
       try {
         // ⏱️ 性能分析：记录各环节耗时
         const perfStart = performance.now();
@@ -174,12 +172,15 @@ export class GeminiTranslator {
         const t1 = performance.now();
         const yamlInput = this.convertToYAML(batch);
         const t2 = performance.now();
-        console.debug(`[debug][GeminiTranslator] YAML输入长度: ${yamlInput.length}字符, ${batch.length}条字幕`);
 
-        // 2. 构建prompt
-        const prompt = this.buildTranslationPrompt(yamlInput, batch.length, sourceLang, targetLang);
+        // 2. 构建prompt（传入已转换的语言名称）
+        const prompt = this.buildTranslationPrompt(yamlInput, batch.length, sourceLangName, targetLangName);
         const t3 = performance.now();
-        console.debug(`[debug][GeminiTranslator] Prompt长度: ${prompt.length}字符`);
+
+        // ✅ 合并3条debug日志为1条
+        console.debug(
+          `[debug][GeminiTranslator] 翻译批次 ${batchNumber}/${totalBatches}: ${batch.length}条字幕 | YAML输入${yamlInput.length}字符, Prompt${prompt.length}字符`
+        );
 
         // 3. 估算maxOutputTokens（对比两种算法）
         const encoder = new TextEncoder();
@@ -189,10 +190,7 @@ export class GeminiTranslator {
         const estimatedOutputTokens = Math.ceil((inputBytes / 2.5) * 1.5);
         const maxOutputTokens = Math.min(estimatedOutputTokens, this.modelConfig.maxOutput);
 
-        console.log(
-          `[GeminiTranslator] 🔍 调用API参数: maxOutputTokens=${maxOutputTokens}, temperature=${this.temperature}, ` +
-          `model=${this.model}, thinkingBudget=0`
-        );
+        // ✅ 删除调用API参数日志（内部实现细节，Token统计日志已包含关键信息）
 
         // 4. 调用Gemini API
         const responseText = await this.callGeminiAPI(prompt, signal, maxOutputTokens);
@@ -267,22 +265,19 @@ export class GeminiTranslator {
    * 构建翻译prompt
    * @param yamlInput YAML格式输入
    * @param count 字幕条数
-   * @param sourceLang 源语言
-   * @param targetLang 目标语言
+   * @param sourceLangName 源语言英文名称（如 'English', 'Chinese'）
+   * @param targetLangName 目标语言英文名称（如 'Chinese', 'Japanese'）
    * @returns 完整prompt
    */
   private buildTranslationPrompt(
     yamlInput: string,
     count: number,
-    sourceLang: string,
-    targetLang: string
+    sourceLangName: string,
+    targetLangName: string
   ): string {
-    // 转换目标语言代码为英文名称（Chat API要求）
-    const targetLangName = LanguageCodeMapper.toEnglishName(targetLang);
-    console.log(`[GeminiTranslator] 📝 翻译语言参数: ${sourceLang} → ${targetLangName}`);
-
+    // ✅ 直接使用传入的英文名称（不再内部转换）
     return `You are a professional subtitle translator.
-Translate from ${sourceLang} to ${targetLangName}.
+Translate from ${sourceLangName} to ${targetLangName}.
 
 INPUT FORMAT: YAML containing ${count} subtitle items (id + text)
 OUTPUT FORMAT: YAML with EXACTLY ${count} translated items (keep the same id numbers!)
@@ -397,22 +392,19 @@ ${yamlInput}`;
     const finishReason = data.candidates[0].finishReason;
     this.handleFinishReason(finishReason);
 
-    console.debug(
-      `[debug][GeminiTranslator] 🔍 响应文本长度: ${content.length}字符`
-    );
+    // ✅ 删除响应文本长度日志（内部实现细节，对用户无意义）
 
     if (data.usageMetadata) {
       const actualInput = data.usageMetadata.promptTokenCount;
       const actualOutput = data.usageMetadata.candidatesTokenCount;
-      const actualTotal = data.usageMetadata.totalTokenCount;
       const thoughtsTokens = (data.usageMetadata as any).thoughtsTokenCount || 0;
       const estimatedOutput = maxOutputTokens;
-      const diff = estimatedOutput - actualOutput;
-      const diffPercent = actualOutput === 0 ? '0.0' : ((diff / actualOutput) * 100).toFixed(1);
+      const remaining = estimatedOutput - actualOutput;
+      const remainingPercent = actualOutput === 0 ? '0.0' : ((remaining / actualOutput) * 100).toFixed(1);
 
+      // ✅ 优化格式：调整顺序为 输入 → 估算 → 输出 → thinking → 余量
       console.log(
-        `[GeminiTranslator] 📊 Token实际用量: 输入=${actualInput}, 输出=${actualOutput}, thinking=${thoughtsTokens}, 总计=${actualTotal} | ` +
-        `估算${estimatedOutput} vs 实际${actualOutput} (差距${diff}, ${diffPercent}%)`
+        `[GeminiTranslator] 📊 Token实际用量: 输入=${actualInput}, 估算=${estimatedOutput}, 输出=${actualOutput}, thinking=${thoughtsTokens}, 余量=${remaining} (${remainingPercent}%)`
       );
     }
 

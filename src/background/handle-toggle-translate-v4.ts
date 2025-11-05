@@ -675,9 +675,9 @@ export async function handleToggleTranslateV4(
       sourceLanguageCode = effectiveSubtitleData.sourceLanguageCode;
       console.log(`[service-worker-v4] 使用字幕数据中的源语言代码: ${sourceLanguageCode}`);
     }
-    
+
     // ========== Stage 5: 执行翻译 ==========
-    
+
     // 创建翻译器
     const translator = new TwoPhaseTranslatorV4();
     
