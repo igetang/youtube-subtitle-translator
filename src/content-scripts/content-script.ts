@@ -26,7 +26,8 @@ let uiRenderer: UIRenderer | null = null;
 let stateManager: StateManager | null = null;
 let isInitialized = false;
 let lastPopupCloseTime = 0;
-let capturedSourceLang: string | null = null; // 存储从service-worker传递的源语言
+let capturedSourceLanguageCode: string | null = null; // 存储源语言代码（如 en）
+let capturedSourceLanguageName: string | null = null; // 存储源语言名称（如 English）
 
 // API响应处理器Map
 const apiResponseHandlers = new Map<string, (response: any) => void>();
@@ -227,10 +228,6 @@ function setupVisibilityChangeListener(): void {
  * 处理用户行为事件
  */
 function handleUserAction(action: string, data: any): void {
-  if (action === 'buttonClick') {
-    console.debug(`[debug][content-script] 按钮点击: ${data.buttonType}`);
-  }
-
   switch (action) {
     case 'buttonClick':
       handleButtonClick(data);
@@ -601,7 +598,8 @@ async function autoRestoreTranslationIfNeeded(forceRestore: boolean = false): Pr
 
 function resetTranslateState(reason: RefreshReason): void {
   console.log(`[content-script] 重置翻译状态为未激活（reason=${reason}）`);
-  capturedSourceLang = null;
+  capturedSourceLanguageCode = null;
+  capturedSourceLanguageName = null;
   hideTranslatedSubtitles();
   window.postMessage({
     source: 'content-script',
@@ -669,10 +667,13 @@ function setupMessageHandlers(): void {
     if (messageType === 'REQUEST_SUBTITLE_CAPTURE') {
       console.debug(`[debug][content-script] 收到Chrome消息: ${messageType}`);
       // 保存源语言信息
-      if (message.data?.sourceLang) {
-        capturedSourceLang = message.data.sourceLang;
-        console.debug(`[debug][content-script] 保存源语言: ${capturedSourceLang}, kind: ${message.data.sourceKind || '未指定'}`);
-      }
+      const sourceLanguageCode = message.data?.sourceLanguageCode ?? null;
+      const sourceLanguageName = message.data?.sourceLanguageName ?? null;
+      capturedSourceLanguageCode = sourceLanguageCode;
+      capturedSourceLanguageName = sourceLanguageName;
+      console.debug(
+        `[debug][content-script] 保存源语言: ${sourceLanguageName || '未知'} [${sourceLanguageCode || 'auto'}], kind: ${message.data?.sourceKind || '未指定'}`
+      );
 
       // 优先使用传递的状态，没有则读取当前状态（兼容旧代码）
       let originalSubtitleState = message.data?.originalSubtitleState;
@@ -688,7 +689,8 @@ function setupMessageHandlers(): void {
         source: 'content-script',
         type: 'REQUEST_SUBTITLE_CAPTURE',
         videoId: message.data?.videoId || getVideoId(),
-        sourceLang: message.data?.sourceLang, // 传递给main-world
+        sourceLanguageCode,
+        sourceLanguageName,
         sourceKind: message.data?.sourceKind,  // 传递字幕类型
         originalSubtitleState: originalSubtitleState  // 传递原始状态
       }, '*');
@@ -783,7 +785,7 @@ function setupMessageHandlers(): void {
     
     // 处理STATE_CHANGED消息 - 状态变更通知
     if (messageType === 'STATE_CHANGED') {
-      console.log('[content-script] 收到状态变更通知:', message.data);
+      console.debug('[debug][content-script] 收到状态变更通知:', message.data);
       if (message.data && message.data.stateKey === 'translateActive') {
         // 更新UI状态
         if (stateManager) {
@@ -802,11 +804,12 @@ function setupMessageHandlers(): void {
       const { sourceLanguageCode, sourceLanguageName, sourceKind, originalSubtitleState } = message;
       console.debug(`[debug][content-script] 收到源语言: ${sourceLanguageName} [${sourceLanguageCode}], 字幕类型: ${sourceKind}`);
 
-      // ✅ 保存源语言name到capturedSourceLang（用于后续SUBTITLE_DATA消息）
-      if (sourceLanguageName) {
-        capturedSourceLang = sourceLanguageName;
-        console.debug(`[debug][content-script] 保存源语言name: ${capturedSourceLang}`);
-      }
+      // ✅ 保存源语言参数（用于后续SUBTITLE_DATA消息）
+      capturedSourceLanguageCode = sourceLanguageCode || null;
+      capturedSourceLanguageName = sourceLanguageName || null;
+      console.debug(
+        `[debug][content-script] 保存源语言name: ${capturedSourceLanguageName || '未知'} [${capturedSourceLanguageCode || 'auto'}]`
+      );
 
       // 使用传递过来的原始状态，而不是重新读取
       if (originalSubtitleState !== undefined) {
@@ -883,13 +886,13 @@ function setupMessageHandlers(): void {
     
     // 处理来自main-world的字幕数据
     if (source === 'main-world' && type === 'SUBTITLE_CAPTURED') {
-      console.log('[content-script] 收到字幕数据:', payload.count, '条');
+      console.debug('[debug][content-script] 收到字幕数据:', payload.count, '条');
       handleSubtitleCaptured(payload);
     }
 
     // 处理拦截器销毁确认
     if (source === 'main-world' && type === 'INTERCEPTOR_DESTROYED') {
-      console.log('[content-script] ✅ 拦截器已销毁');
+      // 主世界已记录销毁日志，这里无需重复输出
     }
 
     // 处理拦截器初始化失败
@@ -1242,10 +1245,10 @@ function handleGetVideoTrackData(videoId: string, sendResponse: (response: any) 
  * 处理捕获到的字幕数据
  */
 function handleSubtitleCaptured(payload: any): void {
-  console.log('[content-script] 处理字幕数据，共', payload.count, '条');
+  console.debug('[debug][content-script] 处理字幕数据，共', payload.count, '条');
 
   // 🔧 立即销毁拦截器，不管成功失败
-  console.log('[content-script] 字幕捕获完成，立即销毁拦截器');
+  console.debug('[debug][content-script] 字幕捕获完成，立即销毁拦截器');
   window.postMessage({
     source: 'content-script',
     type: 'DESTROY_SUBTITLE_INTERCEPTOR'
@@ -1284,7 +1287,8 @@ function handleSubtitleCaptured(payload: any): void {
       subtitles: payload.subtitles,
       url: payload.url,
       count: payload.count,
-      sourceLang: capturedSourceLang, // 传递保存的源语言
+      sourceLanguageName: capturedSourceLanguageName,
+      sourceLanguageCode: capturedSourceLanguageCode,
       currentTime: currentTime  // 添加当前播放时间
       // 不要设置tabId，让service-worker从sender.tab.id获取
     }
@@ -1296,7 +1300,7 @@ function handleSubtitleCaptured(payload: any): void {
     }
 
     if (response && response.success) {
-      console.log('[content-script] ✓ SUBTITLE_DATA: 成功');
+      console.debug('[debug][content-script] SUBTITLE_DATA 已发送');
     }
   });
 }
@@ -1545,7 +1549,8 @@ async function handleVideoChange(oldVideoId: string | null, newVideoId: string):
   console.log(`[content-script] 视频切换检测: ${oldVideoId} → ${newVideoId}`);
 
   // 1. 清理临时变量
-  capturedSourceLang = null;
+  capturedSourceLanguageCode = null;
+  capturedSourceLanguageName = null;
 
   // 2. 销毁拦截器（如果存在）
   console.log('[content-script] 视频切换，销毁拦截器...');
@@ -1732,7 +1737,8 @@ function setupTranslationServiceChangeListener(): void {
 
         const sourceTrack = await getCurrentSourceTrack(videoId);
         const sourceLang = sourceTrack?.languageCode || 'auto';
-        capturedSourceLang = sourceLang;
+        capturedSourceLanguageCode = sourceLang;
+        capturedSourceLanguageName = sourceTrack?.name || capturedSourceLanguageName;
 
         const userPrefs = await prefsManager.getUserPreferences();
         const cacheResponse = await chrome.runtime.sendMessage({
@@ -1980,7 +1986,8 @@ async function handleTargetLanguageChangeRealtime(newTargetLang: string, oldTarg
 
     const sourceTrack = await getCurrentSourceTrack(videoId);
     const sourceLang = sourceTrack?.languageCode || 'auto';
-    capturedSourceLang = sourceLang;
+    capturedSourceLanguageCode = sourceLang;
+    capturedSourceLanguageName = sourceTrack?.name || capturedSourceLanguageName;
 
     const prefsManager = UserPreferencesManager.getInstance();
     const userPrefs = await prefsManager.getUserPreferences();
@@ -2065,8 +2072,8 @@ async function handleTargetLanguageChangeRealtime(newTargetLang: string, oldTarg
 }
 
 async function getCurrentSourceLanguageForRealtime(videoId: string): Promise<string> {
-  if (capturedSourceLang) {
-    return capturedSourceLang;
+  if (capturedSourceLanguageCode) {
+    return capturedSourceLanguageCode;
   }
 
   try {

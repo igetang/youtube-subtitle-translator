@@ -101,8 +101,15 @@ class MainWorldMessenger {
    * 处理字幕捕获请求
    */
   private handleSubtitleCapture(data: any): void {
-    const { sourceLang, sourceKind, originalSubtitleState } = data;
-    console.debug(`[debug][MainWorld] 收到字幕捕获请求 | sourceLang: ${sourceLang}, sourceKind: ${sourceKind}, originalSubtitleState: ${originalSubtitleState}`);
+    const {
+      sourceLanguageCode,
+      sourceLanguageName,
+      sourceKind,
+      originalSubtitleState
+    } = data;
+    console.debug(
+      `[debug][MainWorld] 收到字幕捕获请求 | sourceLanguageName: ${sourceLanguageName}, sourceLanguageCode: ${sourceLanguageCode}, sourceKind: ${sourceKind}, originalSubtitleState: ${originalSubtitleState}`
+    );
 
     // 并发控制：防止重复初始化
     if (!SubtitleInterceptor.isActive() && !isInitializing) {
@@ -110,7 +117,12 @@ class MainWorldMessenger {
 
       const interceptor = SubtitleInterceptor.getInstance();
       // 传递原始状态给拦截器
-      const success = interceptor.initialize(sourceLang, sourceKind, originalSubtitleState);
+      const success = interceptor.initialize({
+        sourceLanguageName,
+        sourceLanguageCode,
+        sourceKind,
+        originalSubtitleState
+      });
 
       isInitializing = false;
 
@@ -806,13 +818,21 @@ class SubtitleAPIController {
 let subtitleAPIController: SubtitleAPIController | null = null;
 
 // 字幕拦截器类（优化版）
+interface SubtitleInterceptorInitOptions {
+  sourceLanguageName?: string;
+  sourceLanguageCode?: string;
+  sourceKind?: string;
+  originalSubtitleState?: boolean;
+}
+
 class SubtitleInterceptor {
   private static instance: SubtitleInterceptor | null = null;
   private capturedSubtitles: any[] = [];
   private capturedUrl: string | null = null;
   private isActive: boolean = false;  // 简化状态管理
   private destroyTimer: number | null = null;  // 超时保护
-  private targetSourceLang: string | null = null;  // 目标源语言
+  private targetSourceLanguageName: string | null = null;  // 目标源语言名称
+  private targetSourceLanguageCode: string | null = null;  // 目标源语言代码
   private targetSourceKind: string | null = null;  // 目标字幕类型（手动/asr）
   private originalSubtitleState: boolean | null = null;  // 保存原始字幕按钮状态
 
@@ -830,14 +850,22 @@ class SubtitleInterceptor {
   }
 
   // 初始化返回成功状态
-  initialize(sourceLang?: string, sourceKind?: string, originalSubtitleState?: boolean): boolean {
+  initialize(options: SubtitleInterceptorInitOptions = {}): boolean {
+    const {
+      sourceLanguageName,
+      sourceLanguageCode,
+      sourceKind,
+      originalSubtitleState
+    } = options;
+
     if (this.isActive) {
       console.log('[SubtitleInterceptor] 拦截器已激活，跳过初始化');
       return true;
     }
 
     // 保存目标参数
-    this.targetSourceLang = sourceLang || null;
+    this.targetSourceLanguageName = sourceLanguageName || null;
+    this.targetSourceLanguageCode = sourceLanguageCode || null;
     this.targetSourceKind = sourceKind || null;
     this.originalSubtitleState = originalSubtitleState ?? null;
 
@@ -923,8 +951,6 @@ class SubtitleInterceptor {
       return;
     }
 
-    console.log('[SubtitleInterceptor] 🔧 销毁拦截器...');
-
     // 清除超时计时器
     if (this.destroyTimer) {
       clearTimeout(this.destroyTimer);
@@ -940,6 +966,9 @@ class SubtitleInterceptor {
     this.capturedUrl = null;
     this.isActive = false;
     this.originalSubtitleState = null;  // 清理原始状态
+    this.targetSourceLanguageName = null;
+    this.targetSourceLanguageCode = null;
+    this.targetSourceKind = null;
 
     // 清理全局字幕数据
     delete (window as any).__capturedSubtitles;

@@ -2004,8 +2004,7 @@ function setupStateChangeListeners(): void {
   runtimeStateManager.addChangeListener(
     RuntimeStateChangeEvent.TRANSLATE_ACTIVE_CHANGED,
     (newValue, oldValue) => {
-      console.debug(`[service-worker] 状态变更: translateState [${oldValue} → ${newValue}]`);
-      // 可以在这里添加状态变更后的处理逻辑
+      // 状态变更逻辑由 runtimeStateManager 统一记录
     }
   );
   
@@ -2380,6 +2379,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
     
     let sourceLang: string = 'auto'; // 默认值
     let sourceKind: 'asr' | 'forced' | undefined;
+    let sourceLanguageName: string | undefined = sourceData?.selectedSourceTrack?.name;
 
     if (sourceData && sourceData.availableSourceLanguages && sourceData.availableSourceLanguages.length > 0) {
       // 调试：检查selectedSourceTrack的类型
@@ -2397,6 +2397,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
       );
       sourceLang = sourceTrack.languageCode;
       sourceKind = sourceTrack.kind;
+      sourceLanguageName = sourceTrack.name || sourceLang;
       console.debug('[debug][service-worker] 智能选择源语言:', sourceLang, sourceTrack.kind === 'asr' ? '(ASR)' : '', {
         targetLang: preferences.targetLang,
         lastSelected: sourceData.selectedSourceTrack?.languageCode,
@@ -2407,6 +2408,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
       console.warn('[service-worker] ⚠️ 没有源语言缓存，需要获取字幕轨道信息');
       // 这里暂时使用auto，后续在获取字幕时会更新
       sourceLang = 'auto';
+      sourceLanguageName = 'auto';
     }
     
     // Step 3: 构建缓存键并检查翻译结果缓存
@@ -2583,6 +2585,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
               );
               sourceLang = sourceTrack.languageCode;
               sourceKind = sourceTrack.kind;
+              sourceLanguageName = sourceTrack.name || sourceLang;
               console.debug('[debug][service-worker] Step 5.2: 选择源语言:', sourceLang, sourceTrack.kind === 'asr' ? '(ASR)' : '');
             }
             
@@ -2706,7 +2709,8 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
         type: 'REQUEST_SUBTITLE_CAPTURE',
         data: {
           videoId,
-          sourceLang, // 传递选定的源语言
+          sourceLanguageCode: sourceLang,
+          sourceLanguageName: sourceLanguageName || sourceLang,
           sourceKind  // 传递字幕类型（手动/ASR）
         }
       }).catch(error => {

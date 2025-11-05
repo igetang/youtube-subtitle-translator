@@ -17,7 +17,8 @@ interface SubtitleData {
     end: number;
     index?: number;
   }>;
-  sourceLang?: string;
+  sourceLanguageName?: string;
+  sourceLanguageCode?: string;
   currentTime?: number;
   videoId?: string;
 }
@@ -605,7 +606,6 @@ export async function handleToggleTranslateV4(
         { timeoutMs: 2000 }
       );
 
-      console.log('[service-worker-v4] 等待字幕数据响应...');
       subtitleData = await session.executeStage(
         'subtitle_fetch',
         async (signal) => {
@@ -627,9 +627,10 @@ export async function handleToggleTranslateV4(
                     return true;
                   }
 
-                  console.log('[service-worker-v4] ✓ 接收字幕数据: ' +
-                              (message.data?.subtitles?.length || 0) + ' 条' +
-                              (message.data?.sourceLang ? ' (' + message.data.sourceLang + ')' : ''));
+                  const subtitleLabel = message.data?.sourceLanguageName
+                    ? ` (${message.data.sourceLanguageName}${message.data?.sourceLanguageCode ? ' [' + message.data.sourceLanguageCode + ']' : ''})`
+                    : '';
+                  console.log(`[service-worker-v4] ✓ 接收字幕数据: ${(message.data?.subtitles?.length || 0)} 条${subtitleLabel}`);
                   resolve(message.data as SubtitleData);
                 }
                 return true;
@@ -666,9 +667,13 @@ export async function handleToggleTranslateV4(
     console.log(`[service-worker-v4] 字幕数据就绪 | ${effectiveSubtitleData.subtitles.length} 条 | 源语言: ${sourceLanguageName}`);
 
     // 如果字幕数据中包含源语言信息，且当前是auto，更新源语言
-    if (effectiveSubtitleData.sourceLang && sourceLanguageName === 'auto') {
-      sourceLanguageName = effectiveSubtitleData.sourceLang;
+    if (effectiveSubtitleData.sourceLanguageName && sourceLanguageName === 'auto') {
+      sourceLanguageName = effectiveSubtitleData.sourceLanguageName;
       console.log(`[service-worker-v4] 使用字幕数据中的源语言: ${sourceLanguageName}`);
+    }
+    if (effectiveSubtitleData.sourceLanguageCode && sourceLanguageCode === 'auto') {
+      sourceLanguageCode = effectiveSubtitleData.sourceLanguageCode;
+      console.log(`[service-worker-v4] 使用字幕数据中的源语言代码: ${sourceLanguageCode}`);
     }
     
     // ========== Stage 5: 执行翻译 ==========

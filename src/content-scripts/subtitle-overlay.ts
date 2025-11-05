@@ -38,6 +38,7 @@ export class SubtitleOverlay {
   // 响应式字幕相关属性
   private playerObserver: ResizeObserver | null = null;
   private playerElement: HTMLElement | null = null;
+  private hasLoggedInitialization: boolean = false;
 
   constructor() {
     this.userPreferencesManager = UserPreferencesManager.getInstance();
@@ -171,7 +172,12 @@ export class SubtitleOverlay {
     const videoContainer = this.videoElement?.closest('#movie_player, .html5-video-player');
     if (videoContainer) {
       videoContainer.appendChild(this.overlayElement);
-      console.log('[SubtitleOverlay] 字幕覆盖层已创建（三层结构）');
+      if (!this.hasLoggedInitialization) {
+        console.log('[SubtitleOverlay] ✅ 覆盖层初始化完成（三层结构）');
+        this.hasLoggedInitialization = true;
+      } else {
+        console.debug('[debug][SubtitleOverlay] 覆盖层已存在，跳过重复初始化');
+      }
     } else {
       console.error('[SubtitleOverlay] 未找到视频容器');
     }
@@ -195,7 +201,7 @@ export class SubtitleOverlay {
    * 显示翻译后的字幕 - 智能识别输入格式
    */
   public async show(translationData: any): Promise<void> {
-    console.log('[SubtitleOverlay] 显示翻译字幕');
+    console.debug('[debug][SubtitleOverlay] 开始显示翻译字幕');
 
     try {
       // 智能识别输入格式
@@ -277,7 +283,7 @@ export class SubtitleOverlay {
         this.overlayElement.style.display = '';
       }
 
-      console.log('[SubtitleOverlay] 字幕数据已加载，开始显示');
+      console.log(`[SubtitleOverlay] ✅ 字幕显示完成 | ${this.currentSubtitles.length} 条`);
     } catch (error) {
       console.error('[SubtitleOverlay] 显示字幕失败:', error);
     }
