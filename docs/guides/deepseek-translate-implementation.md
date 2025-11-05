@@ -1,8 +1,8 @@
 # DeepSeek AI翻译API实现指南
 
-> 最后更新：2025-10-06
+> 最后更新：2025-01-15
 > 状态：✅ V4架构优化完成，待实现
-> 版本：V4架构兼容（AbortSignal + 统一存储）
+> 版本：V4架构兼容（AbortSignal + 统一存储 + 统一语言参数）
 
 ## 📋 概述
 
@@ -40,6 +40,7 @@
 | 紧急翻译范围 | 前2后5（共8条，2025-10-28优化） | 原前9后10（共20条），优化后更快响应 |
 | 批次间延迟 | 200 ms（仅 batch 阶段） | urgent 阶段无延迟 |
 | 存储位置 | `translationService.apiKey` | 统一存储，不单独存储 |
+| 语言参数格式 | 英文name（顶层转换） | 与OpenAI相同，使用"English" → "Chinese"（v5.x新增） |
 
 > 响应体包含 `usage.prompt_tokens` / `completion_tokens` / `total_tokens` 字段，可直接记录用量。
 
@@ -114,9 +115,14 @@ for (let idx = 0; idx < maxCount; idx++) {
 
 #### 2. 优化 System Prompt（核心）
 
+> **⚠️ 重要**（v5.x更新）：
+> `sourceLang`和`targetLang`参数已在调用前统一转换为**英文名称**。
+> Prompt中的语言参数无需再转换，直接使用即可。
+
 **旧版 Prompt（存在问题）：**
 ```
 You are a professional translator. Translate ${count} video subtitles from ${sourceLang} to ${targetLang}.
+// ✅ sourceLang = "English", targetLang = "Chinese"（已在顶层转换）
 
 Format: ${count} texts separated by "\n---\n"
 Output: ${count} translations in same order, separated by "\n---\n"

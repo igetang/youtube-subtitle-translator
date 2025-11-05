@@ -39,6 +39,77 @@ import {
 } from './components/message-with-signal';
 import { TwoPhaseTranslatorV4, GOOGLE_TRANSLATE_BATCH_TIMEOUT_MS } from './components/two-phase-translator-v4';
 import { createVttString, parseVttString, mergeVttStrings } from '../shared/utils/vtt-utils';
+import { LanguageCodeMapper } from '../shared/utils/language-code-mapper';
+
+/**
+ * 语言参数接口
+ */
+interface LanguageParams {
+  source: string;  // 源语言参数（根据服务类型可能是code或name）
+  target: string;  // 目标语言参数（根据服务类型可能是code或name）
+}
+
+/**
+ * 根据翻译服务类型准备语言参数
+ * 统一在最顶层转换一次，避免重复转换和日志打印
+ *
+ * @param sourceCode 源语言代码（如 'en', 'zh-CN'）
+ * @param targetCode 目标语言代码（如 'ko', 'ja'）
+ * @param serviceType 翻译服务类型
+ * @returns 转换后的语言参数对象
+ */
+function prepareLanguageParams(
+  sourceCode: string,
+  targetCode: string,
+  serviceType: string
+): LanguageParams {
+  const normalizedSourceCode = sourceCode && sourceCode.trim() !== '' ? sourceCode : 'auto';
+
+  switch (serviceType) {
+    case 'google-free':
+    case 'microsoft-free':
+    case 'google':
+    case 'microsoft':
+      // REST API 使用小写 code
+      return {
+        source: normalizedSourceCode.toLowerCase(),
+        target: targetCode.toLowerCase()
+      };
+
+    case 'deepl':
+      // DeepL 使用大写 CODE
+      return {
+        source: normalizedSourceCode.toUpperCase(),
+        target: targetCode.toUpperCase()
+      };
+
+    case 'deepseek':
+    case 'gemini':
+      // Chat API 使用英文名称（静默模式）
+      const sourceName = LanguageCodeMapper.toEnglishName(normalizedSourceCode, true);
+      const targetName = LanguageCodeMapper.toEnglishName(targetCode, true);
+
+      // ✅ 统一打印：整个翻译流程只打印1次语言转换日志
+      console.debug(
+        `[debug][LanguageCodeMapper] ${normalizedSourceCode} → ${sourceName}, ${targetCode} → ${targetName}`
+      );
+      console.log(
+        `[service-worker-v4] 📋 Chat API语言参数: ${sourceName} → ${targetName}`
+      );
+
+      return {
+        source: sourceName,
+        target: targetName
+      };
+
+    default:
+      // 默认使用小写 code
+      return {
+        source: normalizedSourceCode.toLowerCase(),
+        target: targetCode.toLowerCase()
+      };
+  }
+}
 
 /**
  * 处理翻译开关切换 - 使用AbortController架构v4.0
@@ -676,6 +747,14 @@ export async function handleToggleTranslateV4(
       console.log(`[service-worker-v4] 使用字幕数据中的源语言代码: ${sourceLanguageCode}`);
     }
 
+    // ========== Stage 4.5: 统一准备语言参数 ==========
+    // ✅ 根据翻译服务类型，统一转换一次语言参数（只转换1次，只打印1次）
+    const languageParams = prepareLanguageParams(
+      sourceLanguageCode,
+      preferences.targetLang,
+      preferences.translationService?.type || 'google-free'
+    );
+
     // ========== Stage 5: 执行翻译 ==========
 
     // 创建翻译器
@@ -695,8 +774,7 @@ export async function handleToggleTranslateV4(
           return await translator.translateUrgent(
             effectiveSubtitleData.subtitles,
             effectiveSubtitleData.currentTime || 0,
-            sourceLanguageName,  // ✅ 传递源语言name
-            sourceLanguageCode,
+            languageParams,  // ✅ 传递统一转换后的语言参数
             preferences,
             signal
           );
@@ -837,8 +915,7 @@ export async function handleToggleTranslateV4(
         return await translator.translateBatch(
           effectiveSubtitleData.subtitles,
           urgentResults,
-          sourceLanguageName,  // ✅ 传递源语言name
-          sourceLanguageCode,
+          languageParams,  // ✅ 传递统一转换后的语言参数
           preferences,
           signal
         );

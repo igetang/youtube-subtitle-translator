@@ -201,6 +201,33 @@ YouTube API (Content Script)
 - **时间间隔断句**：最大间隔>最小间隔+400ms才断句
 - **无重试架构**：Fail Fast原则，5秒内必有结果
 - **AbortController**：真正的执行流中断机制
+- **统一语言参数**（v5.x优化）：顶层统一转换，避免重复
+
+#### 语言参数统一架构（v5.x优化）⭐
+
+**核心改进**：提升语言参数转换到最顶层，避免重复转换和日志冗余
+
+**数据流**：
+```
+handle-toggle-translate-v4.ts（顶层）
+  ↓
+【Stage 4.5】prepareLanguageParams() ⟶ 只转换1次
+  ↓
+TwoPhaseTranslatorV4（中层）⟶ 直接传递languageParams
+  ↓
+各翻译器（底层）⟶ 无脑使用，不再转换
+```
+
+**服务适配规则**：
+- **google/microsoft**: 小写code（`en`, `zh-cn`）
+- **deepl**: 大写CODE（`EN`, `ZH`）
+- **openai/deepseek/gemini**: 英文name（`English`, `Chinese`）
+
+**效果**：
+- ✅ 转换次数：O(N) → O(1)
+- ✅ 日志打印：N+1次 → 1次
+- ✅ 职责清晰：顶层准备，底层使用
+- ✅ 易维护：新增服务只需添加1个case
 
 ## 🔨 开发命令
 

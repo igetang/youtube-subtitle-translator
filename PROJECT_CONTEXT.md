@@ -174,6 +174,34 @@
 - 修复位置：`src/background/components/two-phase-translator-v4.ts` 第347-379行
 - 提交记录：15c4367
 
+### 最近完成的优化 (2025-01-15)
+
+**✅ 已完成：统一语言参数转换架构**
+- 问题背景：语言参数在每次API调用时都转换1次，导致重复转换（N+1次）和日志冗余
+- 解决方案：
+  - 新增`prepareLanguageParams()`函数（顶层统一转换）
+  - 修改`TwoPhaseTranslatorV4`接口（2个参数合并为1个对象）
+  - 删除内部转换逻辑（避免重复）
+  - 更新所有翻译服务实现指南
+- 效果：
+  - ✅ 转换次数从O(N)减少到O(1)
+  - ✅ 日志打印从N+1次减少到1次
+  - ✅ 代码净减少约85行
+  - ✅ 职责清晰：顶层准备，底层使用
+- 影响文件：
+  - `handle-toggle-translate-v4.ts` (+75行)
+  - `two-phase-translator-v4.ts` (-160行)
+  - `picture/1.png` (更新截图)
+- 文档更新：
+  - `docs/architecture/07-batch-translation-architecture.md` - 新增3.0节
+  - `docs/architecture/08-abort-timeout-architecture.md` - 新增Stage 4.5
+  - `docs/guides/openai-translate-implementation.md` - 更新优化4
+  - `docs/guides/deepseek-translate-implementation.md` - 更新基础配置
+  - `docs/guides/gemini-translate-implementation.md` - 新增重要提示
+  - `docs/guides/translation-flow.md` - 新增2.0节和流程图
+  - `CLAUDE.md` - 新增语言参数统一架构章节
+  - `PROJECT_CONTEXT.md` - 本条记录
+
 ### 今日任务 (2025-10-30)
 - [x] 修复popup源语言下拉框中英混合显示问题
 - [x] 修改vite构建配置，从 `_locales` 复制i18n文件
@@ -184,6 +212,11 @@
 - [x] 精简OpenAI翻译器错误日志（删除重复日志）
 
 ## 📋 最近3天的重要改动
+
+### 2025-01-15
+- **统一语言参数转换架构**：提升到顶层统一处理，O(N)→O(1)
+- **文档大更新**：更新8个核心文档，记录架构改进
+- **代码重构**：删除重复转换逻辑，代码净减少85行
 
 ### 2025-10-30
 - **修复popup语言显示bug**：解决源语言下拉框中英混合问题
@@ -307,6 +340,7 @@
 - **为什么每批次前都延迟200ms**：避免API限流，包括第一批（2025-09-22）
 - **为什么使用Intl.DisplayNames**：浏览器内置API，零维护成本，支持8000+语言组合（2025-10-30）
 - **为什么Chat API用英文名称**：官方最佳实践，避免AI误解语言代码（2025-10-30）
+- **为什么语言参数在顶层统一转换**：避免重复转换（O(N)→O(1)），职责清晰，易维护（2025-01-15）
 
 ---
 *提示：这个文件应该每天更新，保持信息实时性*

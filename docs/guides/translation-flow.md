@@ -20,7 +20,8 @@ flowchart TD
     D -- 否 --> E[降级到拦截器方案]
     D -- 是 --> F[获取ISO 639-1语言列表]
     F --> G[智能选择源语言]
-    G --> H[通过API设置字幕语言]
+    G --> G1[准备语言参数]
+    G1 --> H[通过API设置字幕语言]
     H --> I[获取字幕内容]
     I --> J{缓存命中?}
     J -- 是 --> K[使用缓存结果]
@@ -30,8 +31,9 @@ flowchart TD
     M --> N
     N --> O[显示双语字幕]
     E --> P[状态: PENDING → INACTIVE]
-    
+
     style B fill:#FFE4B5
+    style G1 fill:#E0E0FF
     style N fill:#90EE90
     style P fill:#FFB6C1
 ```
@@ -117,6 +119,49 @@ if (translateActive === TranslateActiveState.PENDING) {
 ```
 
 ## 2. YouTube Player API与字幕获取
+
+### 2.0 语言参数准备（v5.x新增）⭐
+
+在获取字幕后、执行翻译前，需要根据翻译服务类型统一转换语言参数。
+
+**实现位置**：`handle-toggle-translate-v4.ts:prepareLanguageParams()`
+
+**调用时机**：Stage 4.5（智能选择源语言后、翻译执行前）
+
+**转换规则**：
+
+| 服务类型 | 参数格式 | 示例 | 说明 |
+|---------|---------|------|------|
+| Google/Microsoft | 小写code | `en`, `zh-cn` | REST API使用ISO 639-1小写代码 |
+| DeepL | 大写CODE | `EN`, `ZH` | DeepL要求大写语言代码 |
+| OpenAI/DeepSeek/Gemini | 英文name | `English`, `Chinese` | Chat API使用语言英文全称 |
+
+**核心优势**：
+- ✅ 只转换1次（避免每次API调用都转换）
+- ✅ 只打印1次日志（避免控制台刷屏）
+- ✅ 职责分离（顶层准备，底层使用）
+
+**代码示例**：
+```typescript
+// Stage 4.5: 统一准备语言参数
+const languageParams = prepareLanguageParams(
+  sourceCode,    // 'en'
+  targetCode,    // 'zh-CN'
+  serviceType    // 'openai'
+);
+// languageParams = { source: 'English', target: 'Chinese' }
+
+// Stage 5: 传递给翻译器（已转换，无需再处理）
+const results = await translator.translateUrgent(
+  subtitles,
+  currentTime,
+  languageParams,  // ✅ 直接使用已转换的参数
+  preferences,
+  signal
+);
+```
+
+---
 
 ### 2.1 YouTube Player API集成
 

@@ -1,9 +1,9 @@
 # YouTube字幕批量翻译架构设计 - 时间间隔断句方案
 
 > 📅 **文档信息**
-> - 创建日期：2025-09-05  
-> - 更新日期：2025-09-07
-> - 版本：v2.1.0
+> - 创建日期：2025-09-05
+> - 更新日期：2025-01-15
+> - 版本：v2.2.0
 > - 状态：**生产方案（Production Ready）**
 
 > 📌 **历史版本说明**
@@ -62,6 +62,7 @@ graph TB
 | API_DELAY | 200ms | API调用间隔（避免限流） |
 | 动态阈值 | 自适应 | max(平均间隔×3, 中位数×2, 1秒) |
 | 执行模式 | 并行 | 紧急翻译与批量翻译并行执行 |
+| 语言参数准备 | Stage 4.5 | 顶层统一转换，避免重复（v2.2.0新增） |
 
 > **⚠️ 重要更新（2025-10-30）**：
 > - **Google/Microsoft**：使用40条/批（默认值）
@@ -187,6 +188,176 @@ if (translatedArray.length !== batch.length) {
 | 文本首尾空格 | API返回格式问题 | trim()处理 |
 
 ## 三、核心算法实现
+
+### 3.0 语言参数准备（v2.2.0新增）⭐
+
+#### 3.0.1 架构背景
+
+在执行翻译前，需要根据翻译服务类型准备正确格式的语言参数。不同翻译服务对语言参数的格式要求不同：
+
+| 服务类型 | 参数格式 | 示例 | 说明 |
+|---------|---------|------|------|
+| `google-free`<br>`microsoft-free`<br>`google`<br>`microsoft` | 小写code | `en`, `zh-cn` | REST API使用ISO 639-1小写代码 |
+| `deepl` | 大写CODE | `EN`, `ZH` | DeepL要求大写语言代码 |
+| `openai`<br>`deepseek`<br>`gemini` | 英文name | `English`, `Chinese` | Chat API使用语言英文全称 |
+
+#### 3.0.2 架构设计
+
+**设计原则**：
+- ✅ **顶层统一转换**：在`handle-toggle-translate-v4.ts`的Stage 4.5统一转换
+- ✅ **只转换1次**：整个翻译流程（紧急+批量）只转换1次
+- ✅ **只打印1次**：避免日志冗余，控制台清晰
+- ✅ **职责分离**：顶层负责准备，底层负责使用
+
+**实现位置**：`src/background/handle-toggle-translate-v4.ts:42-111`
+
+**调用时机**：Stage 4.5（字幕获取后、翻译执行前）
+
+#### 3.0.3 核心代码
+
+```typescript
+/**
+ * 根据翻译服务类型准备语言参数
+ * @param sourceCode 源语言代码（如 'en', 'zh-CN'）
+ * @param targetCode 目标语言代码（如 'ko', 'ja'）
+ * @param serviceType 翻译服务类型
+ * @returns 转换后的语言参数对象
+ */
+function prepareLanguageParams(
+  sourceCode: string,
+  targetCode: string,
+  serviceType: string
+): LanguageParams {
+  const normalizedSourceCode = sourceCode || 'auto';
+
+  switch (serviceType) {
+    case 'google-free':
+    case 'microsoft-free':
+    case 'google':
+    case 'microsoft':
+      // REST API：小写code
+      return {
+        source: normalizedSourceCode.toLowerCase(),
+        target: targetCode.toLowerCase()
+      };
+
+    case 'deepl':
+      // DeepL：大写CODE
+      return {
+        source: normalizedSourceCode.toUpperCase(),
+        target: targetCode.toUpperCase()
+      };
+
+    case 'deepseek':
+    case 'gemini':
+    case 'openai':
+      // Chat API：英文name（使用浏览器内置API转换）
+      const sourceName = LanguageCodeMapper.toEnglishName(normalizedSourceCode, true);
+      const targetName = LanguageCodeMapper.toEnglishName(targetCode, true);
+
+      // ✅ 只打印1次日志
+      console.debug(
+        `[debug][LanguageCodeMapper] ${normalizedSourceCode} → ${sourceName}, ${targetCode} → ${targetName}`
+      );
+      console.log(
+        `[service-worker-v4] 📋 Chat API语言参数: ${sourceName} → ${targetName}`
+      );
+
+      return { source: sourceName, target: targetName };
+
+    default:
+      return {
+        source: normalizedSourceCode.toLowerCase(),
+        target: targetCode.toLowerCase()
+      };
+  }
+}
+```
+
+#### 3.0.4 数据流
+
+**旧架构（重复转换）**：
+```
+紧急翻译
+  ↓ 转换1次（en → English）
+  callTranslationAPI()
+
+批量翻译 - 批次1
+  ↓ 转换2次（en → English）
+  callTranslationAPI()
+
+批量翻译 - 批次2
+  ↓ 转换3次（en → English）
+  callTranslationAPI()
+
+...
+总计：转换N+1次，打印N+1次日志
+```
+
+**新架构（只转换1次）**：
+```
+【Stage 4.5】prepareLanguageParams()
+  ↓ 只转换1次（en → English）
+  ↓ 只打印1次日志
+  返回 languageParams = { source: 'English', target: 'Chinese' }
+
+紧急翻译
+  ↓ 直接使用 languageParams
+  callTranslationAPI(languageParams)
+
+批量翻译 - 批次1
+  ↓ 直接使用 languageParams
+  callTranslationAPI(languageParams)
+
+批量翻译 - 批次2
+  ↓ 直接使用 languageParams
+  callTranslationAPI(languageParams)
+
+...
+总计：只转换1次，只打印1次日志
+```
+
+#### 3.0.5 架构优势
+
+| 维度 | 旧架构 | 新架构 |
+|-----|-------|-------|
+| **转换次数** | O(N) - 每批次转换1次 | **O(1) - 只转换1次** ⭐ |
+| **日志数量** | N+1次（紧急1次+批量N次） | **只打印1次** ⭐ |
+| **职责划分** | 翻译器需要知道转换规则 | 翻译器只负责翻译 |
+| **代码维护** | 转换逻辑分散在多处 | 集中在一个函数 |
+| **新增服务** | 需要修改多个翻译器 | 只需添加1个case |
+
+#### 3.0.6 使用示例
+
+```typescript
+// Stage 4.5: 统一准备语言参数
+const languageParams = prepareLanguageParams(
+  sourceCode,    // 'en'
+  targetCode,    // 'zh-CN'
+  serviceType    // 'openai'
+);
+// languageParams = { source: 'English', target: 'Chinese' }
+
+// Stage 5: 紧急翻译
+const urgentResults = await translator.translateUrgent(
+  subtitles,
+  currentTime,
+  languageParams,  // ✅ 传递已转换的参数
+  preferences,
+  signal
+);
+
+// Stage 5: 批量翻译
+const batchResults = await translator.translateBatch(
+  subtitles,
+  urgentResults,
+  languageParams,  // ✅ 复用相同的参数
+  preferences,
+  signal
+);
+```
+
+---
 
 ### 3.1 动态阈值计算
 

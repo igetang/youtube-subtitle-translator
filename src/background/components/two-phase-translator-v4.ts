@@ -202,8 +202,7 @@ export class TwoPhaseTranslatorV4 {
       text: string;
     }>,
     currentTime: number,
-    sourceLanguageName: string,
-    sourceLanguageCode: string,
+    languageParams: { source: string; target: string },  // ✅ 改为接收统一的语言参数对象
     preferences: any,
     signal: AbortSignal
   ): Promise<Array<{
@@ -220,9 +219,7 @@ export class TwoPhaseTranslatorV4 {
     const results: any[] = [];
     const serviceType = preferences.translationService?.type;
     const isMicrosoftService = serviceType === 'microsoft' || serviceType === 'microsoft-free';
-    const normalizedSourceLanguageCode =
-      sourceLanguageCode && sourceLanguageCode.trim() !== '' ? sourceLanguageCode : 'auto';
-    
+
     try {
       // 找到当前播放位置的索引
       const currentIndex = subtitles.findIndex(sub =>
@@ -243,19 +240,14 @@ export class TwoPhaseTranslatorV4 {
         `${currentIndex === -1 ? '无字幕匹配' : `匹配第${currentIndex + 1}条字幕`}, ` +
         `前${beforeCount}条, 后${afterCount}条, ` +
         `紧急批次: ${urgentBatch.length}条`);
-      
+
       if (urgentBatch.length === 0) {
         return results;
       }
-      
-      const sourceLabel = this.getSourceLanguageLabel(
-        serviceType,
-        sourceLanguageName,
-        normalizedSourceLanguageCode
-      );
-      const targetLabel = this.getTargetLanguageLabel(serviceType, preferences.targetLang);
+
+      // ✅ 直接使用已转换的语言参数
       console.log(
-        `[TwoPhaseTranslatorV4] 紧急翻译 ${urgentBatch.length} 条字幕 | ${sourceLabel} → ${targetLabel}`
+        `[TwoPhaseTranslatorV4] 紧急翻译 ${urgentBatch.length} 条字幕 | ${languageParams.source} → ${languageParams.target}`
       );
 
       // 准备文本：移除单条字幕内的换行符，用空格替代
@@ -279,8 +271,8 @@ export class TwoPhaseTranslatorV4 {
       if (isMicrosoftService) {
         translatedTexts = await this.translateWithMicrosoftSubtitles(
           urgentBatch,
-          normalizedSourceLanguageCode,
-          preferences.targetLang,
+          languageParams.source,  // ✅ 使用已转换的语言参数
+          languageParams.target,
           'urgent',
           signal
         );
@@ -288,9 +280,7 @@ export class TwoPhaseTranslatorV4 {
         translatedTexts = await this.callTranslationAPI(
           texts,
           preferences.translationService,
-          sourceLanguageName,
-          normalizedSourceLanguageCode,
-          preferences.targetLang,
+          languageParams,  // ✅ 传递语言参数对象
           signal,
           { stage: 'urgent', batchIndex: 1, batchCount: 1 }
         );
@@ -348,8 +338,7 @@ export class TwoPhaseTranslatorV4 {
       text: string;
     }>,
     urgentResults: Array<any>,
-    sourceLanguageName: string,
-    sourceLanguageCode: string,
+    languageParams: { source: string; target: string },  // ✅ 改为接收统一的语言参数对象
     preferences: any,
     signal: AbortSignal
   ): Promise<Array<{
@@ -370,8 +359,7 @@ export class TwoPhaseTranslatorV4 {
       return this.translateBatchPipeline(
         subtitles,
         urgentResults,
-        sourceLanguageName,
-        sourceLanguageCode,
+        languageParams,  // ✅ 传递语言参数对象
         preferences,
         signal
       );
@@ -383,8 +371,7 @@ export class TwoPhaseTranslatorV4 {
       return this.translateBatchConcurrent(
         subtitles,
         urgentResults,
-        sourceLanguageName,
-        sourceLanguageCode,
+        languageParams,  // ✅ 传递语言参数对象
         preferences,
         signal
       );
@@ -395,8 +382,7 @@ export class TwoPhaseTranslatorV4 {
     return this.translateBatchSerial(
       subtitles,
       urgentResults,
-      sourceLanguageName,
-      sourceLanguageCode,
+      languageParams,  // ✅ 传递语言参数对象
       preferences,
       signal
     );
@@ -408,8 +394,7 @@ export class TwoPhaseTranslatorV4 {
    *
    * @param subtitles 所有字幕
    * @param urgentResults 紧急翻译结果（用于去重）
-   * @param sourceLanguageName 源语言名称（如"English"，供Chat类API与日志使用）
-   * @param sourceLanguageCode 源语言代码（如"en"，供需要代码的API使用）
+   * @param languageParams 已转换的语言参数对象
    * @param preferences 用户偏好设置
    * @param signal AbortSignal用于取消操作
    * @returns 批量翻译结果数组
@@ -423,8 +408,7 @@ export class TwoPhaseTranslatorV4 {
       text: string;
     }>,
     urgentResults: Array<any>,
-    sourceLanguageName: string,
-    sourceLanguageCode: string,
+    languageParams: { source: string; target: string },  // ✅ 改为接收语言参数对象
     preferences: any,
     signal: AbortSignal
   ): Promise<Array<{
@@ -441,13 +425,11 @@ export class TwoPhaseTranslatorV4 {
     const results: any[] = [];
     const serviceType = preferences.translationService?.type;
     const isMicrosoftService = serviceType === 'microsoft' || serviceType === 'microsoft-free';
-    const normalizedSourceLanguageCode =
-      sourceLanguageCode && sourceLanguageCode.trim() !== '' ? sourceLanguageCode : 'auto';
 
     try {
       // 延迟启动（避免与紧急翻译冲突）
       await this.delayWithSignal(TwoPhaseTranslatorV4.BATCH_START_DELAY, signal);
-      
+
       if ((preferences.translationService?.type === 'google' || preferences.translationService?.type === 'google-free') && !this.preferredGoogleEndpoint) {
         throw new Error('紧急翻译未确定可用的Google端点，跳过批量翻译');
       }
@@ -478,14 +460,9 @@ export class TwoPhaseTranslatorV4 {
         strategyInfo = `智能分批${batches.length}个`;
       }
 
-      const sourceLabel = this.getSourceLanguageLabel(
-        serviceType,
-        sourceLanguageName,
-        normalizedSourceLanguageCode
-      );
-      const targetLabel = this.getTargetLanguageLabel(serviceType, preferences.targetLang);
+      // ✅ 直接使用已转换的语言参数
       console.log(
-        `[TwoPhaseTranslatorV4] → 批量翻译: ${subtitles.length}条 | ${strategyInfo} | ${sourceLabel} → ${targetLabel}`
+        `[TwoPhaseTranslatorV4] → 批量翻译: ${subtitles.length}条 | ${strategyInfo} | ${languageParams.source} → ${languageParams.target}`
       );
 
       // 根据翻译服务类型确定单批超时时间
@@ -559,8 +536,8 @@ export class TwoPhaseTranslatorV4 {
           if (isMicrosoftService) {
             translatedTexts = await this.translateWithMicrosoftSubtitles(
               batch,
-              normalizedSourceLanguageCode,
-              preferences.targetLang,
+              languageParams.source,  // ✅ 使用已转换的语言参数
+              languageParams.target,
               'batch',
               batchSignal
             );
@@ -568,9 +545,7 @@ export class TwoPhaseTranslatorV4 {
             translatedTexts = await this.callTranslationAPI(
               texts,
               preferences.translationService,
-              sourceLanguageName,
-              normalizedSourceLanguageCode,
-              preferences.targetLang,
+              languageParams,  // ✅ 传递语言参数对象
               batchSignal,
               { stage: 'batch', batchIndex: i + 1, batchCount: batches.length }
             );
@@ -644,8 +619,7 @@ export class TwoPhaseTranslatorV4 {
    *
    * @param subtitles 所有字幕
    * @param urgentResults 紧急翻译结果（用于去重）
-   * @param sourceLanguageName 源语言名称（如"English"，供Chat类API与日志使用）
-   * @param sourceLanguageCode 源语言代码（如"en"，供需要代码的API使用）
+   * @param languageParams 已转换的语言参数对象
    * @param preferences 用户偏好设置
    * @param signal AbortSignal用于取消操作
    * @returns 批量翻译结果数组
@@ -659,8 +633,7 @@ export class TwoPhaseTranslatorV4 {
       text: string;
     }>,
     urgentResults: Array<any>,
-    sourceLanguageName: string,
-    sourceLanguageCode: string,
+    languageParams: { source: string; target: string },  // ✅ 改为接收语言参数对象
     preferences: any,
     signal: AbortSignal
   ): Promise<Array<{
@@ -677,8 +650,6 @@ export class TwoPhaseTranslatorV4 {
 
     const results: any[] = [];
     const serviceType = preferences.translationService?.type;
-    const normalizedSourceLanguageCode =
-      sourceLanguageCode && sourceLanguageCode.trim() !== '' ? sourceLanguageCode : 'auto';
 
     try {
       // 延迟启动（避免与紧急翻译冲突）
@@ -700,13 +671,7 @@ export class TwoPhaseTranslatorV4 {
       const requestDelay = this.getRequestDelay();
       const perBatchTimeout = this.getBatchTimeout();
 
-      const sourceLabel = this.getSourceLanguageLabel(
-        serviceType,
-        sourceLanguageName,
-        normalizedSourceLanguageCode
-      );
-      const targetLabel = this.getTargetLanguageLabel(serviceType, preferences.targetLang);
-
+      // ✅ 直接使用已转换的语言参数
       // 删除"批量翻译开始"日志（与每批完成日志合并）
 
       // 🔑 流水线发送阶段
@@ -761,9 +726,7 @@ export class TwoPhaseTranslatorV4 {
             const translatedTexts = await this.callTranslationAPI(
               texts,
               preferences.translationService,
-              sourceLanguageName,
-              normalizedSourceLanguageCode,
-              preferences.targetLang,
+              languageParams,  // ✅ 传递语言参数对象
               batchSignal,
               { stage: 'batch', batchIndex: i + 1, batchCount: batches.length }
             );
@@ -780,7 +743,7 @@ export class TwoPhaseTranslatorV4 {
             completedCount++;
             const progress = Math.floor((completedCount / batches.length) * 100);
             const serviceName = serviceType === 'google' || serviceType === 'google-free' ? 'Google' : serviceType;
-            console.log(`[TwoPhaseTranslatorV4] ✓ 批次${completedCount}/${batches.length} | ${serviceName} | ${sourceLabel} → ${targetLabel} | ${translatedTexts.length}条 (${progress}%)`);
+            console.log(`[TwoPhaseTranslatorV4] ✓ 批次${completedCount}/${batches.length} | ${serviceName} | ${languageParams.source} → ${languageParams.target} | ${translatedTexts.length}条 (${progress}%)`);
 
             return {
               success: true,
@@ -900,8 +863,7 @@ export class TwoPhaseTranslatorV4 {
       text: string;
     }>,
     urgentResults: Array<any>,
-    sourceLanguageName: string,
-    sourceLanguageCode: string,
+    languageParams: { source: string; target: string },  // ✅ 改为接收语言参数对象
     preferences: any,
     signal: AbortSignal
   ): Promise<Array<{
@@ -917,8 +879,6 @@ export class TwoPhaseTranslatorV4 {
 
     const results: any[] = [];
     const serviceType = preferences.translationService?.type;
-    const normalizedSourceLanguageCode =
-      sourceLanguageCode && sourceLanguageCode.trim() !== '' ? sourceLanguageCode : 'auto';
 
     try {
       // 延迟启动（避免与紧急翻译冲突）
@@ -941,15 +901,9 @@ export class TwoPhaseTranslatorV4 {
       const concurrency = this.getConcurrencyLimit();
       const perBatchTimeout = this.getBatchTimeout();
 
-      const sourceLabel = this.getSourceLanguageLabel(
-        serviceType,
-        sourceLanguageName,
-        normalizedSourceLanguageCode
-      );
-      const targetLabel = this.getTargetLanguageLabel(serviceType, preferences.targetLang);
-
+      // ✅ 直接使用已转换的语言参数
       console.log(
-        `[TwoPhaseTranslatorV4] → 批量翻译: ${subtitles.length}条 | 并发${concurrency} | ${batches.length}批次 | ${sourceLabel} → ${targetLabel}`
+        `[TwoPhaseTranslatorV4] → 批量翻译: ${subtitles.length}条 | 并发${concurrency} | ${batches.length}批次 | ${languageParams.source} → ${languageParams.target}`
       );
 
       // 分组并发执行
@@ -1001,9 +955,7 @@ export class TwoPhaseTranslatorV4 {
             const translatedTexts = await this.callTranslationAPI(
               texts,
               preferences.translationService,
-              sourceLanguageName,
-              normalizedSourceLanguageCode,
-              preferences.targetLang,
+              languageParams,  // ✅ 传递语言参数对象
               batchSignal,
               { stage: 'batch', batchIndex: batchIndex + 1, batchCount: batches.length }
             );
@@ -1507,13 +1459,12 @@ export class TwoPhaseTranslatorV4 {
 
   /**
    * 调用翻译API
+   * @param languageParams 已经根据服务类型转换好的语言参数（code/CODE/name）
    */
   private async callTranslationAPI(
     texts: string[],
     service: any,
-    sourceLanguageName: string,
-    sourceLanguageCode: string,
-    targetLang: string,
+    languageParams: { source: string; target: string },  // ✅ 改为接收已转换的语言参数
     signal: AbortSignal,
     options?: { stage: 'urgent' | 'batch'; batchIndex?: number; batchCount?: number }
   ): Promise<string[]> {
@@ -1549,30 +1500,8 @@ export class TwoPhaseTranslatorV4 {
       try {
         let translatedTexts: string[] = [];
 
-        // 根据翻译服务类型调用不同的API
-        const normalizedSourceLanguageCode =
-          sourceLanguageCode && sourceLanguageCode.trim() !== '' ? sourceLanguageCode : 'auto';
-
-        // ✅ 统一转换点：为Chat API准备英文名称（只执行1次）
-        // 注意：Qwen虽然使用chat/completions端点，但需要code而非name（translation_options）
-        const isChatAPI = ['openai', 'deepseek', 'gemini'].includes(service.type);
-
-        let sourceLangName = sourceLanguageName;  // 默认使用传入的name
-        let targetLangName = targetLang;           // 默认使用传入的code
-
-        if (isChatAPI) {
-          // Chat API需要英文名称，在这里统一转换（静默模式，稍后统一打印）
-          sourceLangName = LanguageCodeMapper.toEnglishName(normalizedSourceLanguageCode, true);
-          targetLangName = LanguageCodeMapper.toEnglishName(targetLang, true);
-
-          // ✅ 合并打印：一次性显示两个语言转换结果
-          console.debug(
-            `[debug][LanguageCodeMapper] ${normalizedSourceLanguageCode} → ${sourceLangName}, ${targetLang} → ${targetLangName}`
-          );
-          console.log(
-            `[TwoPhaseTranslatorV4] 📋 Chat API语言参数: ${sourceLangName} → ${targetLangName}`
-          );
-        }
+        // ✅ 直接使用已转换的语言参数（在handle-toggle-translate-v4.ts中统一转换）
+        // 不再需要内部转换逻辑，避免重复转换和重复日志
 
         if (service.type === 'openai') {
           // 使用OpenAI翻译（V4架构）
@@ -1589,11 +1518,11 @@ export class TwoPhaseTranslatorV4 {
 
           const stage = options?.stage ?? 'batch';
 
-          // 调用翻译（传递已转换的英文名称）
+          // 调用翻译（传递已转换的语言参数）
           translatedTexts = await translator.translate(
             texts,
-            sourceLangName,    // ✅ 使用转换后的英文名称
-            targetLangName,    // ✅ 使用转换后的英文名称
+            languageParams.source,  // ✅ 使用已转换的语言参数
+            languageParams.target,
             stage,
             signal,
             {
@@ -1611,11 +1540,11 @@ export class TwoPhaseTranslatorV4 {
           const translator = new DeepSeekTranslator(service.apiKey);
           const stage = options?.stage ?? 'batch';
 
-          // 调用翻译（传递已转换的英文名称）
+          // 调用翻译（传递已转换的语言参数）
           translatedTexts = await translator.translate(
             texts,
-            sourceLangName,    // ✅ 使用转换后的英文名称
-            targetLangName,    // ✅ 使用转换后的英文名称
+            languageParams.source,  // ✅ 使用已转换的语言参数
+            languageParams.target,
             stage,
             signal
           );
@@ -1636,11 +1565,11 @@ export class TwoPhaseTranslatorV4 {
 
           const stage = options?.stage ?? 'batch';
 
-          // 调用翻译（传递已转换的英文名称）
+          // 调用翻译（传递已转换的语言参数）
           translatedTexts = await translator.translate(
             texts,
-            sourceLangName,    // ✅ 使用转换后的英文名称
-            targetLangName,    // ✅ 使用转换后的英文名称
+            languageParams.source,  // ✅ 使用已转换的语言参数
+            languageParams.target,
             stage,
             signal
           );
@@ -1663,11 +1592,11 @@ export class TwoPhaseTranslatorV4 {
 
           const stage = options?.stage ?? 'batch';
 
-          // 调用翻译（传递 stage 和 signal）
+          // 调用翻译（传递已转换的语言参数）
           translatedTexts = await translator.translate(
             texts,
-            normalizedSourceLanguageCode,
-            targetLang,
+            languageParams.source,  // ✅ 使用已转换的语言参数（大写CODE）
+            languageParams.target,
             stage,
             signal
           );
@@ -1685,11 +1614,11 @@ export class TwoPhaseTranslatorV4 {
 
           const stage = options?.stage ?? 'batch';
 
-          // 调用翻译（Qwen需要code，不是name）
+          // 调用翻译（传递已转换的语言参数）
           translatedTexts = await translator.translate(
             texts,
-            normalizedSourceLanguageCode,  // ❌ Qwen需要code
-            targetLang,                     // ❌ Qwen需要code
+            languageParams.source,  // ✅ 使用已转换的语言参数
+            languageParams.target,
             stage,
             signal
           );
@@ -1701,8 +1630,8 @@ export class TwoPhaseTranslatorV4 {
           // 删除"Google翻译调用"日志（与成功日志重复，已合并到成功日志）
           const { translations } = await this.translateWithGoogleEndpoints(
             texts,
-            normalizedSourceLanguageCode,
-            targetLang,
+            languageParams.source,  // ✅ 使用已转换的语言参数
+            languageParams.target,
             {
               preferredOrder: order,
               recordStatistics: stage === 'urgent',
@@ -1745,8 +1674,8 @@ export class TwoPhaseTranslatorV4 {
               // 调用优化版翻译
               const batchTranslations = await this.microsoftTranslator.translateOptimized(
                 optimizedBatch.texts,
-                normalizedSourceLanguageCode,
-                targetLang,
+                languageParams.source,  // ✅ 使用已转换的语言参数
+                languageParams.target,
                 stage
               );
 
@@ -1769,8 +1698,8 @@ export class TwoPhaseTranslatorV4 {
             const translator = new MicrosoftTranslator();
             translatedTexts = await translator.translateTexts(
               texts,
-              normalizedSourceLanguageCode,
-              targetLang,
+              languageParams.source,  // ✅ 使用已转换的语言参数
+              languageParams.target,
               stage
             );
           }

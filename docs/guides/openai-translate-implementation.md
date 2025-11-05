@@ -1,8 +1,8 @@
 # OpenAI翻译API实现指南
 
-> 最后更新：2025-10-30
+> 最后更新：2025-01-15
 > 状态：✅ 已实施，JSON格式方案（已修复Token估算和Prompt问题）
-> 版本：V4架构 + JSON优化 + Bug修复
+> 版本：V4架构 + JSON优化 + Bug修复 + 统一语言参数
 
 ## 📋 概述
 
@@ -83,6 +83,10 @@ const batches = segmenter.createSmartBatches(subtitles);
 
 ### ✅ 优化4：文本拼接与拆分（复用Google/Microsoft逻辑）
 
+> **⚠️ 重要**（v5.x更新）：
+> `sourceLang`和`targetLang`参数已在调用前统一转换为**英文名称**（如"English" → "Chinese"）。
+> OpenAI翻译器无需再进行语言代码转换，直接使用传入的参数即可。
+
 **处理流程**：
 ```typescript
 // 1. 清理单条字幕内的换行符
@@ -97,6 +101,7 @@ const messages = [
     role: "system",
     content: `You are a professional subtitle translator.
 Translate from ${sourceLang} to ${targetLang}.
+// ✅ sourceLang = "English", targetLang = "Chinese"（已在顶层转换）
 Input contains multiple subtitles separated by newlines.
 Each line is one subtitle. Keep the same number of lines.
 Do not add explanations.`
@@ -116,9 +121,30 @@ if (translations.length !== texts.length) {
 }
 ```
 
+**语言参数准备**（v5.x新增）：
+```typescript
+// ✅ 在handle-toggle-translate-v4.ts的Stage 4.5统一转换
+const languageParams = prepareLanguageParams(
+  sourceCode,    // 'en'
+  targetCode,    // 'zh-CN'
+  'openai'       // 服务类型
+);
+// languageParams = { source: 'English', target: 'Chinese' }
+
+// ✅ 传递给翻译器（已经是英文名称，无需再转换）
+const translations = await translator.translate(
+  texts,
+  languageParams.source,  // "English"
+  languageParams.target,  // "Chinese"
+  stage,
+  signal
+);
+```
+
 **不使用**：
 - ❌ `|||SEP|||` 特殊分隔符
 - ❌ 双换行符 `\n\n`
+- ❌ 翻译器内部的语言代码转换（已在顶层统一处理）
 
 > ⚠️ **实施变更**：原设计采用换行符分隔，但实测发现GPT会自动合并不完整句子（如14条→13条）。最终采用**JSON数组格式**，详见优化14。
 
