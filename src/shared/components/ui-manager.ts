@@ -1128,9 +1128,12 @@ export class UIManager {
       console.log('[ui-manager] 插入参照点:', firstNativeButton ? '找到第一个原生按钮' : '未找到参照点');
       
       // 1. 创建设置按钮
+      const settingsTooltip = this.state.popupOpen
+        ? (chrome.i18n.getMessage('tooltip_close_translation_settings') || '关闭翻译设置')
+        : (chrome.i18n.getMessage('tooltip_translation_settings') || '翻译设置');
       const { button: settingsButton, icon: settingsIcon } = this.createControlButton(
         'vid-translate-settings-button',
-        this.state.popupOpen ? '关闭翻译设置' : '翻译设置',
+        settingsTooltip,
         this.state.popupOpen ? this.ACTIVE_SETTING_ICON_URL : this.SETTING_ICON_URL,
         () => {
           const newState = !this.state.popupOpen;
@@ -1144,14 +1147,17 @@ export class UIManager {
       // 保存设置图标引用
       this.settingToggleButtonIcon = settingsIcon;
       // 设置数据属性以供CSS选择器使用
-      settingsButton.dataset.tooltipText = this.state.popupOpen ? '关闭翻译设置' : '翻译设置';
+      settingsButton.dataset.tooltipText = settingsTooltip;
       
       // 2. 创建翻译按钮
       // 🔧 修复：使用 isActiveState 方法正确判断翻译状态
       const isActive = this.isActiveState(this.state.translateActive);
+      const translateTooltip = isActive
+        ? (chrome.i18n.getMessage('tooltip_disable_translation_button') || '关闭翻译')
+        : (chrome.i18n.getMessage('tooltip_enable_translation_button') || '开启翻译');
       const { button: translateButton, icon: toggleIcon } = this.createControlButton(
         'vid-translate-toggle-button',
-        isActive ? '关闭翻译' : '开启翻译',
+        translateTooltip,
         isActive ? this.ON_ICON_URL : this.OFF_ICON_URL,
         () => {
           // 切换翻译状态
@@ -1167,7 +1173,7 @@ export class UIManager {
       this.translateToggleButtonIcon = toggleIcon;
       
       // 设置数据属性以供CSS选择器使用
-      translateButton.dataset.tooltipText = isActive ? '关闭翻译' : '开启翻译';
+      translateButton.dataset.tooltipText = translateTooltip;
       
       // 🔧 恢复：完全按照legacy代码的插入逻辑
       // 先插入设置按钮到第一个原生按钮前面
@@ -1313,9 +1319,12 @@ export class UIManager {
     // 更新提示文本
     const button = document.getElementById('vid-translate-toggle-button');
     if (button) {
-      button.title = active ? '关闭翻译' : '开启翻译';
-      button.setAttribute('aria-label', active ? '关闭翻译' : '开启翻译');
-      button.dataset.tooltipText = active ? '关闭翻译' : '开启翻译';
+      const enableText = chrome.i18n.getMessage('button_tooltip_enable_translation') || '开启翻译';
+      const disableText = chrome.i18n.getMessage('button_tooltip_disable_translation') || '关闭翻译';
+      const tooltipText = active ? disableText : enableText;
+      button.title = tooltipText;
+      button.setAttribute('aria-label', tooltipText);
+      button.dataset.tooltipText = tooltipText;
     }
   }
   
@@ -1330,7 +1339,9 @@ export class UIManager {
       // 更新按钮的tooltip文本
       const button = document.getElementById('vid-translate-settings-button');
       if (button) {
-        const tooltipText = open ? '关闭翻译设置' : '翻译设置';
+        const tooltipText = open
+          ? (chrome.i18n.getMessage('tooltip_close_translation_settings') || '关闭翻译设置')
+          : (chrome.i18n.getMessage('tooltip_translation_settings') || '翻译设置');
         button.title = tooltipText;
         button.setAttribute('aria-label', tooltipText);
         button.dataset.tooltipText = tooltipText;

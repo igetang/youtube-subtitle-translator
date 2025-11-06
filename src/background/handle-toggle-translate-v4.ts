@@ -37,7 +37,18 @@ import {
   fetchSubtitlesWithSignal,
   triggerSubtitleLoadWithSignal 
 } from './components/message-with-signal';
-import { TwoPhaseTranslatorV4, GOOGLE_TRANSLATE_BATCH_TIMEOUT_MS } from './components/two-phase-translator-v4';
+import {
+  TwoPhaseTranslatorV4,
+  GOOGLE_TRANSLATE_BATCH_TIMEOUT_MS,
+  DEEPSEEK_TIMEOUT_MS,
+  OPENAI_TIMEOUT_MS,
+  GEMINI_TIMEOUT_MS,
+  DEEPL_TIMEOUT_MS,
+  QWEN_TIMEOUT_MS,
+  GOOGLE_TIMEOUT_MS,
+  MICROSOFT_TIMEOUT_MS,
+  DEFAULT_TIMEOUT_MS
+} from './components/two-phase-translator-v4';
 import { createVttString, parseVttString, mergeVttStrings } from '../shared/utils/vtt-utils';
 import { LanguageCodeMapper } from '../shared/utils/language-code-mapper';
 
@@ -164,18 +175,22 @@ export async function handleToggleTranslateV4(
     return {
       success: false,
       action: 'error',
-      error: '无法获取标签页信息'
+      error: chrome.i18n.getMessage('error_tab_info_unavailable') || 'Unable to access tab information'
     };
   }
 
   const handlePlayerNotReady = () => {
-    const notReadyError: any = new Error('播放器尚未就绪，请稍后手动重新开启翻译');
+    const notReadyError: any = new Error(
+      chrome.i18n.getMessage('error_player_not_ready') || 'Player not ready yet, please try again later'
+    );
     notReadyError.category = 'player_not_ready';
     throw notReadyError;
   };
 
   const handleAdPlaying = () => {
-    const adError: any = new Error('检测到广告播放，翻译已暂停');
+    const adError: any = new Error(
+      chrome.i18n.getMessage('info_ad_playback_skip_translation') || 'Ad playing, translation paused'
+    );
     adError.category = 'ad_playing';
     throw adError;
   };
@@ -200,7 +215,7 @@ export async function handleToggleTranslateV4(
     return {
       success: true,
       action: 'stopped',
-      message: '翻译已关闭'
+      message: chrome.i18n.getMessage('status_translation_disabled') || 'Translation turned off'
     };
   }
   
@@ -241,7 +256,7 @@ export async function handleToggleTranslateV4(
             signal
           );
         },
-        { timeoutMs: 3000 }
+        { timeoutMs: 5000 }
       );
     } catch (error: any) {
       // 广告检测调用失败（网络、超时等），不应阻塞流程
@@ -656,14 +671,14 @@ export async function handleToggleTranslateV4(
               subtitles: parsed.map((entry, idx) => ({
                 text: entry.text,
                 start: entry.start,
-                end: entry.start + entry.duration,
-                index: idx
-              })),
-              sourceLang: sourceLanguageName,  // ✅ 使用name
-              currentTime: typeof currentTime === 'number' ? currentTime : 0
-            };
-            console.log('[service-worker-v4] ✓ 复用缓存字幕: ' + parsed.length + ' 条');
-          }
+            end: entry.start + entry.duration,
+            index: idx
+          })),
+          sourceLanguageName: sourceLanguageName,  // ✅ 使用name
+          currentTime: typeof currentTime === 'number' ? currentTime : 0
+        };
+        console.log('[service-worker-v4] ✓ 复用缓存字幕: ' + parsed.length + ' 条');
+      }
         }
       } catch (error) {
         console.warn('[service-worker-v4] 查找缓存原始字幕失败，继续正常抓取:', error);
@@ -686,7 +701,7 @@ export async function handleToggleTranslateV4(
           await chrome.tabs.sendMessage(tabId, triggerPayload);
           return true;
         },
-        { timeoutMs: 2000 }
+        { timeoutMs: 5000 }
       );
 
       subtitleData = await session.executeStage(
@@ -742,7 +757,7 @@ export async function handleToggleTranslateV4(
     
     // 验证字幕数据
     if (!subtitleData?.subtitles || subtitleData.subtitles.length === 0) {
-      throw new Error('当前视频无字幕');
+      throw new Error(chrome.i18n.getMessage('error_no_subtitles') || 'No subtitles available for this video');
     }
 
     const effectiveSubtitleData = subtitleData as SubtitleData;
@@ -774,10 +789,45 @@ export async function handleToggleTranslateV4(
     
     // 设置实际的翻译服务（使用用户配置的服务）
     translator.setTranslationService(preferences.translationService);
-    
-    // 执行紧急翻译（30秒超时 - DeepSeek专用）
+    const resolvedConcurrencyLimit = translator.getResolvedConcurrencyLimit();
+    const resolvedRequestDelay = translator.getResolvedRequestDelay();
+
+    // 获取服务类型（用于超时计算）
+    const serviceType = preferences.translationService?.type;
+
+    // 执行紧急翻译（超时时间与批量翻译保持一致）
     let urgentResults: any[] = [];
     let urgentError: any = null;
+
+    // 根据服务类型获取超时时间
+    let urgentTimeout: number;
+    switch (serviceType) {
+      case 'deepseek':
+        urgentTimeout = DEEPSEEK_TIMEOUT_MS;
+        break;
+      case 'openai':
+        urgentTimeout = OPENAI_TIMEOUT_MS;
+        break;
+      case 'gemini':
+        urgentTimeout = GEMINI_TIMEOUT_MS;
+        break;
+      case 'deepl':
+        urgentTimeout = DEEPL_TIMEOUT_MS;
+        break;
+      case 'qwen':
+        urgentTimeout = QWEN_TIMEOUT_MS;
+        break;
+      case 'google':
+      case 'google-free':
+        urgentTimeout = GOOGLE_TIMEOUT_MS;
+        break;
+      case 'microsoft':
+      case 'microsoft-free':
+        urgentTimeout = MICROSOFT_TIMEOUT_MS;
+        break;
+      default:
+        urgentTimeout = DEFAULT_TIMEOUT_MS;
+    }
 
     try {
       urgentResults = await session.executeStage(
@@ -792,7 +842,7 @@ export async function handleToggleTranslateV4(
           );
         },
         {
-          timeoutMs: 30000
+          timeoutMs: urgentTimeout
           // 移除 fallback，让错误抛出以便判断是否为致命错误
         }
       );
@@ -844,7 +894,7 @@ export async function handleToggleTranslateV4(
             text: result.originalText,  // 使用处理后的单行文本
             translation: result.translatedText,
             id: String(sub.start),
-            isUrgent: true  // 标记为紧急翻译
+            isUrgent: false  // 与批量翻译保持一致的样式
           };
         }
         return null;
@@ -865,54 +915,85 @@ export async function handleToggleTranslateV4(
       }
     }
 
-    // 在紧急翻译和批量翻译之间等待5秒
-    console.log('[service-worker-v4] → 等待5秒后开始批量翻译');
+    // 紧急阶段完成后立即开始批量翻译
+    console.log('[service-worker-v4] → 准备开始批量翻译');
 
     // 检查会话是否已被取消
     if (session.isAborted()) {
       throw new DOMException('会话已被取消', 'AbortError');
     }
 
-    // 简单的5秒延时
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    // 🔑 关键优化：先执行智能断句，基于实际批次数计算超时
+    // 注意：必须在 executeStage() 之前计算，因为 timeoutMs 需要提前确定
 
-    // 再次检查会话状态
-    if (session.isAborted()) {
-      console.log('[service-worker-v4] 等待期间会话被取消');
-      throw new DOMException('等待期间会话被取消', 'AbortError');
-    }
-
-    // 动态计算批量翻译总超时：批次数 × 单批超时
     const subtitleCount = effectiveSubtitleData.subtitles.length;
-    const serviceType = preferences.translationService?.type;
 
-    // 根据翻译服务类型计算批次数和单批超时
-    let estimatedBatches = 1;
-    let perBatchTimeout = 5000; // 默认5秒
+    // Step 1: 提前创建智能批次（获取实际批次数）
+    // 注意：这里只是为了计算超时，实际翻译时会在 translateBatch() 内部重新创建
+    const tempSegmenter = translator['segmenter'];  // 访问已配置好的 segmenter
+    const preliminaryBatches = tempSegmenter?.createSmartBatches(effectiveSubtitleData.subtitles) || [];
+    const actualBatchCount = preliminaryBatches.length || Math.ceil(subtitleCount / 20);
+
+    // Step 2: 基于实际批次数和并发数计算超时
+    let batchTotalTimeout: number;
+    let timeoutCalculationInfo: string;
 
     if (serviceType === 'deepseek') {
-      // DeepSeek: 20条/批，单批30秒
-      estimatedBatches = Math.ceil(subtitleCount / 20);
-      perBatchTimeout = 30000;
+      // DeepSeek并发或串行超时计算（与 DeepL/Gemini 设计保持一致）
+      const concurrency = resolvedConcurrencyLimit > 0 ? resolvedConcurrencyLimit : 1;
+
+      if (resolvedConcurrencyLimit > 0) {
+        const rounds = Math.ceil(actualBatchCount / concurrency);
+        batchTotalTimeout = rounds * DEEPSEEK_TIMEOUT_MS;
+        timeoutCalculationInfo =
+          `${subtitleCount}条 → ${actualBatchCount}批 → ${rounds}轮 (并发${concurrency}) × ${DEEPSEEK_TIMEOUT_MS}ms = ${batchTotalTimeout}ms`;
+      } else {
+        batchTotalTimeout = actualBatchCount * DEEPSEEK_TIMEOUT_MS;
+        timeoutCalculationInfo =
+          `${subtitleCount}条 → ${actualBatchCount}批 × ${DEEPSEEK_TIMEOUT_MS}ms = ${batchTotalTimeout}ms`;
+      }
+    } else if (serviceType === 'openai') {
+      // OpenAI并发超时计算
+      const concurrency = 10;
+      const rounds = Math.ceil(actualBatchCount / concurrency);
+      batchTotalTimeout = rounds * OPENAI_TIMEOUT_MS;
+      timeoutCalculationInfo = `${subtitleCount}条 → ${actualBatchCount}批 → ${rounds}轮 × ${OPENAI_TIMEOUT_MS}ms = ${batchTotalTimeout}ms`;
+    } else if (serviceType === 'gemini') {
+      // Gemini并发超时计算
+      const concurrency = resolvedConcurrencyLimit > 0 ? resolvedConcurrencyLimit : 5;
+      const rounds = Math.ceil(actualBatchCount / concurrency);
+      const pipelineDelay = resolvedRequestDelay > 0 && actualBatchCount > 1
+        ? (actualBatchCount - 1) * resolvedRequestDelay
+        : 0;
+      batchTotalTimeout = rounds * GEMINI_TIMEOUT_MS + pipelineDelay;
+      const delayInfo = pipelineDelay > 0
+        ? ` + 延迟(${actualBatchCount - 1}×${resolvedRequestDelay}ms)`
+        : '';
+      timeoutCalculationInfo =
+        `${subtitleCount}条 → ${actualBatchCount}批 → ${rounds}轮 × ${GEMINI_TIMEOUT_MS}ms${delayInfo} = ${batchTotalTimeout}ms`;
+    } else if (serviceType === 'deepl') {
+      // DeepL串行超时计算
+      batchTotalTimeout = actualBatchCount * DEEPL_TIMEOUT_MS;
+      timeoutCalculationInfo = `${subtitleCount}条 → ${actualBatchCount}批 × ${DEEPL_TIMEOUT_MS}ms = ${batchTotalTimeout}ms`;
+    } else if (serviceType === 'qwen') {
+      // Qwen串行超时计算
+      batchTotalTimeout = actualBatchCount * QWEN_TIMEOUT_MS;
+      timeoutCalculationInfo = `${subtitleCount}条 → ${actualBatchCount}批 × ${QWEN_TIMEOUT_MS}ms = ${batchTotalTimeout}ms`;
     } else if (serviceType === 'google-free' || serviceType === 'google') {
-      // 谷歌: 智能分批（约120条限制），单批10秒
-      estimatedBatches = Math.ceil(subtitleCount / 120);
-      perBatchTimeout = GOOGLE_TRANSLATE_BATCH_TIMEOUT_MS;
+      // Google串行超时计算
+      batchTotalTimeout = actualBatchCount * GOOGLE_TIMEOUT_MS;
+      timeoutCalculationInfo = `${subtitleCount}条 → ${actualBatchCount}批 × ${GOOGLE_TIMEOUT_MS}ms = ${batchTotalTimeout}ms`;
     } else if (serviceType === 'microsoft-free' || serviceType === 'microsoft') {
-      // 微软: 不预先分批，估算1批，单批5秒
-      estimatedBatches = 1;
-      perBatchTimeout = 5000;
+      // Microsoft串行超时计算
+      batchTotalTimeout = actualBatchCount * MICROSOFT_TIMEOUT_MS;
+      timeoutCalculationInfo = `${subtitleCount}条 → ${actualBatchCount}批 × ${MICROSOFT_TIMEOUT_MS}ms = ${batchTotalTimeout}ms`;
     } else {
-      // 其他服务: 默认估算（假设20条/批）
-      estimatedBatches = Math.ceil(subtitleCount / 20);
-      perBatchTimeout = 10000;
+      // 其他服务：默认超时
+      batchTotalTimeout = actualBatchCount * DEFAULT_TIMEOUT_MS;
+      timeoutCalculationInfo = `${subtitleCount}条 → ${actualBatchCount}批 × ${DEFAULT_TIMEOUT_MS}ms = ${batchTotalTimeout}ms`;
     }
 
-    const batchTotalTimeout = estimatedBatches * perBatchTimeout;
-    console.log(
-      `[service-worker-v4] 批量翻译超时设置: ${subtitleCount}条字幕, ` +
-      `预计${estimatedBatches}批 × ${perBatchTimeout}ms = ${batchTotalTimeout}ms总超时`
-    );
+    console.log(`[service-worker-v4] 批量翻译超时设置: ${timeoutCalculationInfo}`);
 
     // 执行批量翻译（动态总超时）
     const batchResults = await session.executeStage(
@@ -924,17 +1005,18 @@ export async function handleToggleTranslateV4(
           return [];
         }
 
-        return await translator.translateBatch(
-          effectiveSubtitleData.subtitles,
-          urgentResults,
-          languageParams,  // ✅ 传递统一转换后的语言参数
-          preferences,
-          signal
-        );
-      },
-      {
-        timeoutMs: batchTotalTimeout
-        // 不设置fallback，让错误向上抛出
+    return await translator.translateBatch(
+      effectiveSubtitleData.subtitles,
+      urgentResults,
+      languageParams,  // ✅ 传递统一转换后的语言参数
+      preferences,
+      signal,
+      preliminaryBatches
+    );
+  },
+  {
+    timeoutMs: batchTotalTimeout
+    // 不设置fallback，让错误向上抛出
       }
     );
 
@@ -1014,37 +1096,45 @@ export async function handleToggleTranslateV4(
     return {
       success: true,
       action: 'streamed',  // V4架构标识：数据已通过TRANSLATION_UPDATE事件推送
-      message: '翻译已通过实时更新完成'
+      message: chrome.i18n.getMessage('status_translation_streamed') || 'Translation delivered via live updates'
       // 不返回data字段，避免重复处理
     };
     
   } catch (error: any) {
     console.error('[service-worker-v4] 翻译失败:', error?.message || error);
 
-    // 分析错误类型，使用 getUserFriendlyMessage 统一处理
+    const friendlyMessage = getUserFriendlyMessage(error);
     let userMessage = '';
     let errorLevel = ErrorLevel.ERROR;
 
     if ((error as any)?.category === 'ad_playing') {
-      userMessage = '正在播放广告，无需翻译';
+      userMessage = chrome.i18n.getMessage('info_ad_playback_skip_translation') || 'Ad playing, translation paused';
       errorLevel = ErrorLevel.INFO;
       console.log('[service-worker-v4] 广告播放期间停止翻译');
     } else if (isTimeoutError(error)) {
-      userMessage = getUserFriendlyMessage(error);
+      userMessage =
+        friendlyMessage || chrome.i18n.getMessage('error_network_timeout_retry') || '网络超时，请检查网络连接后重试';
       errorLevel = getErrorLevel(error);
       console.log('[service-worker-v4] 超时错误:', error.stage);
     } else if (isAbortError(error)) {
-      // 用户取消会话，提示用户并记录信息
-      const abortReason = error.abortReason || '未知原因';
-      userMessage = `翻译已取消: ${abortReason}`;
+      const abortReason =
+        error.reason ||
+        chrome.i18n.getMessage('error_unknown') ||
+        'Unknown error';
+      userMessage =
+        chrome.i18n.getMessage('info_translation_cancelled', [abortReason]) ||
+        `Translation cancelled: ${abortReason}`;
       errorLevel = ErrorLevel.INFO;
       console.log('[service-worker-v4] 翻译被取消:', abortReason);
     } else if ((error as any).category) {
       const category = (error as any).category;
-      userMessage = error.message || getUserFriendlyMessage(error);
+      userMessage =
+        friendlyMessage ||
+        error.message ||
+        chrome.i18n.getMessage('error_translation_failed') ||
+        'Translation failed';
       errorLevel = category === 'fatal' ? ErrorLevel.ERROR : ErrorLevel.WARNING;
 
-      // 只对非 AbortError 的错误打印详细信息
       console.error('[service-worker-v4] 错误详情:', {
         name: error?.name,
         message: error?.message,
@@ -1054,11 +1144,13 @@ export async function handleToggleTranslateV4(
         stack: error?.stack?.split('\n').slice(0, 3).join('\n') // 只保留前3行堆栈
       });
     } else {
-      // 使用统一的错误消息映射（去掉技术细节）
-      userMessage = getUserFriendlyMessage(error);
+      userMessage =
+        friendlyMessage ||
+        error.message ||
+        chrome.i18n.getMessage('error_translation_failed') ||
+        'Translation failed';
       errorLevel = getErrorLevel(error);
 
-      // 未知错误，打印完整详情
       console.error('[service-worker-v4] 未知错误详情:', {
         name: error?.name,
         message: error?.message,
@@ -1066,8 +1158,15 @@ export async function handleToggleTranslateV4(
       });
     }
 
+    if (!userMessage) {
+      userMessage =
+        friendlyMessage ||
+        chrome.i18n.getMessage('error_translation_failed') ||
+        'Translation failed';
+    }
+
     // 取消会话
-    session.abort(error.message);
+    session.abort(error?.message || 'aborted');
 
     // 🔥 第一步：先清除字幕（通过发送消息到content-script）
     if (tabId) {
@@ -1106,7 +1205,12 @@ export async function handleToggleTranslateV4(
     
     return {
       success: false,
-      error: error.message || '翻译失败',
+      error:
+        userMessage ||
+        friendlyMessage ||
+        error?.message ||
+        chrome.i18n.getMessage('error_translation_failed') ||
+        'Translation failed',
       action: 'error'
     };
   }

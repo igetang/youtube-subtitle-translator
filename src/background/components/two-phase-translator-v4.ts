@@ -16,7 +16,26 @@ import { DeepLTranslator } from './deepl-translator';
 import { QwenTranslator } from './qwen-translator';
 import { LanguageCodeMapper } from '@shared/utils/language-code-mapper';
 
-export const GOOGLE_TRANSLATE_BATCH_TIMEOUT_MS = 10000;  // 谷歌免费翻译批次超时（毫秒）
+// ========== 翻译服务超时配置（毫秒）==========
+export const DEEPSEEK_TIMEOUT_MS = 30000;    // DeepSeek: 30秒
+export const OPENAI_TIMEOUT_MS = 15000;      // OpenAI: 15秒
+export const GEMINI_TIMEOUT_MS = 15000;      // Gemini: 15秒
+export const DEEPL_TIMEOUT_MS = 10000;       // DeepL: 10秒
+export const QWEN_TIMEOUT_MS = 10000;        // Qwen: 10秒
+export const GOOGLE_TIMEOUT_MS = 10000;      // Google: 10秒
+export const MICROSOFT_TIMEOUT_MS = 15000;   // Microsoft: 15秒
+export const DEFAULT_TIMEOUT_MS = 8000;      // 默认: 8秒
+
+// 向后兼容：保留旧的常量名
+export const GOOGLE_TRANSLATE_BATCH_TIMEOUT_MS = GOOGLE_TIMEOUT_MS;
+
+// ========== 并发配置（按服务导出，便于统一维护）==========
+export const DEEPSEEK_CONCURRENCY_LIMIT = 5;
+export const OPENAI_CONCURRENCY_LIMIT = 10;
+export const GEMINI_CONCURRENCY_LIMIT = 5;
+export const DEEPL_CONCURRENCY_LIMIT = 10;
+export const MICROSOFT_CONCURRENCY_LIMIT = 10;
+export const GOOGLE_PIPELINE_CONCURRENCY_LIMIT = 999;
 
 /**
  * 两阶段翻译器 - 支持AbortSignal版本
@@ -47,16 +66,6 @@ export class TwoPhaseTranslatorV4 {
   private static readonly MS_MAX_ITEMS = 10;  // 微软每次请求最大字幕条数
   private static readonly MS_MAX_CHARS = 5000;  // 微软单个文本最大字符数
   private static readonly MS_MAX_TOTAL_CHARS = 50000;  // 微软单次请求字符总量限制
-
-  /**
-   * 并发翻译配置（Phase 1：仅DeepSeek启用）
-   */
-  private static readonly CONCURRENCY_CONFIG = {
-    DEEPSEEK: 10,           // DeepSeek默认并发数（官方"无限制"，社区经验10）
-    OPENAI: 10,             // OpenAI默认并发数（预留）
-    GEMINI: 5,              // Gemini默认并发数（预留）
-    BATCH_TIMEOUT_MS: 8000  // 单批次超时（8秒）
-  };
 
   // 🚀 调试开关：启用微软5000字符窗口优化
   private static readonly USE_MICROSOFT_OPTIMIZER = true;  // 设为true启用新优化器
@@ -95,9 +104,9 @@ export class TwoPhaseTranslatorV4 {
       this.segmenter = new IntelligentSegmenter(10);
       console.debug('[debug][TwoPhaseTranslatorV4] 使用DeepSeek配置：10条/批');
     } else if (serviceType === 'gemini') {
-      // Gemini使用80条/批（1M上下文窗口）
-      this.segmenter = new IntelligentSegmenter(80);
-      console.debug('[debug][TwoPhaseTranslatorV4] 使用Gemini配置：80条/批');
+      // Gemini使用50条/批（兼顾上下文窗口与超时风险）
+      this.segmenter = new IntelligentSegmenter(50);
+      console.debug('[debug][TwoPhaseTranslatorV4] 使用Gemini配置：50条/批');
     } else if (serviceType === 'deepl') {
       // DeepL使用50条/批（API原生支持最多50条）
       this.segmenter = new IntelligentSegmenter(50);
@@ -144,22 +153,63 @@ export class TwoPhaseTranslatorV4 {
     const serviceType = service.type;
     switch (serviceType) {
       case 'deepseek':
-        return TwoPhaseTranslatorV4.CONCURRENCY_CONFIG.DEEPSEEK;
+        return DEEPSEEK_CONCURRENCY_LIMIT;
       case 'openai':
-        return TwoPhaseTranslatorV4.CONCURRENCY_CONFIG.OPENAI;
+        return OPENAI_CONCURRENCY_LIMIT;
       case 'gemini':
-        return TwoPhaseTranslatorV4.CONCURRENCY_CONFIG.GEMINI;
+        return GEMINI_CONCURRENCY_LIMIT;
+      case 'deepl':
+        return DEEPL_CONCURRENCY_LIMIT;
+      case 'google':
+      case 'google-free':
+        return GOOGLE_PIPELINE_CONCURRENCY_LIMIT;
+      case 'microsoft':
+      case 'microsoft-free':
+        return MICROSOFT_CONCURRENCY_LIMIT;
       default:
         return 0; // 其他服务默认串行
     }
   }
 
   /**
-   * 获取批次超时时间
+   * 暴露实际并发限制，供外部用于超时预算等计算
+   * @returns 并发数（0 表示串行）
+   */
+  public getResolvedConcurrencyLimit(): number {
+    return this.getConcurrencyLimit();
+  }
+
+  /**
+   * 获取批次超时时间（根据服务类型动态返回）
    * @returns 超时时间（毫秒）
    */
   private getBatchTimeout(): number {
-    return TwoPhaseTranslatorV4.CONCURRENCY_CONFIG.BATCH_TIMEOUT_MS;
+    const service = this.translationService;
+    if (!service) {
+      return DEFAULT_TIMEOUT_MS;
+    }
+
+    const serviceType = service.type;
+    switch (serviceType) {
+      case 'deepseek':
+        return DEEPSEEK_TIMEOUT_MS;
+      case 'openai':
+        return OPENAI_TIMEOUT_MS;
+      case 'gemini':
+        return GEMINI_TIMEOUT_MS;
+      case 'deepl':
+        return DEEPL_TIMEOUT_MS;
+      case 'qwen':
+        return QWEN_TIMEOUT_MS;
+      case 'google':
+      case 'google-free':
+        return GOOGLE_TIMEOUT_MS;
+      case 'microsoft':
+      case 'microsoft-free':
+        return MICROSOFT_TIMEOUT_MS;
+      default:
+        return DEFAULT_TIMEOUT_MS;
+    }
   }
 
   /**
@@ -180,6 +230,14 @@ export class TwoPhaseTranslatorV4 {
     }
 
     return service?.requestDelay ?? 0;
+  }
+
+  /**
+   * 暴露实际请求间隔，供外部用于超时预算等计算
+   * @returns 请求延迟（毫秒）
+   */
+  public getResolvedRequestDelay(): number {
+    return this.getRequestDelay();
   }
 
   /**
@@ -327,6 +385,7 @@ export class TwoPhaseTranslatorV4 {
    * @param sourceLanguageCode 源语言代码（如"en"，供需要代码的API使用）
    * @param preferences 用户偏好设置
    * @param signal AbortSignal用于取消操作
+   * @param precomputedBatches 可选的预计算批次（用于避免重复智能断句）
    * @returns 批量翻译结果数组
    */
   public async translateBatch(
@@ -340,7 +399,12 @@ export class TwoPhaseTranslatorV4 {
     urgentResults: Array<any>,
     languageParams: { source: string; target: string },  // ✅ 改为接收统一的语言参数对象
     preferences: any,
-    signal: AbortSignal
+    signal: AbortSignal,
+    precomputedBatches?: Array<{
+      startIdx: number;
+      endIdx: number;
+      subtitles: typeof subtitles;
+    }>
   ): Promise<Array<{
     index: number;
     originalText: string;
@@ -361,7 +425,8 @@ export class TwoPhaseTranslatorV4 {
         urgentResults,
         languageParams,  // ✅ 传递语言参数对象
         preferences,
-        signal
+        signal,
+        precomputedBatches
       );
     }
 
@@ -373,7 +438,8 @@ export class TwoPhaseTranslatorV4 {
         urgentResults,
         languageParams,  // ✅ 传递语言参数对象
         preferences,
-        signal
+        signal,
+        precomputedBatches
       );
     }
 
@@ -384,7 +450,8 @@ export class TwoPhaseTranslatorV4 {
       urgentResults,
       languageParams,  // ✅ 传递语言参数对象
       preferences,
-      signal
+      signal,
+      precomputedBatches
     );
   }
 
@@ -480,7 +547,7 @@ export class TwoPhaseTranslatorV4 {
       } else if (serviceType === 'google-free' || serviceType === 'google') {
         perBatchTimeout = GOOGLE_TRANSLATE_BATCH_TIMEOUT_MS; // 谷歌免费翻译10秒
       } else if (serviceType === 'microsoft-free' || serviceType === 'microsoft') {
-        perBatchTimeout = 5000; // 微软免费翻译5秒
+        perBatchTimeout = MICROSOFT_TIMEOUT_MS; // Microsoft单批15秒
       } else {
         perBatchTimeout = 10000; // 其他服务默认10秒
       }
@@ -635,7 +702,12 @@ export class TwoPhaseTranslatorV4 {
     urgentResults: Array<any>,
     languageParams: { source: string; target: string },  // ✅ 改为接收语言参数对象
     preferences: any,
-    signal: AbortSignal
+    signal: AbortSignal,
+    precomputedBatches?: Array<{
+      startIdx: number;
+      endIdx: number;
+      subtitles: typeof subtitles;
+    }>
   ): Promise<Array<{
     index: number;
     originalText: string;
@@ -660,12 +732,19 @@ export class TwoPhaseTranslatorV4 {
       // 如果紧急翻译已覆盖全部字幕，跳过批量翻译
       if (urgentResults.length === subtitles.length) {
         console.log('[TwoPhaseTranslatorV4] 紧急翻译已覆盖全部字幕，跳过批量翻译');
-        return urgentResults;
-      }
+      return urgentResults;
+    }
 
-      // 使用智能分段创建批次
-      const batchesWithMeta = this.segmenter.createSmartBatches(batchSubtitles);
-      const batches = batchesWithMeta.map(batch => batch.subtitles);
+    // 使用智能分段创建批次
+    const batchesWithMeta = precomputedBatches && precomputedBatches.length > 0
+      ? precomputedBatches
+      : this.segmenter.createSmartBatches(batchSubtitles);
+
+    if (precomputedBatches && precomputedBatches.length > 0) {
+      console.debug(`[debug][TwoPhaseTranslatorV4] 使用预计算批次: ${precomputedBatches.length}批`);
+    }
+
+    const batches = batchesWithMeta.map(batch => batch.subtitles);
 
       // 获取配置
       const requestDelay = this.getRequestDelay();
@@ -806,7 +885,19 @@ export class TwoPhaseTranslatorV4 {
             : result.error.message || '翻译失败';
 
           console.debug(`[debug][TwoPhaseTranslatorV4] 批次 ${result.batchIndex + 1}/${batches.length} 失败: ${errorMsg}`);
-          throw new Error(errorMsg);
+
+          const error = result.error instanceof Error
+            ? result.error
+            : new Error(errorMsg);
+
+          if (
+            error.name === 'TimeoutError' ||
+            (error.name === 'AbortError' && (error.message.includes('timeout') || error.message === '批次翻译超时'))
+          ) {
+            throw error;
+          }
+
+          throw error;
         }
 
         // 构建结果
@@ -852,6 +943,7 @@ export class TwoPhaseTranslatorV4 {
    * @param sourceLanguageCode 源语言代码
    * @param preferences 用户偏好设置
    * @param signal AbortSignal用于取消操作
+   * @param precomputedBatches 可选的预计算批次（用于避免重复智能断句）
    * @returns 批量翻译结果数组
    */
   private async translateBatchConcurrent(
@@ -865,7 +957,12 @@ export class TwoPhaseTranslatorV4 {
     urgentResults: Array<any>,
     languageParams: { source: string; target: string },  // ✅ 改为接收语言参数对象
     preferences: any,
-    signal: AbortSignal
+    signal: AbortSignal,
+    precomputedBatches?: Array<{
+      startIdx: number;
+      endIdx: number;
+      subtitles: typeof subtitles;
+    }>
   ): Promise<Array<{
     index: number;
     originalText: string;
@@ -893,9 +990,15 @@ export class TwoPhaseTranslatorV4 {
         return urgentResults;
       }
 
-      // 使用智能分段创建批次
-      const batchesWithMeta = this.segmenter.createSmartBatches(batchSubtitles);
-      const batches = batchesWithMeta.map(batch => batch.subtitles);
+      // 使用智能分段创建批次（如果已有预计算批次则直接使用，避免重复计算）
+      let batches: Array<typeof batchSubtitles>;
+      if (precomputedBatches && precomputedBatches.length > 0) {
+        batches = precomputedBatches.map(batch => batch.subtitles);
+        console.debug(`[debug][TwoPhaseTranslatorV4] 使用预计算批次: ${precomputedBatches.length}批`);
+      } else {
+        const batchesWithMeta = this.segmenter.createSmartBatches(batchSubtitles);
+        batches = batchesWithMeta.map(batch => batch.subtitles);
+      }
 
       // 获取并发限制
       const concurrency = this.getConcurrencyLimit();
@@ -1018,7 +1121,19 @@ export class TwoPhaseTranslatorV4 {
               : result.error.message || '翻译失败';
 
             console.debug(`[debug][TwoPhaseTranslatorV4] 批次 ${result.batchIndex + 1}/${batches.length} 失败: ${errorMsg}`);
-            throw new Error(errorMsg);
+
+            const error = result.error instanceof Error
+              ? result.error
+              : new Error(errorMsg);
+
+            if (
+              error.name === 'TimeoutError' ||
+              (error.name === 'AbortError' && (error.message.includes('timeout') || error.message === '批次翻译超时'))
+            ) {
+              throw error;
+            }
+
+            throw error;
           }
 
           // 构建结果（TypeScript类型守卫：确保success=true时这些字段存在）
@@ -1506,7 +1621,10 @@ export class TwoPhaseTranslatorV4 {
         if (service.type === 'openai') {
           // 使用OpenAI翻译（V4架构）
           if (!service.apiKey) {
-            throw new Error('OpenAI API密钥未配置');
+            throw new Error(
+              chrome.i18n.getMessage('error_openai_service_not_configured') ||
+              'OpenAI service is not configured. Please add an API key in settings.'
+            );
           }
 
           const translator = new OpenAITranslator(
@@ -1534,7 +1652,10 @@ export class TwoPhaseTranslatorV4 {
         } else if (service.type === 'deepseek') {
           // 使用 DeepSeek 翻译
           if (!service.apiKey) {
-            throw new Error('DeepSeek API密钥未配置');
+            throw new Error(
+              chrome.i18n.getMessage('error_deepseek_service_not_configured') ||
+              'DeepSeek service is not configured. Please add an API key in settings.'
+            );
           }
 
           const translator = new DeepSeekTranslator(service.apiKey);
@@ -1552,7 +1673,10 @@ export class TwoPhaseTranslatorV4 {
         } else if (service.type === 'gemini') {
           // 使用 Gemini 翻译（Phase 1: 手动tier选择）
           if (!service.apiKey) {
-            throw new Error('Gemini API密钥未配置');
+            throw new Error(
+              chrome.i18n.getMessage('error_gemini_service_not_configured') ||
+              'Gemini service is not configured. Please add an API key in settings.'
+            );
           }
 
           const translator = new GeminiTranslator(
@@ -1577,7 +1701,10 @@ export class TwoPhaseTranslatorV4 {
         } else if (service.type === 'deepl') {
           // 使用 DeepL 翻译
           if (!service.apiKey) {
-            throw new Error('DeepL API密钥未配置');
+            throw new Error(
+              chrome.i18n.getMessage('error_translation_service_not_configured') ||
+              'Translation service is not configured. Please add an API key in settings.'
+            );
           }
 
           const translator = new DeepLTranslator(
@@ -1604,7 +1731,10 @@ export class TwoPhaseTranslatorV4 {
         } else if (service.type === 'qwen') {
           // 使用 Qwen-MT 翻译
           if (!service.apiKey) {
-            throw new Error('Qwen API密钥未配置');
+            throw new Error(
+              chrome.i18n.getMessage('error_translation_service_not_configured') ||
+              'Translation service is not configured. Please add an API key in settings.'
+            );
           }
 
           const translator = new QwenTranslator(
