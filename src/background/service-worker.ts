@@ -1005,7 +1005,7 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
     const userPreferences = userPreferencesResult.success ? userPreferencesResult.data : {};
     
     // 6. 两层缓存获取字幕轨道数据
-    let availableSourceLanguages = [];
+    let availableSourceLanguages: TrackMetadata[] = [];
     let detectedSourceLang = 'auto';
     let lastSelectedTrack: { languageCode: string; kind?: string } | null = null;  // 从 selectedSourceTrack 获取
     
@@ -1023,65 +1023,65 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
       console.warn(`[service-worker] Local Storage读取失败:`, error);
     }
     
-    // 层级2: Content Script API（仅在非广告状态下触发）
-    if (availableSourceLanguages.length === 0 && !isAdPlaying) {
+    // 7. 智能选择源语言逻辑（新架构：清晰的三分支）
+    let selectedSourceTrackToSave: TrackMetadata | undefined = undefined;
+
+    // 分支1：优先处理广告播放
+    if (isAdPlaying) {
+      detectedSourceLang = 'auto';
+      selectedSourceTrackToSave = undefined;
+      console.debug('[debug][service-worker] 广告播放中，源语言设置为自动检测');
+    }
+    // 分支2：缓存未命中 - 获取轨道 → 智能选择 → 保存
+    else if (availableSourceLanguages.length === 0) {
       try {
         console.debug(`[debug][service-worker] 缓存未命中，从Content Script获取`);
         const trackResponse = await chrome.tabs.sendMessage(tabId, {
           type: 'getVideoTrackData',
           videoId
         });
-        
+
         if (trackResponse && trackResponse.success && trackResponse.tracks) {
           availableSourceLanguages = trackResponse.tracks;
           console.debug(`[debug][service-worker] ✓ 获取成功[Content Script API]: ${availableSourceLanguages.length}个轨道`);
-          
-          // 保存到Local Storage
-          if (availableSourceLanguages.length > 0) {
-            const matchedTrack = lastSelectedTrack
-              ? availableSourceLanguages.find((t: TrackMetadata) =>
-                  t.languageCode === lastSelectedTrack!.languageCode &&
-                  (lastSelectedTrack!.kind ? t.kind === lastSelectedTrack!.kind : !t.kind))
-              : undefined;
 
+          // 智能选择
+          if (availableSourceLanguages.length > 0) {
+            const targetLang = userPreferences.targetLang || 'zh-CN';
+            const sourceTrack = selectBestSourceLanguage(
+              availableSourceLanguages,
+              targetLang
+            );
+            detectedSourceLang = sourceTrack.languageCode;
+            selectedSourceTrackToSave = sourceTrack;
+            console.debug(`[debug][service-worker] 智能选择源语言: ${detectedSourceLang}${sourceTrack.kind === 'asr' ? ' (ASR)' : ''} (目标语言: ${targetLang})`);
+
+            // 保存轨道列表和智能选择结果
             await videoSourceLanguageCacheManager.set({
               videoId,
               availableSourceLanguages,
-              selectedSourceTrack: matchedTrack ?? undefined
+              selectedSourceTrack: selectedSourceTrackToSave
             });
-            
-            console.debug(`[debug][service-worker] ✓ 已保存到缓存[Local Storage]`);
+            console.debug(`[debug][service-worker] ✓ 已保存轨道列表和智能选择结果到缓存`);
+          } else {
+            detectedSourceLang = 'auto';
+            console.debug(`[debug][service-worker] 未获取到轨道，源语言设置为自动检测`);
           }
         } else {
-          console.warn(`[service-worker] ⚠️ 获取字幕轨道数据失败`, trackResponse);
+          detectedSourceLang = 'auto';
+          console.warn(`[service-worker] ⚠️ 获取字幕轨道数据失败，源语言设置为自动检测`, trackResponse);
         }
       } catch (error) {
-        console.error(`[service-worker] ✗ 请求字幕轨道数据: ${error instanceof Error ? error.message : String(error)}`);
+        detectedSourceLang = 'auto';
+        console.error(`[service-worker] ✗ 请求字幕轨道数据失败: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    
-    // 7. 智能选择源语言
-    // 如果用户有历史选择，使用它；否则智能选择
-    if (isAdPlaying) {
-      detectedSourceLang = 'auto';
-      console.debug('[debug][service-worker] 广告播放中，源语言保持自动检测');
-    } else if (lastSelectedTrack) {
-      detectedSourceLang = lastSelectedTrack.languageCode;
-      console.debug(`[debug][service-worker] 使用用户历史选择的源语言: ${detectedSourceLang}` +
-        (lastSelectedTrack.kind ? ` (${lastSelectedTrack.kind})` : ''));
-    } else if (availableSourceLanguages.length > 0) {
-      // 没有用户选择，进行智能选择
-      const targetLang = userPreferences.targetLang || 'zh-CN';
-      const sourceTrack = selectBestSourceLanguage(
-        availableSourceLanguages,
-        targetLang
-      );
-      detectedSourceLang = sourceTrack.languageCode;
-      console.debug(`[debug][service-worker] 智能选择源语言: ${detectedSourceLang}${sourceTrack.kind === 'asr' ? ' (ASR)' : ''} (目标语言: ${targetLang})`);
-    } else {
-      // 没有可用轨道，保持'auto'
-      detectedSourceLang = 'auto';
-      console.debug(`[debug][service-worker] 无可用轨道，保持自动检测`);
+    // 分支3：缓存命中 - 使用历史选择（必定存在）
+    else {
+      detectedSourceLang = lastSelectedTrack!.languageCode;
+      selectedSourceTrackToSave = lastSelectedTrack as TrackMetadata;
+      console.debug(`[debug][service-worker] 缓存命中，使用历史选择: ${detectedSourceLang}` +
+        (lastSelectedTrack!.kind ? ` (${lastSelectedTrack!.kind})` : ''));
     }
     
     // 8. 构建PopupContext
@@ -1095,7 +1095,7 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
         languageListState: { isLocked: false }
       },
       availableSourceLanguages,
-      selectedSourceTrack: lastSelectedTrack,  // 添加用户上次选择的源语言轨道
+      selectedSourceTrack: selectedSourceTrackToSave,  // ✅ 使用智能选择后的结果
       isAdPlaying
     };
     

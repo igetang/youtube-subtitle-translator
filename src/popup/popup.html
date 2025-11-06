@@ -1060,6 +1060,18 @@ body::-webkit-scrollbar-thumb:hover,
 <body>
     <h1>翻译设置</h1>
 
+    <!-- 非YouTube页面提示条（默认隐藏） -->
+    <div id="non-youtube-warning" style="display: none; background-color: #ff9800; color: #000; padding: 12px 15px; margin: -16px -16px 16px -16px; border-radius: 0; font-size: 0.85em; line-height: 1.5;">
+        <div style="display: flex; align-items: flex-start; gap: 8px;">
+            <span style="font-size: 1.2em;">⚠️</span>
+            <div>
+                <div style="font-weight: 600; margin-bottom: 4px;">当前不在YouTube页面</div>
+                <div style="opacity: 0.9;">翻译功能仅在YouTube视频页面可用</div>
+                <div style="opacity: 0.8; margin-top: 4px; font-size: 0.95em;">💡 提示：你可以先在这里配置好翻译设置</div>
+            </div>
+        </div>
+    </div>
+
     <div class="setting-item">
         <div class="setting-row">
             <label for="source-language">原文语言</label>

@@ -54,9 +54,9 @@ export class VideoSourceLanguageCacheManager {
         this.cache = stored;
         console.log(`[video-source-cache] 已加载${stored.items.length}个视频源语言缓存项`);
       } else {
+        // ✅ 只初始化内存缓存，不保存到storage（避免不必要的空缓存写入）
         this.cache = { ...DEFAULT_VIDEO_SOURCE_LANGUAGE_CACHE };
-        await this.saveCache();
-        console.log('[video-source-cache] 创建新的视频源语言缓存');
+        console.debug('[debug][video-source-cache] 初始化空缓存（仅内存）');
       }
 
       this.initialized = true;

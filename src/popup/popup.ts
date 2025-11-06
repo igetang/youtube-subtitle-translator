@@ -868,7 +868,44 @@ function extractVideoIdFromUrl(url: string): string | null {
 }
 
 /**
- * 显示使用说明界面（非YouTube页面时使用）
+ * 显示非YouTube页面警告提示条
+ */
+function showNonYouTubeWarning(): void {
+  const warningElement = document.getElementById('non-youtube-warning');
+  if (warningElement) {
+    warningElement.style.display = 'block';
+    console.log('[popup] 已显示非YouTube页面警告提示');
+  }
+}
+
+/**
+ * 设置源语言选择器为禁用状态（非YouTube页面使用）
+ */
+function setSourceLanguageDisabled(): void {
+  // 设置源语言显示为"自动检测"
+  if (sourceLangSelectedValue) {
+    sourceLangSelectedValue.textContent = chrome.i18n.getMessage('source_lang_auto') || '自动检测';
+    sourceLangSelectedValue.style.color = '#999';
+  }
+
+  // 禁用源语言选择器容器
+  if (sourceLangContainer) {
+    sourceLangContainer.style.opacity = '0.5';
+    sourceLangContainer.style.cursor = 'not-allowed';
+    sourceLangContainer.style.pointerEvents = 'none';
+  }
+
+  // 禁用触发器
+  if (sourceLangTrigger) {
+    sourceLangTrigger.style.cursor = 'not-allowed';
+  }
+
+  console.log('[popup] 源语言选择器已设为禁用状态');
+}
+
+/**
+ * 显示使用说明界面（已废弃，保留以防兼容性问题）
+ * @deprecated 改用 showNonYouTubeWarning()
  */
 function showUsageGuide(): void {
   console.log('[popup] 显示使用说明界面');
@@ -1690,11 +1727,17 @@ async function updateUserPreferencesUI(userPreferences: UserPreferences): Promis
  * 请求PopupContext数据
  */
 async function requestPopupContextData(): Promise<any> {
+  // ✅ 安全检查：非YouTube页面不调用Service Worker获取数据
+  if (!isYouTubePage) {
+    console.log('[popup] 非YouTube页面，跳过PopupContext请求');
+    return null;
+  }
+
   if (!currentTabId) {
     console.log('[popup] 无法请求PopupContext: 缺少标签页ID');
     return null;
   }
-  
+
   try {
     const response = await chrome.runtime.sendMessage({
       type: 'getPopupInitData',
@@ -1727,6 +1770,17 @@ async function requestPopupContextData(): Promise<any> {
  */
 async function loadSourceLanguageData(popupContext: any): Promise<void> {
   try {
+    // ✅ 非YouTube页面：设置源语言为"自动检测"并禁用
+    if (!isYouTubePage) {
+      console.log('[popup] 非YouTube页面，设置源语言为自动检测并禁用');
+      currentSourceLang = 'auto';
+      currentSourceTrackKind = undefined;
+      uiTrackData = [];
+      setSourceLanguageDisabled();
+      showNonYouTubeWarning();
+      return;
+    }
+
     if (!currentVideoId) {
       console.log('[popup] 无法加载源语言数据: 缺少视频ID');
       return;
@@ -1789,9 +1843,10 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
       );
     }
     
+    // ✅ 优化：Service Worker已经保存了智能选择结果，Popup只需要更新UI
     // 处理自动检测的源语言（仅在用户未手动选择时）
     if (popupContext && popupContext.detectedSourceLang && !selectedTrack) {
-      await handleDetectedSourceLanguage(popupContext.detectedSourceLang);
+      handleDetectedSourceLanguageUI(popupContext.detectedSourceLang);
     }
     
     console.log('[popup] 源语言数据加载完成');
@@ -1803,7 +1858,47 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
 
 
 /**
- * 处理检测到的源语言
+ * 处理检测到的源语言（只更新UI，不保存）
+ * ✅ 优化：Service Worker已经保存了智能选择结果，Popup只需要更新UI
+ */
+function handleDetectedSourceLanguageUI(detectedLang: string): void {
+  try {
+    console.log('[popup] 处理检测到的源语言（仅UI更新）:', detectedLang);
+
+    // ✅ 自动设置源语言（如果用户没有手动选择过）
+    const hasUserSelection = currentSourceLang && currentSourceLang !== 'auto';
+
+    if (!hasUserSelection && detectedLang !== 'auto') {
+      // 在uiTrackData中查找对应的轨道
+      const detectedTrack = uiTrackData.find(track => track.languageCode === detectedLang);
+
+      if (detectedTrack) {
+        console.log('[popup] 自动设置智能选择的源语言（仅UI）:', detectedLang);
+        const trackKind: 'asr' | 'forced' | undefined =
+          detectedTrack.kind === 'asr' || detectedTrack.kind === 'forced'
+            ? detectedTrack.kind
+            : undefined;
+
+        // ✅ 只更新UI，不保存（Service Worker已经保存过了）
+        currentSourceLang = detectedLang;
+        currentSourceTrackKind = trackKind;
+        populateSourceLanguages();
+        updateSourceLanguageDisplay(detectedLang, trackKind);
+      } else {
+        console.warn('[popup] 智能选择的语言不在可用轨道列表中:', detectedLang);
+      }
+    } else if (hasUserSelection) {
+      console.log('[popup] 用户已选择源语言，跳过自动设置:', currentSourceLang);
+    }
+
+  } catch (error) {
+    console.error('[popup] 处理检测到的源语言失败:', error);
+  }
+}
+
+/**
+ * 处理检测到的源语言（包含保存逻辑）
+ * @deprecated 已废弃，改用 handleDetectedSourceLanguageUI（只更新UI）
  */
 async function handleDetectedSourceLanguage(detectedLang: string): Promise<void> {
   try {
@@ -1816,7 +1911,7 @@ async function handleDetectedSourceLanguage(detectedLang: string): Promise<void>
     if (!hasUserSelection && detectedLang !== 'auto') {
       // 在uiTrackData中查找对应的轨道
       const detectedTrack = uiTrackData.find(track => track.languageCode === detectedLang);
-      
+
       if (detectedTrack) {
         console.log('[popup] 自动设置智能选择的源语言:', detectedLang);
         const trackKind: 'asr' | 'forced' | undefined =
@@ -1834,10 +1929,10 @@ async function handleDetectedSourceLanguage(detectedLang: string): Promise<void>
       } else {
         console.warn('[popup] 智能选择的语言不在可用轨道列表中:', detectedLang);
       }
-    } else if (savedSourceTrack) {
-      console.log('[popup] 用户已选择源语言，跳过自动设置:', savedSourceTrack);
+    } else if (hasUserSelection) {
+      console.log('[popup] 用户已选择源语言，跳过自动设置:', currentSourceLang);
     }
-    
+
   } catch (error) {
     console.error('[popup] 处理检测到的源语言失败:', error);
   }
@@ -2528,16 +2623,13 @@ async function initializePopupUI(): Promise<void> {
       isYouTubePage = true;
       currentVideoId = extractVideoIdFromUrl(tab.url);
       console.log(`[popup] YouTube页面，视频ID: ${currentVideoId || '未检测到'}`);
-      
-      // 初始化YouTube功能界面
-      await initializeYouTubeUI();
-} else {
+    } else {
       isYouTubePage = false;
       console.log(`[popup] 非YouTube页面: ${tab.url}`);
-      
-      // 显示使用说明界面
-      showUsageGuide();
     }
+
+    // 3. 统一初始化UI（YouTube和非YouTube页面都显示正常界面）
+    await initializeYouTubeUI();
     
   } catch (error) {
     console.error('[popup] UI初始化失败:', error);
