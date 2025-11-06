@@ -226,7 +226,7 @@ export class TwoPhaseTranslatorV4 {
       if (service.tier === 'paid') {
         return 0;  // 付费层：0ms延迟（真并发）
       } else {
-        return 6000;  // 免费层：6000ms延迟（流水线并发，确保10 RPM）
+        return 3000;  // 免费层：3000ms延迟（测试：从6秒改为3秒）⚠️ 可能触发429
       }
     }
 

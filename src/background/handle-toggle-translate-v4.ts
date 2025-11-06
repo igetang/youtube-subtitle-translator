@@ -623,12 +623,25 @@ export async function handleToggleTranslateV4(
         } else {
           const failureReason = trackResponse?.reason || 'no_tracks';
           console.warn(`[service-worker-v4] ✗ 未获取到字幕轨道，reason=${failureReason} | requestId: ${trackResponse?.requestId ?? 'n/a'}`);
+
+          // 特殊情况处理（提前返回）
           if (failureReason === 'player_not_ready') {
             handlePlayerNotReady();
+            return;
           }
           if (failureReason === 'ad_playing') {
             handleAdPlaying();
+            return;
           }
+
+          // ⭐ 空字幕轨道：直接抛出错误终止流程
+          if (failureReason === 'tracklist_empty') {
+            console.error('[service-worker-v4] ✗ 视频无字幕轨道，终止翻译流程');
+            throw new Error(chrome.i18n.getMessage('error_no_subtitles') || '当前视频无字幕');
+          }
+
+          // 其他未知错误：降级使用auto继续
+          console.warn('[service-worker-v4] 未知轨道错误，降级使用auto');
           sourceLanguageCode = 'auto';
           sourceLanguageName = 'auto';
         }
