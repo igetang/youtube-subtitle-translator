@@ -856,13 +856,17 @@ export async function handleToggleTranslateV4(
       // 判断是否为致命错误（API密钥问题）
       const category = errorObj?.category;
       const errorMsg = (error as Error)?.message || '';
+      const lowerErrorMsg = errorMsg.toLowerCase();
       const isFatalError =
         category === 'fatal' ||
-        errorMsg.includes('API密钥') ||
-        errorMsg.includes('密钥未配置') ||
-        errorMsg.includes('密钥无效') ||
         errorObj.status === 401 ||
-        errorObj.status === 403;
+        errorObj.status === 403 ||
+        lowerErrorMsg.includes('api key') ||
+        lowerErrorMsg.includes('not configured') ||
+        lowerErrorMsg.includes('invalid key') ||
+        lowerErrorMsg.includes('密钥') ||
+        lowerErrorMsg.includes('未配置') ||
+        lowerErrorMsg.includes('无效');
 
       if (isFatalError) {
         console.error('[service-worker-v4] ❌ 致命错误（API密钥问题），终止翻译流程');

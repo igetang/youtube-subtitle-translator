@@ -15,6 +15,7 @@ import { GeminiTranslator } from './gemini-translator';
 import { DeepLTranslator } from './deepl-translator';
 import { QwenTranslator } from './qwen-translator';
 import { LanguageCodeMapper } from '@shared/utils/language-code-mapper';
+import { TranslationError } from '@shared/types/translation-errors';
 
 // ========== 翻译服务超时配置（毫秒）==========
 export const DEEPSEEK_TIMEOUT_MS = 30000;    // DeepSeek: 30秒
@@ -1621,9 +1622,11 @@ export class TwoPhaseTranslatorV4 {
         if (service.type === 'openai') {
           // 使用OpenAI翻译（V4架构）
           if (!service.apiKey) {
-            throw new Error(
+            throw new TranslationError(
               chrome.i18n.getMessage('error_openai_service_not_configured') ||
-              'OpenAI service is not configured. Please add an API key in settings.'
+              'OpenAI service is not configured. Please add an API key in settings.',
+              'fatal',
+              'openai'
             );
           }
 
@@ -1652,9 +1655,11 @@ export class TwoPhaseTranslatorV4 {
         } else if (service.type === 'deepseek') {
           // 使用 DeepSeek 翻译
           if (!service.apiKey) {
-            throw new Error(
+            throw new TranslationError(
               chrome.i18n.getMessage('error_deepseek_service_not_configured') ||
-              'DeepSeek service is not configured. Please add an API key in settings.'
+              'DeepSeek service is not configured. Please add an API key in settings.',
+              'fatal',
+              'deepseek'
             );
           }
 
@@ -1673,9 +1678,11 @@ export class TwoPhaseTranslatorV4 {
         } else if (service.type === 'gemini') {
           // 使用 Gemini 翻译（Phase 1: 手动tier选择）
           if (!service.apiKey) {
-            throw new Error(
+            throw new TranslationError(
               chrome.i18n.getMessage('error_gemini_service_not_configured') ||
-              'Gemini service is not configured. Please add an API key in settings.'
+              'Gemini service is not configured. Please add an API key in settings.',
+              'fatal',
+              'gemini'
             );
           }
 
@@ -1701,9 +1708,11 @@ export class TwoPhaseTranslatorV4 {
         } else if (service.type === 'deepl') {
           // 使用 DeepL 翻译
           if (!service.apiKey) {
-            throw new Error(
+            throw new TranslationError(
               chrome.i18n.getMessage('error_translation_service_not_configured') ||
-              'Translation service is not configured. Please add an API key in settings.'
+              'Translation service is not configured. Please add an API key in settings.',
+              'fatal',
+              'deepl'
             );
           }
 
@@ -1731,9 +1740,11 @@ export class TwoPhaseTranslatorV4 {
         } else if (service.type === 'qwen') {
           // 使用 Qwen-MT 翻译
           if (!service.apiKey) {
-            throw new Error(
+            throw new TranslationError(
               chrome.i18n.getMessage('error_translation_service_not_configured') ||
-              'Translation service is not configured. Please add an API key in settings.'
+              'Translation service is not configured. Please add an API key in settings.',
+              'fatal',
+              'qwen'
             );
           }
 
