@@ -142,87 +142,6 @@ throw new Error(`所有Google免费翻译端点调用失败: ${errors.join(' | '
 - 错误代码格式：6位数 = HTTP状态码(3位) + 细分代码(3位)
 - 常见错误代码：403001（免费配额用尽）、401001（认证无效）
 
-### 错误代码表
-
-| HTTP状态码 | 错误代码 | 含义 | 修复后处理方案 | 错误分类 | 当前问题 |
-|-----------|---------|------|--------------|---------|---------|
-| **200** | - | 成功 | ✅ 返回翻译结果 | - | ✅ 正常 |
-| **400** | 400xxx | 查询参数缺失或无效 | ✅ 抛出 `TranslationError` | `fatal` | ⚠️ 未实现 |
-| **401** | 401xxx | 认证失败（Token无效/过期） | ✅ 抛出 `TranslationError` | `fatal` | ❌ **当前回退原文** |
-| **403** | 403001 | 免费配额已用完 | ✅ 抛出 `TranslationError` | `fatal` | ❌ **当前回退原文** |
-| **408** | 408xxx | 资源缺失/翻译系统不可用 | ✅ 抛出 `TranslationError` | `retryable` | ⚠️ 未实现 |
-| **429** | 429xxx | 超过请求限制 | ✅ 抛出 `TranslationError` | `retryable` | ❌ **当前回退原文** |
-| **500** | 500xxx | 意外错误 | ✅ 抛出 `TranslationError` | `retryable` | ❌ **当前回退原文** |
-| **503** | 503xxx | 服务暂时不可用 | ✅ 抛出 `TranslationError` | `retryable` | ❌ **当前回退原文** |
-
-### 代码位置
-- 文件: `src/background/components/microsoft-translator.ts`
-- 错误处理: 第72-113行 (`translateBatch`方法)
-
-### 当前问题
-
-```typescript
-// 第111行：所有路径失败后回退原文
-console.warn('[MicrosoftTranslator] 所有路径均失败，回退原文', lastError);
-return batch;  // ❌ 返回原文，继续翻译下一批
-```
-
-**问题描述**:
-- ❌ 遇到任何错误（包括认证失败、限制错误）都不会中断翻译流程
-- ❌ 返回原文继续翻译下一批，导致"部分原文+部分译文"混乱结果
-- ❌ 用户无法知道翻译失败原因
-
-### 修复方案
-
-```typescript
-// microsoft-translator.ts:111行
-console.error('[MicrosoftTranslator] 所有路径均失败:', lastError);
-
-// 根据HTTP状态码判断错误类型
-if (lastError instanceof MicrosoftRequestError) {
-  const status = lastError.status;
-
-  switch (status) {
-    case 400:  // 参数错误
-      throw new TranslationError(
-        '微软翻译请求参数错误',
-        'fatal',
-        'microsoft',
-        status
-      );
-
-    case 401:  // 认证失败
-      throw new TranslationError(
-        '微软翻译认证失败，请检查网络连接',
-        'fatal',
-        'microsoft',
-        status
-      );
-
-    case 403:  // 免费配额用尽
-      throw new TranslationError(
-        chrome.i18n.getMessage('error_microsoft_quota_exceeded') ||
-        '微软翻译免费配额已用完',
-        'fatal',
-        'microsoft',
-        status
-      );
-
-    case 408:  // 资源缺失/系统不可用
-      throw new TranslationError(
-        '微软翻译系统暂时不可用，请稍后重试',
-        'retryable',
-        'microsoft',
-        status
-      );
-
-    case 429:  // 速率限制
-      throw new TranslationError(
-        '微软翻译请求过于频繁，请稍后重试',
-        'retryable',
-        'microsoft',
-        status
-      );
 
     case 500:  // 服务器错误
     case 503:  // 服务不可用
@@ -1003,3 +922,37 @@ try {
 
 **最后更新**: 2025-11-07
 **维护者**: Claude Code
+### 错误代码表
+
+| 错误类型 | 触发条件 | 处理方案 | 分类 |
+|---------|---------|---------|------|
+| **输入超限** | 单条字幕 > 5000 字符/批次 > 50000 字符 | 立即抛出 `TranslationError` (`error_microsoft_text_too_long`) | `fatal` |
+| **HTTP 400** | 参数缺失/无效 | `error_microsoft_param_invalid` | `fatal` |
+| **HTTP 401** | Token 失效 | `error_microsoft_auth_failed` | `fatal` |
+| **HTTP 403/403001** | 免费配额用完/无权限 | `error_microsoft_quota_exceeded` | `fatal` |
+| **HTTP 408** | 资源不可用 | `error_microsoft_unavailable` | `fatal` |
+| **HTTP 429** | 速率限制 | 紧急阶段 `retryable`，批量阶段 `fatal`，`error_microsoft_rate_limit` | `mixed` |
+| **HTTP 500/503** | 服务器错误 | `error_microsoft_service_error` | `fatal` |
+| **网络错误** | `fetch` 抛出 `TypeError`/断网 | 紧急阶段 `retryable`，批量阶段 `fatal`，`error_microsoft_network` | `mixed` |
+| **响应格式异常** | JSON 结构异常/缺少 `translations[0].text` | 紧急阶段 `retryable`，批量阶段 `fatal`，`error_microsoft_response_format` | `mixed` |
+
+### 新增错误提示 & 策略（2025-11）
+
+| 场景 | Stage | 行为 | i18n提示 |
+|------|-------|------|-----------|
+| A. 单条字幕 >5000 字符 / 批次 >50000 字符 | 任意 | `fatal` | `error_microsoft_text_too_long`（翻译失败，请切换翻译服务或重试） |
+| C. `fetch` 网络错误 | 紧急 | `retryable`（允许批量继续） | `error_microsoft_network`（网络请求失败，请重试） |
+| C. `fetch` 网络错误 | 批量 | `fatal` | `error_microsoft_network` |
+| D. HTTP 400 | 任意 | `fatal` | `error_microsoft_param_invalid` |
+| E. HTTP 401 | 任意 | `fatal` | `error_microsoft_auth_failed` |
+| F. HTTP 403/403001 | 任意 | `fatal` | `error_microsoft_quota_exceeded`（免费配额已用完，请切换翻译服务或明天再试） |
+| G. HTTP 408 | 任意 | `fatal` | `error_microsoft_unavailable` |
+| H. HTTP 429 | 紧急 | `retryable` | `error_microsoft_rate_limit`（翻译过于频繁，请稍后重试） |
+| H. HTTP 429 | 批量 | `fatal` | `error_microsoft_rate_limit` |
+| I. HTTP 500/503 | 任意 | `fatal` | `error_microsoft_service_error` |
+| J. 响应格式异常 | 紧急 | `retryable` | `error_microsoft_response_format` |
+| J. 响应格式异常 | 批量 | `fatal` | `error_microsoft_response_format` |
+| K. 缺少 `translations[0].text` | 紧急 | `retryable` | `error_microsoft_response_format` |
+| K. 缺少 `translations[0].text` | 批量 | `fatal` | `error_microsoft_response_format` |
+
+所有异常都会封装为 `TranslationError('microsoft')` 并携带 `category`，紧急阶段的 `retryable` 会交由批量阶段继续尝试，批量阶段一律中断翻译并在 UI 中提示“切换翻译服务或稍后重试”。

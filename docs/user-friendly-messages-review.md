@@ -73,24 +73,23 @@
 
 ## 3. Microsoft 翻译
 
-### ❌ 状态：所有消息缺失（优先级1 + 有严重bug）
+### ✅ 已有9条友好提示
 
-| 错误类型 | HTTP | 建议中文提示 | 建议英文提示 | 触发场景 | 友好性评价 |
-|---------|------|------------|------------|---------|-----------|
-| 认证失败 | 401 | **微软翻译认证失败，请检查网络连接** | Microsoft Translator authentication failed, please check network | Token无效/过期 | ⚠️ 误导（不是网络问题） |
-| 配额用尽 | 403001 | **微软翻译免费配额已用完** | Microsoft Translator quota exceeded | 免费配额用尽 | ⚠️ 缺少操作建议 |
-| 速率限制 | 429 | **微软翻译请求过于频繁，请稍后重试** | Microsoft Translator rate limit exceeded, please try again later | 速率限制 | ✅ 清晰+操作建议 |
-| 服务器错误 | 500/503 | **微软翻译服务暂时不可用，请稍后重试** | Microsoft Translator temporarily unavailable, please try again later | 服务器错误 | ✅ 清晰+操作建议 |
-| 参数错误 | 400 | **微软翻译请求参数错误** | Microsoft Translator parameter error | 参数错误 | ⚠️ 用户看不懂 |
-| 资源不可用 | 408 | **微软翻译系统暂时不可用，请稍后重试** | Microsoft Translator system unavailable, please try again later | 资源缺失 | ✅ 清晰+操作建议 |
-| 网络失败 | - | **微软翻译网络请求失败，请检查网络连接** | Microsoft Translator network request failed, please check network | 网络错误 | ✅ 清晰+操作建议 |
+| Key | 中文提示 | 英文提示 | 场景 | 友好性 |
+|-----|---------|---------|------|--------|
+| `error_microsoft_text_too_long` | 翻译失败，请切换翻译服务或重试 | Translation failed. Please switch a service or try again. | 单条字幕/批次字符数超限 | ✅ 告知操作 |
+| `error_microsoft_network` | 网络请求失败，请重试 | Network request failed. Please try again. | `fetch` 网络错误 | ✅ 明确行动 |
+| `error_microsoft_param_invalid` | 翻译失败，请切换翻译服务或重试 | Translation failed. Please switch a service or try again. | HTTP 400 | ✅ 简洁 |
+| `error_microsoft_auth_failed` | 翻译失败，请切换翻译服务或重试 | Translation failed. Please switch a service or try again. | HTTP 401 | ✅ 简洁 |
+| `error_microsoft_quota_exceeded` | 免费配额已用完，请切换翻译服务或明天再试 | Free quota is used up. Please switch a service or try again tomorrow. | HTTP 403/403001 | ✅ 给出方案 |
+| `error_microsoft_unavailable` | 翻译失败，请切换翻译服务或重试 | Translation failed. Please switch a service or try again. | HTTP 408 | ✅ |
+| `error_microsoft_rate_limit` | 翻译过于频繁，请稍后重试 | Requests are too frequent. Please try again later. | HTTP 429 | ✅ |
+| `error_microsoft_service_error` | 翻译失败，请切换翻译服务或重试 | Translation failed. Please switch a service or try again. | HTTP 500/503/其他 | ✅ |
+| `error_microsoft_response_format` | 翻译失败，请切换翻译服务或重试 | Translation failed. Please switch a service or try again. | 响应结构异常/缺少译文 | ✅ |
 
-**建议优化**：
-```
-认证失败 → "微软翻译连接失败，请检查网络或稍后重试"（401通常是临时token过期，会自动刷新）
-配额用尽 → "微软翻译免费配额已用完，请明天再试或切换其他翻译服务"
-参数错误 → "微软翻译请求失败，请重试"（用户无需知道技术细节）
-```
+### ℹ️ 备注
+- 紧急阶段遇到网络/429/响应异常会标记为 `retryable`，交由批量阶段继续；批量阶段一律 `fatal` 并提示用户。
+- i18n 已同步至 `_locales/zh_CN`, `_locales/zh_TW`, `_locales/en`。
 
 ---
 

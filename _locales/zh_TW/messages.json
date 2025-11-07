@@ -199,5 +199,14 @@
   "error_google_response_format": { "message": "翻譯失敗，請重試" },
   "error_google_network": { "message": "網路請求失敗，請重試" },
   "error_google_count_mismatch": { "message": "翻譯失敗，請重試" },
-  "error_google_all_endpoints_failed": { "message": "翻譯服務異常，請切換服務或重試" }
+  "error_google_all_endpoints_failed": { "message": "翻譯服務異常，請切換服務或重試" },
+  "error_microsoft_text_too_long": { "message": "翻譯失敗，請切換翻譯服務或重試" },
+  "error_microsoft_network": { "message": "網路請求失敗，請重試" },
+  "error_microsoft_param_invalid": { "message": "翻譯失敗，請切換翻譯服務或重試" },
+  "error_microsoft_auth_failed": { "message": "翻譯失敗，請切換翻譯服務或重試" },
+  "error_microsoft_quota_exceeded": { "message": "免費配額已用完，請切換翻譯服務或明天再試" },
+  "error_microsoft_unavailable": { "message": "翻譯失敗，請切換翻譯服務或重試" },
+  "error_microsoft_rate_limit": { "message": "翻譯過於頻繁，請稍後重試" },
+  "error_microsoft_service_error": { "message": "翻譯失敗，請切換翻譯服務或重試" },
+  "error_microsoft_response_format": { "message": "翻譯失敗，請切換翻譯服務或重試" }
 }

@@ -1269,6 +1269,9 @@ export class TwoPhaseTranslatorV4 {
 
       } catch (error) {
         console.error('[TwoPhaseTranslatorV4] ❌ 优化翻译失败，回退到旧逻辑:', error);
+        if (error instanceof TranslationError) {
+          throw error;
+        }
         // 如果优化版失败，回退到旧逻辑
         return this.translateWithMicrosoftSubtitlesLegacy(
           subtitles,

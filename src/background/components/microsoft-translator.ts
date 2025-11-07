@@ -3,6 +3,7 @@
  * @description 微软免费翻译实现，支持路径A/B降级与请求批次控制
  */
 
+import { TranslationError } from '@shared/types/translation-errors';
 import { MicrosoftAuthManager } from './microsoft-auth-manager';
 
 type Stage = 'urgent' | 'batch';
@@ -21,6 +22,23 @@ class MicrosoftRequestError extends Error {
     this.name = 'MicrosoftRequestError';
   }
 }
+
+class MicrosoftResponseError extends Error {
+  constructor(
+    message: string,
+    public readonly code: 'response_format' | 'missing_translation'
+  ) {
+    super(message);
+    this.name = 'MicrosoftResponseError';
+  }
+}
+
+type MicrosoftFailureReason =
+  | { type: 'text_too_long' }
+  | { type: 'network' }
+  | { type: 'response_format' }
+  | { type: 'missing_translation' }
+  | { type: 'http'; status: number };
 
 export class MicrosoftTranslator {
   private readonly authManager = MicrosoftAuthManager.getInstance();
@@ -50,7 +68,7 @@ export class MicrosoftTranslator {
         const length = text.length;
 
         if (length > MAX_CHARS_PER_ITEM) {
-          throw new Error(`单个文本超过微软限制: ${length} > ${MAX_CHARS_PER_ITEM}`);
+          throw this.buildTranslationError(stage, { type: 'text_too_long' });
         }
 
         if (batch.length > 0 && charCount + length > MAX_CHARS_PER_REQUEST) {
@@ -75,41 +93,49 @@ export class MicrosoftTranslator {
     targetLang: string,
     stage: Stage
   ): Promise<string[]> {
-    if (batch.length === 0) {
+    return this.translateViaEndpoints(batch, sourceLang, targetLang, stage);
+  }
+
+  private async translateViaEndpoints(
+    texts: string[],
+    sourceLang: string,
+    targetLang: string,
+    stage: Stage
+  ): Promise<string[]> {
+    if (texts.length === 0) {
       return [];
     }
 
     let token = await this.authManager.getToken();
-    let lastError: unknown = null;
+    const endpoints = [
+      { url: this.buildUrl(PRIMARY_ENDPOINT, sourceLang, targetLang), label: 'A' },
+      { url: this.buildUrl(SECONDARY_ENDPOINT, sourceLang, targetLang, true), label: 'B' }
+    ];
 
-    const queryPrimary = this.buildUrl(PRIMARY_ENDPOINT, sourceLang, targetLang);
-    const querySecondary = this.buildUrl(SECONDARY_ENDPOINT, sourceLang, targetLang, true);
+    let lastRetryableReason: MicrosoftFailureReason | null = null;
 
-    for (const endpoint of [queryPrimary, querySecondary]) {
-      let retry = false;
-      do {
-        try {
-          const pathLabel = endpoint === queryPrimary ? 'A' : 'B';
-          console.debug(`[debug][MicrosoftTranslator] 调用路径${pathLabel}，批次 ${batch.length} 条`);
-          const translations = await this.executeRequest(endpoint, token, batch, stage);
-          return translations;
-        } catch (error) {
-          lastError = error;
+    for (const endpoint of endpoints) {
+      try {
+        console.debug(
+          `[debug][MicrosoftTranslator] 调用路径${endpoint.label}，批次 ${texts.length} 条`
+        );
+        return await this.executeRequest(endpoint.url, token, texts);
+      } catch (error) {
+        const classified = this.classifyMicrosoftError(error);
 
-          if (error instanceof MicrosoftRequestError && error.status === 401) {
-            this.authManager.invalidateToken();
-            token = await this.authManager.getToken(true);
-            retry = !retry;
-            continue;
-          }
-
-          retry = false;
+        if (stage === 'urgent' && this.isUrgentRetryable(classified)) {
+          lastRetryableReason = classified;
+          continue;
         }
-      } while (retry);
+
+        throw this.buildTranslationError(stage, classified);
+      }
     }
 
-    console.warn('[MicrosoftTranslator] 所有路径均失败，回退原文', lastError);
-    return batch;
+    throw this.buildTranslationError(
+      stage,
+      lastRetryableReason ?? { type: 'network' }
+    );
   }
 
   private buildUrl(base: string, sourceLang: string, targetLang: string, includeSentenceLength = false): string {
@@ -134,40 +160,64 @@ export class MicrosoftTranslator {
   private async executeRequest(
     url: string,
     token: string,
-    texts: string[],
-    stage: Stage
+    texts: string[]
   ): Promise<string[]> {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json',
-        Origin: 'https://www.bing.com',
-        Referer: 'https://www.bing.com/translator',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
-      },
-      body: JSON.stringify(texts.map(text => ({ Text: text })))
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+          Origin: 'https://www.bing.com',
+          Referer: 'https://www.bing.com/translator',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
+        },
+        body: JSON.stringify(texts.map(text => ({ Text: text })))
+      });
+    } catch (error) {
+      throw error;
+    }
 
     if (!response.ok) {
-      throw new MicrosoftRequestError(`Microsoft translate failed: HTTP ${response.status}`, response.status);
+      throw new MicrosoftRequestError(
+        `Microsoft translate failed: HTTP ${response.status}`,
+        response.status
+      );
     }
 
-    const data = await response.json();
+    let data: any;
+    try {
+      data = await response.json();
+    } catch {
+      throw new MicrosoftResponseError(
+        'Unexpected Microsoft API response format',
+        'response_format'
+      );
+    }
 
     if (!Array.isArray(data)) {
-      throw new Error('Unexpected Microsoft API response format');
+      throw new MicrosoftResponseError(
+        'Unexpected Microsoft API response format',
+        'response_format'
+      );
     }
 
-    return data.map((item: any, idx) => {
-      const translation = item?.translations?.[0]?.text;
+    const translations: string[] = [];
+    for (let idx = 0; idx < data.length; idx += 1) {
+      const translation = data[idx]?.translations?.[0]?.text;
       if (typeof translation === 'string') {
-        return translation;
+        translations.push(translation);
+      } else {
+        throw new MicrosoftResponseError(
+          `[MicrosoftTranslator] 缺少翻译文本: index=${idx}`,
+          'missing_translation'
+        );
       }
-      console.warn('[MicrosoftTranslator] 缺少翻译文本，使用原文', texts[idx]);
-      return texts[idx];
-    });
+    }
+
+    return translations;
   }
 
   private mapLanguageCode(lang: string): string {
@@ -195,6 +245,117 @@ export class MicrosoftTranslator {
     }
   }
 
+  private classifyMicrosoftError(error: unknown): MicrosoftFailureReason {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw error;
+    }
+
+    if (error instanceof MicrosoftRequestError && typeof error.status === 'number') {
+      return { type: 'http', status: error.status };
+    }
+
+    if (error instanceof MicrosoftResponseError) {
+      return { type: error.code };
+    }
+
+    return { type: 'network' };
+  }
+
+  private isUrgentRetryable(reason: MicrosoftFailureReason): boolean {
+    if (reason.type === 'network') {
+      return true;
+    }
+    if (reason.type === 'response_format' || reason.type === 'missing_translation') {
+      return true;
+    }
+    if (reason.type === 'http' && reason.status === 429) {
+      return true;
+    }
+    return false;
+  }
+
+  private buildTranslationError(stage: Stage, reason: MicrosoftFailureReason): TranslationError {
+    const { key, fallback, status } = this.getMessageForReason(reason);
+    const urgentRetryable = stage === 'urgent' && this.isUrgentRetryable(reason);
+    const category = urgentRetryable ? 'retryable' : 'fatal';
+    const message = chrome.i18n.getMessage(key) || fallback;
+    return new TranslationError(message, category, 'microsoft', status);
+  }
+
+  private getMessageForReason(
+    reason: MicrosoftFailureReason
+  ): { key: string; fallback: string; status?: number } {
+    switch (reason.type) {
+      case 'text_too_long':
+        return {
+          key: 'error_microsoft_text_too_long',
+          fallback: '翻译失败，请切换翻译服务或重试'
+        };
+      case 'network':
+        return {
+          key: 'error_microsoft_network',
+          fallback: '网络请求失败，请重试'
+        };
+      case 'response_format':
+        return {
+          key: 'error_microsoft_response_format',
+          fallback: '翻译失败，请切换翻译服务或重试'
+        };
+      case 'missing_translation':
+        return {
+          key: 'error_microsoft_response_format',
+          fallback: '翻译失败，请切换翻译服务或重试'
+        };
+      case 'http': {
+        switch (reason.status) {
+          case 400:
+            return {
+              key: 'error_microsoft_param_invalid',
+              fallback: '翻译失败，请切换翻译服务或重试',
+              status: reason.status
+            };
+          case 401:
+            return {
+              key: 'error_microsoft_auth_failed',
+              fallback: '翻译失败，请切换翻译服务或重试',
+              status: reason.status
+            };
+          case 403:
+            return {
+              key: 'error_microsoft_quota_exceeded',
+              fallback: '免费配额已用完，请切换翻译服务或明天再试',
+              status: reason.status
+            };
+          case 408:
+            return {
+              key: 'error_microsoft_unavailable',
+              fallback: '翻译失败，请切换翻译服务或重试',
+              status: reason.status
+            };
+          case 429:
+            return {
+              key: 'error_microsoft_rate_limit',
+              fallback: '翻译过于频繁，请稍后重试',
+              status: reason.status
+            };
+          case 500:
+          case 503:
+            return {
+              key: 'error_microsoft_service_error',
+              fallback: '翻译失败，请切换翻译服务或重试',
+              status: reason.status
+            };
+          default:
+            return {
+              key: 'error_microsoft_service_error',
+              fallback: '翻译失败，请切换翻译服务或重试',
+              status: reason.status
+            };
+        }
+      }
+    }
+  }
+
   /**
    * 优化版翻译方法 - 支持5000字符窗口优化
    * 处理已经合并的文本（多条字幕用换行符连接）
@@ -205,97 +366,6 @@ export class MicrosoftTranslator {
     targetLang: string,
     stage: Stage
   ): Promise<string[]> {
-    if (optimizedTexts.length === 0) {
-      return [];
-    }
-
-    console.debug(
-      `[debug][MicrosoftTranslator] translateOptimized: ` +
-      `处理 ${optimizedTexts.length} 个优化文本组 (${stage}阶段)`
-    );
-
-    let token = await this.authManager.getToken();
-    let lastError: unknown = null;
-
-    const queryPrimary = this.buildUrl(PRIMARY_ENDPOINT, sourceLang, targetLang);
-    const querySecondary = this.buildUrl(SECONDARY_ENDPOINT, sourceLang, targetLang, true);
-
-    // 尝试两个端点
-    for (const endpoint of [queryPrimary, querySecondary]) {
-      let retry = false;
-      do {
-        try {
-          const pathLabel = endpoint === queryPrimary ? 'A' : 'B';
-          console.debug(
-            `[debug][MicrosoftTranslator] 调用优化路径${pathLabel}，` +
-            `${optimizedTexts.length} 个文本组`
-          );
-
-          // 构建请求体 - 每个优化文本都是一个Text对象
-          const requestBody = optimizedTexts.map(text => ({ Text: text }));
-
-          const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`,
-              Accept: 'application/json',
-              Origin: 'https://www.bing.com',
-              Referer: 'https://www.bing.com/translator',
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
-            },
-            body: JSON.stringify(requestBody)
-          });
-
-          if (!response.ok) {
-            throw new MicrosoftRequestError(
-              `Microsoft translate failed: HTTP ${response.status}`,
-              response.status
-            );
-          }
-
-          const data = await response.json();
-
-          if (!Array.isArray(data)) {
-            throw new Error('Unexpected Microsoft API response format');
-          }
-
-          // 提取翻译结果
-          const translations = data.map((item: any, idx: number) => {
-            const translation = item?.translations?.[0]?.text;
-            if (typeof translation === 'string') {
-              return translation;
-            }
-            console.warn(
-              `[MicrosoftTranslator] 缺少翻译文本，使用原文`,
-              optimizedTexts[idx]?.substring(0, 100)
-            );
-            return optimizedTexts[idx];
-          });
-
-          console.debug(
-            `[debug][MicrosoftTranslator] 优化翻译成功，返回 ${translations.length} 个翻译结果`
-          );
-
-          return translations;
-
-        } catch (error) {
-          lastError = error;
-
-          if (error instanceof MicrosoftRequestError && error.status === 401) {
-            // 认证失败，刷新token并重试
-            this.authManager.invalidateToken();
-            token = await this.authManager.getToken(true);
-            retry = !retry;
-            continue;
-          }
-
-          retry = false;
-        }
-      } while (retry);
-    }
-
-    console.warn('[MicrosoftTranslator] 优化翻译所有路径均失败，回退原文', lastError);
-    return optimizedTexts;
+    return this.translateViaEndpoints(optimizedTexts, sourceLang, targetLang, stage);
   }
 }
