@@ -43,6 +43,13 @@ export const GOOGLE_PIPELINE_CONCURRENCY_LIMIT = 999;
  */
 type GoogleEndpointId = 'single' | 't';
 
+type GoogleEndpointFailureReason =
+  | { type: 'http'; status: number }
+  | { type: 'response_format' }
+  | { type: 'network' }
+  | { type: 'count_mismatch' }
+  | { type: 'unknown' };
+
 interface MicrosoftSubtitleEntry {
   id?: string;
   start: number;
@@ -1941,6 +1948,7 @@ export class TwoPhaseTranslatorV4 {
       : requestedOrder;
 
     const errors: string[] = [];
+    let lastFailure: GoogleEndpointFailureReason = { type: 'unknown' };
 
     for (const id of order) {
       const endpoint = endpointMap[id];
@@ -1948,27 +1956,49 @@ export class TwoPhaseTranslatorV4 {
         continue;
       }
 
+      let currentFailure: GoogleEndpointFailureReason = { type: 'unknown' };
+
       try {
         const params = new URLSearchParams(baseParams);
-        const response = await fetch(`${endpoint.url}?${params.toString()}`, {
-          method: 'GET'
-        });
+        let response: Response;
+        try {
+          response = await fetch(`${endpoint.url}?${params.toString()}`, {
+            method: 'GET'
+          });
+        } catch (fetchError) {
+          currentFailure = { type: 'network' };
+          throw fetchError;
+        }
 
         if (!response.ok) {
+          currentFailure = { type: 'http', status: response.status };
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
-        const json = await response.json();
-        const combinedTranslation = endpoint.parse(json);
+        let json: any;
+        try {
+          json = await response.json();
+        } catch (parseError) {
+          currentFailure = { type: 'response_format' };
+          throw parseError;
+        }
+
+        let combinedTranslation: string;
+        try {
+          combinedTranslation = endpoint.parse(json);
+        } catch (shapeError) {
+          currentFailure = { type: 'response_format' };
+          throw shapeError;
+        }
+
         const normalized = this.normalizeGoogleTranslations(combinedTranslation, texts);
 
         if (normalized.length !== texts.length) {
+          currentFailure = { type: 'count_mismatch' };
           throw new Error(
             `normalized translation count mismatch (${normalized.length} vs ${texts.length})`
           );
         }
-
-        // 删除Google端点日志（已合并到外层的批次完成日志）
 
         if (options?.recordStatistics) {
           this.preferredGoogleEndpoint = endpoint.id;
@@ -1977,6 +2007,17 @@ export class TwoPhaseTranslatorV4 {
 
         return { translations: normalized, endpoint: endpoint.id };
       } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error;
+        }
+
+        if (currentFailure.type === 'unknown') {
+          currentFailure =
+            error instanceof TypeError ? { type: 'network' } : { type: 'unknown' };
+        }
+
+        lastFailure = currentFailure;
+
         const message = error instanceof Error ? error.message : String(error);
         console.debug(
           `[debug][TwoPhaseTranslatorV4] Google端点=${endpoint.id} 失败 stage=${stage} ${normalizedSourceLanguageCode} → ${targetLang}: ${message}`
@@ -1989,7 +2030,19 @@ export class TwoPhaseTranslatorV4 {
       }
     }
 
-    throw new Error(`所有Google免费翻译端点调用失败: ${errors.join(' | ')}`);
+    if (errors.length > 0) {
+      console.debug(
+        `[debug][TwoPhaseTranslatorV4] Google所有端点失败: ${errors.join(' | ')}`
+      );
+    }
+
+    const finalMessage = this.getGoogleFailureMessage(lastFailure);
+    throw new TranslationError(
+      finalMessage,
+      'retryable',
+      'google',
+      lastFailure.type === 'http' ? lastFailure.status : undefined
+    );
   }
 
   /**
@@ -2003,6 +2056,9 @@ export class TwoPhaseTranslatorV4 {
     }
 
     if (translatedTexts.length === 1 && originalTexts.length > 1) {
+      console.debug(
+        '[TwoPhaseTranslatorV4][Google] 检测到单条译文，按原字幕比例拆分成多条'
+      );
       return this.splitByRatioForGoogle(combined, originalTexts);
     }
 
@@ -2035,7 +2091,12 @@ export class TwoPhaseTranslatorV4 {
 
     if (stage === 'batch') {
       if (!this.preferredGoogleEndpoint) {
-        throw new Error('紧急翻译未成功，跳过批量翻译');
+        throw new TranslationError(
+          chrome.i18n.getMessage('error_google_bulk_requires_urgent') ||
+            'Google翻译需要先完成一次快速检测，请稍后再试',
+          'retryable',
+          'google'
+        );
       }
       return [this.preferredGoogleEndpoint];
     }
@@ -2088,6 +2149,33 @@ export class TwoPhaseTranslatorV4 {
     }
 
     return segments;
+  }
+
+  private getGoogleFailureMessage(reason: GoogleEndpointFailureReason): string {
+    switch (reason.type) {
+      case 'http':
+        return (
+          chrome.i18n.getMessage('error_google_endpoint_http') ||
+          '翻译服务异常，请切换服务或重试'
+        );
+      case 'response_format':
+        return (
+          chrome.i18n.getMessage('error_google_response_format') || '翻译失败，请重试'
+        );
+      case 'network':
+        return (
+          chrome.i18n.getMessage('error_google_network') || '网络请求失败，请重试'
+        );
+      case 'count_mismatch':
+        return (
+          chrome.i18n.getMessage('error_google_count_mismatch') || '翻译失败，请重试'
+        );
+      default:
+        return (
+          chrome.i18n.getMessage('error_google_all_endpoints_failed') ||
+          '翻译服务异常，请切换服务或重试'
+        );
+    }
   }
 
   private getSourceLanguageLabel(

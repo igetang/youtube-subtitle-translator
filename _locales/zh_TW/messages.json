@@ -193,5 +193,11 @@
   "status_service_switched_retranslating": { "message": "翻譯服務切換，重新翻譯中..." },
   "status_source_lang_switched_retranslating": { "message": "源語言切換，重新進行字幕翻譯..." },
   "status_target_lang_switched_retranslating": { "message": "目標語言切換，重新翻譯中..." },
-  "error_deepseek_api_key_invalid": { "message": "DeepSeek API 金鑰無效或已過期" }
+  "error_deepseek_api_key_invalid": { "message": "DeepSeek API 金鑰無效或已過期" },
+  "error_google_bulk_requires_urgent": { "message": "Google 翻譯需要先完成一次快速檢查，請稍後再試" },
+  "error_google_endpoint_http": { "message": "翻譯服務異常，請切換服務或重試" },
+  "error_google_response_format": { "message": "翻譯失敗，請重試" },
+  "error_google_network": { "message": "網路請求失敗，請重試" },
+  "error_google_count_mismatch": { "message": "翻譯失敗，請重試" },
+  "error_google_all_endpoints_failed": { "message": "翻譯服務異常，請切換服務或重試" }
 }
