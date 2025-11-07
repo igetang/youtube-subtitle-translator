@@ -251,66 +251,41 @@ throw new Error(`所有Google免费翻译端点调用失败: ${errors.join(' | '
 
 ## 4. Gemini
 
-**API端点**: `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
+**API端点**：`https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
 
-**认证方式**: API Key（URL参数 `?key=`）
+**认证方式**：API Key（URL参数 `?key=`）
 
-**支持模型**:
-- `gemini-2.5-flash` (1M tokens上下文)
+**支持模型**：
+- `gemini-2.5-flash`
 - `gemini-2.5-flash-lite`
 
-### 错误代码表
+### ❗ 一刀切策略（所有错误 = fatal）
 
-| HTTP状态码 | 错误代码 | 含义 | 当前处理方案 | 错误分类 | 流程是否中断 |
-|-----------|---------|------|------------|---------|------------|
-| **400** | `FAILED_PRECONDITION` | 地区不可用/需要付费计划 | ✅ 抛出 `TranslationError` | `fatal` | ✅ 是 |
-| **400** | 包含"api key" | API密钥无效 | ✅ 抛出 `TranslationError` | `fatal` | ✅ 是 |
-| **400** | 其他 | 请求参数错误 | ✅ 抛出 `TranslationError` | `fatal` | ✅ 是 |
-| **401/403** | - | API密钥无效或无权限 | ✅ 抛出 `TranslationError` | `fatal` | ✅ 是 |
-| **404** | - | 资源未找到（模型名错误） | ✅ 抛出 `TranslationError` | `fatal` | ✅ 是 |
-| **429** | - | 请求过于频繁 | ✅ 抛出 `TranslationError` | `retryable` | ✅ 是 |
-| **500/502/503/504** | - | 服务暂时不可用 | ✅ 抛出 `TranslationError` | `retryable` | ✅ 是 |
+Gemini 现已与 DeepL / DeepSeek 对齐：只要出现异常就立即抛出 `TranslationError(..., 'fatal', 'gemini')`。表格列出全部分支。
 
-### finishReason 错误
-
-| finishReason | 含义 | 处理方案 | 错误分类 |
-|-------------|------|---------|---------|
-| `STOP` | 正常完成 | ✅ 继续 | - |
-| `MAX_TOKENS` | 输出超出长度限制 | ✅ 抛出 `TranslationError` | `retryable` |
-| `SAFETY` | 内容被安全过滤拦截 | ✅ 抛出 `TranslationError` | `fatal` |
-| `RECITATION` | 检测到重复内容 | ✅ 抛出 `TranslationError` | `retryable` |
+| 错误类型 | 触发条件 / 代码位置 | i18n Key | 中文提示 |
+|---------|----------------------|----------|---------|
+| 服务未配置 | `two-phase-translator-v4.ts:1688-1696` | `error_gemini_service_not_configured` | 服务未配置，请在设置中添加API密钥。 |
+| 网络/Abort 失败 | `gemini-translator.ts:323-357` fetch 抛错 | `error_gemini_network_failed` | 翻译失败，请切换翻译服务或重试。 |
+| 响应缺少候选/内容为空 | `gemini-translator.ts:361-389` | `error_gemini_response_format` | 翻译失败，请切换翻译服务或重试。 |
+| JSON/YAML 解析失败 | `gemini-translator.ts:341-359`/`420-478` | `error_gemini_parse_failed` | 翻译失败，请切换翻译服务或重试。 |
+| HTTP 400（含 FAILED_PRECONDITION） | `handleAPIError` | `error_translation_switch_provider` | 翻译失败，请切换翻译服务或重试。 |
+| HTTP 401/403 | 同上 | `error_gemini_api_key_invalid` | API密钥无效或无权限。 |
+| HTTP 429 | 同上 | `error_gemini_rate_limit` | 翻译过于频繁，请稍后重试。 |
+| HTTP 500/502/503/504 | 同上 | `error_gemini_server_error` | 翻译失败，请切换翻译服务或重试。 |
+| YAML 数量不匹配 / 翻译数量不匹配 | `gemini-translator.ts:200-236` / `parseYAMLResponse` | `error_translation_switch_provider` | 翻译失败，请切换翻译服务或重试。 |
+| finishReason（MAX_TOKENS/SAFETY/RECITATION） | `handleFinishReason` | `error_translation_switch_provider` | 翻译失败，请切换翻译服务或重试。 |
 
 ### 代码位置
-- 文件: `src/background/components/gemini-translator.ts`
-- 错误处理: 第484-570行 (`handleAPIError`方法)
-- finishReason处理: 第572-603行 (`handleFinishReason`方法)
-
-### 错误处理示例
-
-```typescript
-case 429:
-  throw new TranslationError(
-    'Gemini API 请求过于频繁，请稍后重试',
-    'retryable',
-    'gemini',
-    status,
-    errorCode
-  );
-
-case 'MAX_TOKENS':
-  throw new TranslationError(
-    'Gemini 输出超出长度限制，请重试',
-    'retryable',
-    'gemini'
-  );
-```
+- 文件：`src/background/components/gemini-translator.ts`
+- 核心方法：`translate()` / `callGeminiAPI()` / `handleAPIError()` / `parseYAMLResponse()`
 
 ### 特殊说明
 
-- **批次大小**: 80条/批
-- **格式**: YAML格式（`id + text`结构）
-- **thinking模式**: 已禁用（`thinkingBudget: 0`）
-- **Token估算**: 基于`inputBytes / 2.5 × 1.5`
+- **批次大小**：80 条/批
+- **格式**：YAML（`id + text`）
+- **thinking 模式**：默认禁用
+- **Token 估算**：`inputBytes / 2.5 × 1.5`
 
 ---
 

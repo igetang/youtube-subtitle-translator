@@ -80,7 +80,7 @@ const MODEL_CONFIGS: Record<string, {
 /**
  * Gemini翻译器类 - V4架构
  */
-import { handleFetchError, TranslationError } from '@shared/types/translation-errors';
+import { TranslationError } from '@shared/types/translation-errors';
 import { LanguageCodeMapper } from '@shared/utils/language-code-mapper';
 
 export class GeminiTranslator {
@@ -143,7 +143,7 @@ export class GeminiTranslator {
 
     // 检查初始信号状态
     if (signal.aborted) {
-      throw new DOMException('Gemini翻译开始前已取消', 'AbortError');
+      throw this.createFatalError('error_translation_switch_provider');
     }
 
     // ✅ 直接使用上层传入的英文名称（已在callTranslationAPI中统一转换）
@@ -158,7 +158,7 @@ export class GeminiTranslator {
     // 分批处理
     for (let i = 0; i < texts.length; i += this.modelConfig.batchSize) {
       if (signal.aborted) {
-        throw new DOMException('Gemini翻译已取消', 'AbortError');
+        throw this.createFatalError('error_translation_switch_provider');
       }
 
       const batch = texts.slice(i, i + this.modelConfig.batchSize);
@@ -214,11 +214,7 @@ export class GeminiTranslator {
           console.error(
             `[GeminiTranslator] ❌ 翻译数量不匹配: 期望${batch.length}条，实际${translations.length}条`
           );
-          throw new TranslationError(
-            `Gemini 翻译数量不匹配：期望${batch.length}条，实际${translations.length}条`,
-            'retryable',
-            'gemini'
-          );
+          throw this.createFatalError('error_translation_switch_provider');
         }
 
         results.push(...translations);
@@ -351,7 +347,10 @@ ${yamlInput}`;
         signal
       });
     } catch (error) {
-      handleFetchError(error, 'gemini', 'Gemini API 网络请求失败');
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw this.createFatalError('error_translation_switch_provider');
+      }
+      throw this.createFatalError('error_gemini_network_failed');
     }
 
     if (!response.ok) {
@@ -362,31 +361,16 @@ ${yamlInput}`;
     try {
       data = await response.json();
     } catch {
-      throw new TranslationError(
-        'Gemini API 返回内容解析失败',
-        'retryable',
-        'gemini',
-        response.status
-      );
+      throw this.createFatalError('error_gemini_parse_failed', undefined, response.status);
     }
 
     if (!data.candidates?.[0]?.content) {
-      throw new TranslationError(
-        'Gemini API 返回格式错误：缺少候选内容',
-        'retryable',
-        'gemini',
-        response.status
-      );
+      throw this.createFatalError('error_gemini_response_format', undefined, response.status);
     }
 
     const content = data.candidates[0].content.parts[0]?.text;
     if (!content) {
-      throw new TranslationError(
-        'Gemini API 返回内容为空',
-        'retryable',
-        'gemini',
-        response.status
-      );
+      throw this.createFatalError('error_gemini_response_format', undefined, response.status);
     }
 
     const finishReason = data.candidates[0].finishReason;
@@ -457,10 +441,11 @@ ${yamlInput}`;
 
       // 验证数量
       if (items.length !== expectedCount) {
-        console.warn(
+        console.error(
           `[GeminiTranslator] ⚠️ YAML解析数量不匹配: 期望${expectedCount}, 解析到${items.length}`
         );
-        console.warn('[GeminiTranslator] 原始响应:', responseText);
+        console.error('[GeminiTranslator] 原始响应:', responseText);
+        throw this.createFatalError('error_translation_switch_provider');
       }
 
       // 提取text字段
@@ -469,11 +454,7 @@ ${yamlInput}`;
     } catch (error) {
       console.error('[GeminiTranslator] ❌ YAML解析失败:', error);
       console.error('[GeminiTranslator] 原始响应:', responseText);
-      throw new TranslationError(
-        `Gemini YAML 解析失败: ${error instanceof Error ? error.message : String(error)}`,
-        'retryable',
-        'gemini'
-      );
+      throw this.createFatalError('error_gemini_parse_failed');
     }
   }
 
@@ -498,74 +479,26 @@ ${yamlInput}`;
     switch (status) {
       case 400:
         if (errorCode === 'FAILED_PRECONDITION' || errorMessage.toLowerCase().includes('billing')) {
-          throw new TranslationError(
-            'Gemini 服务在您的地区不可用或需要付费计划',
-            'fatal',
-            'gemini',
-            status,
-            errorCode
-          );
+          throw this.createFatalError('error_translation_switch_provider', undefined, status);
         }
         if (errorMessage.toLowerCase().includes('api key')) {
-          throw new TranslationError(
-            'Gemini API密钥无效',
-            'fatal',
-            'gemini',
-            status,
-            errorCode
-          );
+          throw this.createFatalError('error_gemini_api_key_invalid', undefined, status);
         }
-        throw new TranslationError(
-          'Gemini 请求参数错误，请检查设置',
-          'fatal',
-          'gemini',
-          status,
-          errorCode
-        );
+        throw this.createFatalError('error_translation_switch_provider', undefined, status);
       case 401:
       case 403:
-        throw new TranslationError(
-          'Gemini API密钥无效或无权限',
-          'fatal',
-          'gemini',
-          status,
-          errorCode
-        );
+        throw this.createFatalError('error_gemini_api_key_invalid', undefined, status);
       case 404:
-        throw new TranslationError(
-          'Gemini 请求的资源未找到，请检查模型名称',
-          'fatal',
-          'gemini',
-          status,
-          errorCode
-        );
+        throw this.createFatalError('error_translation_switch_provider', undefined, status);
       case 429:
-        throw new TranslationError(
-          'Gemini API 请求过于频繁，请稍后重试',
-          'retryable',
-          'gemini',
-          status,
-          errorCode
-        );
+        throw this.createFatalError('error_gemini_rate_limit', undefined, status);
       case 500:
       case 502:
       case 503:
       case 504:
-        throw new TranslationError(
-          'Gemini 服务暂时不可用，请稍后重试',
-          'retryable',
-          'gemini',
-          status,
-          errorCode
-        );
+        throw this.createFatalError('error_gemini_server_error', undefined, status);
       default:
-        throw new TranslationError(
-          `Gemini API 错误 (${status}): ${errorMessage}`,
-          'fatal',
-          'gemini',
-          status,
-          errorCode
-        );
+        throw this.createFatalError('error_translation_switch_provider', errorMessage, status);
     }
   }
 
@@ -576,29 +509,13 @@ ${yamlInput}`;
 
     switch (finishReason) {
       case 'MAX_TOKENS':
-        throw new TranslationError(
-          'Gemini 输出超出长度限制，请重试',
-          'retryable',
-          'gemini'
-        );
+        throw this.createFatalError('error_translation_switch_provider');
       case 'SAFETY':
-        throw new TranslationError(
-          'Gemini 内容被安全过滤拦截，无法翻译',
-          'fatal',
-          'gemini'
-        );
+        throw this.createFatalError('error_translation_switch_provider');
       case 'RECITATION':
-        throw new TranslationError(
-          'Gemini 检测到重复内容，请重试',
-          'retryable',
-          'gemini'
-        );
+        throw this.createFatalError('error_translation_switch_provider');
       default:
-        throw new TranslationError(
-          `Gemini 翻译失败: ${finishReason}`,
-          'fatal',
-          'gemini'
-        );
+        throw this.createFatalError('error_translation_switch_provider');
     }
   }
 
@@ -613,11 +530,19 @@ ${yamlInput}`;
 
       const abortHandler = () => {
         clearTimeout(timer);
-        reject(new DOMException('延迟被取消', 'AbortError'));
+        reject(this.createFatalError('error_translation_switch_provider'));
       };
 
       signal.addEventListener('abort', abortHandler, { once: true });
     });
+  }
+
+  private createFatalError(messageKey?: string, fallback?: string, status?: number): TranslationError {
+    const defaultMessage = fallback || '翻译失败，请切换翻译服务或重试';
+    const resolvedMessage = messageKey
+      ? chrome.i18n.getMessage(messageKey) || defaultMessage
+      : defaultMessage;
+    return new TranslationError(resolvedMessage, 'fatal', 'gemini', status);
   }
 
 }

@@ -138,28 +138,20 @@
 
 ### 3.5 Gemini
 
-**当前状态**：✅ **部分已实现**
-
-**已有的消息**：
+**当前状态**：✅ **一刀切（全部 fatal）**
 
 | i18n键 | 中文消息 | 英文消息 | 使用场景 |
 |--------|---------|---------|---------|
-| `error_gemini_test_failed` | Gemini测试失败 | Gemini test failed | 测试连接失败 |
-| `error_gemini_service_not_configured` | Gemini服务未配置，请在设置中添加API密钥 | Gemini not configured | 未配置 |
-| `error_gemini_response_format` | Gemini API 返回格式错误：缺少候选内容 | Gemini response format error | 响应格式错误 |
-| `error_gemini_request_param` | Gemini 请求参数错误，请检查设置 | Gemini parameter error | 参数错误 |
-
-**应该添加的消息**：
-
-| i18n键（建议） | 中文消息（建议） | 英文消息（建议） | 错误代码 | 使用场景 |
-|--------------|---------------|----------------|---------|---------|
-| `error_gemini_api_key_invalid` | Gemini API密钥无效或无权限 | Gemini API key invalid | 401/403 | API密钥无效 |
-| `error_gemini_rate_limit` | Gemini API 请求过于频繁，请稍后重试 | Gemini rate limit exceeded | 429 | 速率限制 |
-| `error_gemini_server_error` | Gemini 服务暂时不可用，请稍后重试 | Gemini temporarily unavailable | 500/502/503/504 | 服务器错误 |
-| `error_gemini_region_unavailable` | Gemini 服务在您的地区不可用或需要付费计划 | Gemini unavailable in your region | 400+FAILED_PRECONDITION | 地区限制 |
-| `error_gemini_max_tokens` | Gemini 输出超出长度限制，请重试 | Gemini output too long | MAX_TOKENS | 输出超长 |
-| `error_gemini_safety_filter` | Gemini 内容被安全过滤拦截，无法翻译 | Gemini content filtered | SAFETY | 内容过滤 |
-| `error_gemini_recitation` | Gemini 检测到重复内容，请重试 | Gemini recitation detected | RECITATION | 重复内容 |
+| `error_gemini_test_failed` | Gemini测试失败 | Gemini test failed | 设置页连接测试 |
+| `error_gemini_service_not_configured` | 服务未配置，请在设置中添加API密钥 | Service not configured | 未配置 |
+| `error_gemini_network_failed` | 翻译失败，请切换翻译服务或重试 | Translation failed. Please switch a provider or try again. | 网络/Abort |
+| `error_gemini_response_format` | 翻译失败，请切换翻译服务或重试 | Translation failed. Please switch a provider or try again. | 缺少候选/内容为空 |
+| `error_gemini_request_param` | 翻译失败，请切换翻译服务或重试 | Translation failed. Please switch a provider or try again. | HTTP 400 等参数错误 |
+| `error_gemini_api_key_invalid` | API密钥无效或无权限 | API key is invalid or has no permission. | HTTP 401/403 |
+| `error_gemini_rate_limit` | 翻译过于频繁，请稍后重试 | Translation requests are too frequent. Please try again later. | HTTP 429 |
+| `error_gemini_server_error` | 翻译失败，请切换翻译服务或重试 | Translation failed. Please switch a provider or try again. | HTTP 500/502/503/504 |
+| `error_gemini_parse_failed` | 翻译失败，请切换翻译服务或重试 | Translation failed. Please switch a provider or try again. | JSON/YAML 解析失败 |
+| `error_translation_switch_provider` | 翻译失败，请切换翻译服务或重试 | Translation failed. Please switch a provider or try again. | 数量不匹配、finishReason 等兜底 |
 
 ---
 
@@ -308,16 +300,9 @@
 - `error_deepl_quota_exhausted`
 - `error_api_key_invalid`
 
-### 7.4 Gemini（部分缺失）
+### 7.4 Gemini（已覆盖）
 
-需要添加7个错误消息：
-- `error_gemini_api_key_invalid`
-- `error_gemini_rate_limit`
-- `error_gemini_server_error`
-- `error_gemini_region_unavailable`
-- `error_gemini_max_tokens`
-- `error_gemini_safety_filter`
-- `error_gemini_recitation`
+Gemini 的错误提示已与 DeepL/DeepSeek 对齐，一刀切策略下所有关键路径均有对应 i18n 文案，无需新增项。
 
 ### 7.5 OpenAI（部分缺失）
 
@@ -425,7 +410,7 @@ throw new TranslationError(
 | **Microsoft** | 0 | 7 | 0% |
 | **DeepL** | 4 | 4 | 50% |
 | **DeepSeek** | 12 | 0 | 100% ✅ |
-| **Gemini** | 4 | 7 | 36% |
+| **Gemini** | 9 | 0 | 100% ✅ |
 | **OpenAI** | 6 | 4 | 60% |
 | **Qwen** | 4 | 2 | 67% |
 | **通用** | 约30 | - | - |
@@ -439,8 +424,7 @@ throw new TranslationError(
 2. Google 翻译（4个）- 当前完全没有错误消息
 
 **优先级2（建议添加）**：
-3. Gemini（7个）- 缺失较多关键错误
-4. DeepL（4个）- 缺失配额和速率限制消息
+3. DeepL（4个）- 缺失配额和速率限制消息
 
 **优先级3（补充完善）**：
 5. OpenAI（4个）

@@ -138,36 +138,22 @@
 
 ## 6. Gemini
 
-### ✅ 已有4个，缺失7个
+### ✅ 一刀切策略（全部 fatal）对应的提示
 
-#### 6.1 已实现的消息
+| Key | 中文提示 | 英文提示 | 触发场景 | 友好性 |
+|-----|---------|---------|---------|--------|
+| `error_gemini_test_failed` | **Gemini测试失败** | Gemini test failed | 设置页连接测试 | ⚠️ 缺少操作建议 |
+| `error_gemini_service_not_configured` | **服务未配置，请在设置中添加API密钥** | Service not configured. Please add an API key in settings. | 未配置 | ✅ 明确行动 |
+| `error_gemini_api_key_invalid` | **API密钥无效或无权限** | API key is invalid or has no permission. | HTTP 401/403 | ✅ 明确原因 |
+| `error_gemini_network_failed` | **翻译失败，请切换翻译服务或重试** | Translation failed. Please switch a provider or try again. | 网络/Abort | ✅ 统一兜底 |
+| `error_gemini_request_param` | **翻译失败，请切换翻译服务或重试** | Translation failed. Please switch a provider or try again. | HTTP 400 等参数错误 | ✅ 行动指引 |
+| `error_gemini_rate_limit` | **翻译过于频繁，请稍后重试** | Translation requests are too frequent. Please try again later. | HTTP 429 | ✅ 明确节奏 |
+| `error_gemini_server_error` | **翻译失败，请切换翻译服务或重试** | Translation failed. Please switch a provider or try again. | HTTP 500/502/503/504 | ✅ 行动指引 |
+| `error_gemini_response_format` | **翻译失败，请切换翻译服务或重试** | Translation failed. Please switch a provider or try again. | 缺少候选/内容为空 | ✅ 统一兜底 |
+| `error_gemini_parse_failed` | **翻译失败，请切换翻译服务或重试** | Translation failed. Please switch a provider or try again. | JSON/YAML 解析失败 | ✅ 统一兜底 |
+| `error_translation_switch_provider` | **翻译失败，请切换翻译服务或重试** | Translation failed. Please switch a provider or try again. | 数量不匹配、finishReason (MAX_TOKENS/SAFETY/RECITATION)、其它兜底 | ✅ 行动指引 |
 
-| 错误类型 | HTTP | 中文提示 | 英文提示 | 触发场景 | 友好性评价 |
-|---------|------|---------|---------|---------|-----------|
-| 测试失败 | - | **Gemini测试失败** | Gemini test failed | 测试连接失败 | ⚠️ 缺少操作建议 |
-| 服务未配置 | - | **Gemini服务未配置，请在设置中添加API密钥** | Gemini not configured, please add API key in settings | 未配置 | ✅ 清晰+详细指导 |
-| 响应格式错误 | - | **Gemini API 返回格式错误：缺少候选内容** | Gemini response format error: missing candidates | 响应格式错误 | ⚠️ 技术术语太多 |
-| 请求参数错误 | 400 | **Gemini 请求参数错误，请检查设置** | Gemini parameter error, please check settings | 参数错误 | ⚠️ 用户看不懂 |
-
-#### 6.2 缺失的消息
-
-| 错误类型 | HTTP/Code | 建议中文提示 | 建议英文提示 | 触发场景 | 友好性评价 |
-|---------|----------|------------|------------|---------|-----------|
-| API密钥无效 | 401/403 | **Gemini API密钥无效或无权限** | Gemini API key invalid or no permission | API密钥无效 | ✅ 明确原因 |
-| 速率限制 | 429 | **Gemini API 请求过于频繁，请稍后重试** | Gemini rate limit exceeded, please try again later | 速率限制 | ✅ 清晰+操作建议 |
-| 服务器错误 | 500/502/503/504 | **Gemini 服务暂时不可用，请稍后重试** | Gemini temporarily unavailable, please try again later | 服务器错误 | ✅ 清晰+操作建议 |
-| 地区限制 | 400+FAILED_PRECONDITION | **Gemini 服务在您的地区不可用或需要付费计划** | Gemini unavailable in your region or requires paid plan | 地区限制 | ✅ 清晰+解释原因 |
-| 输出超长 | MAX_TOKENS | **Gemini 输出超出长度限制，请重试** | Gemini output too long, please retry | 输出超长 | ✅ 清晰+操作建议 |
-| 内容过滤 | SAFETY | **Gemini 内容被安全过滤拦截，无法翻译** | Gemini content filtered by safety settings | 内容过滤 | ✅ 明确原因 |
-| 重复内容 | RECITATION | **Gemini 检测到重复内容，请重试** | Gemini recitation detected, please retry | 重复内容 | ⚠️ 用户看不懂"重复内容" |
-
-**建议优化**：
-```
-测试失败 → "Gemini连接测试失败，请检查API密钥或网络"
-响应格式错误 → "Gemini返回数据异常，请重试"
-请求参数错误 → "Gemini请求失败，请检查设置"
-重复内容 → "Gemini检测到内容问题，请重试"
-```
+> **要点**：任何表现为“可重试”的场景（429、服务器错误、YAML 解析失败等）如今都直接终止翻译，提示用户切换服务或稍后重试，与 DeepL/DeepSeek 保持一致。
 
 ---
 
