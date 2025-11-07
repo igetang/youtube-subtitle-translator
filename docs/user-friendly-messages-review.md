@@ -95,33 +95,21 @@
 
 ## 4. DeepL
 
-### ✅ 已有4个，缺失4个
+### ✅ 一刀切策略（全部 fatal）对应的提示
 
-#### 4.1 已实现的消息
+| Key | 中文提示 | 英文提示 | 触发场景 | 友好性 |
+|-----|---------|---------|---------|--------|
+| `error_translation_service_not_configured` | **翻译服务未配置，请在设置中添加API密钥** | Translation service not configured, please add API key in settings | 服务未配置 | ✅ 明确行动 |
+| `error_api_key_invalid` | **API 密钥无效，请检查设置** | API key invalid, please check settings | HTTP 403 | ✅ 明确原因 |
+| `error_deepl_network_failed` | **翻译失败，请切换翻译服务或重试** | Translation failed. Please switch a provider or try again. | 网络/超时 | ✅ 统一兜底 |
+| `error_translation_switch_provider` | **翻译失败，请切换翻译服务或重试** | Translation failed. Please switch a provider or try again. | HTTP 400/404/413/500/503/529/未知、JSON解析失败、响应缺字段、数量不匹配、Abort | ✅ 行动指引 |
+| `error_deepl_rate_limit` | **翻译过于频繁，请稍后重试** | Translation requests are too frequent. Please try again later. | HTTP 429 | ✅ 明确节奏 |
+| `error_deepl_quota_exhausted` | **DEEPL翻译免费配额已用完，请明天再试或切换服务** | DEEPL free quota is exhausted. Please try tomorrow or switch a provider. | HTTP 456 | ✅ 给出替代方案 |
+| `error_deepl_request_param` | **DeepL请求失败，请重试** | DeepL request failed, please retry. | 参数/测试校验 | ⚠️ 建议口语化 |
+| `error_deepl_response_format` | **DeepL返回数据异常，请重试** | DeepL response data is invalid. Please retry. | 响应格式 | ⚠️ 建议口语化 |
+| `error_deepl_test_failed` | **DeepL连接测试失败，请检查API密钥或网络** | DeepL connectivity test failed. Please check API key or network. | 设置页连接测试 | ✅ 行动指引 |
 
-| 错误类型 | HTTP | 中文提示 | 英文提示 | 触发场景 | 友好性评价 |
-|---------|------|---------|---------|---------|-----------|
-| 测试失败 | - | **DeepL测试失败** | DeepL test failed | 测试连接失败 | ⚠️ 缺少操作建议 |
-| 响应格式错误 | - | **DeepL API 返回格式错误：缺少translations数组** | DeepL API response format error: missing translations array | 响应格式错误 | ⚠️ 技术术语太多 |
-| 请求参数错误 | 400 | **DeepL 请求参数错误** | DeepL request parameter error | 参数错误 | ⚠️ 用户看不懂 |
-| 服务器错误 | 500/503 | **DeepL 服务器错误，请稍后重试** | DeepL server error, please try again later | 服务器错误 | ✅ 清晰+操作建议 |
-
-#### 4.2 缺失的消息
-
-| 错误类型 | HTTP | 建议中文提示 | 建议英文提示 | 触发场景 | 友好性评价 |
-|---------|------|------------|------------|---------|-----------|
-| API密钥无效 | 403 | **DeepL API 密钥无效，请检查设置** | DeepL API key invalid, please check settings | API密钥无效 | ✅ 清晰+操作建议 |
-| 配额用尽 | 456 | **DeepL 配额已用完，请检查账户额度或升级订阅** | DeepL quota exceeded, please check account or upgrade | 配额用尽 | ✅ 提供了解决方案 |
-| 速率限制 | 429 | **DeepL 请求过于频繁，请稍后重试** | DeepL rate limit exceeded, please try again later | 速率限制 | ✅ 清晰+操作建议 |
-| 请求过大 | 413 | **DeepL 请求过大（超过128KiB），请减少批次大小** | DeepL request too large (>128KiB), please reduce batch size | 请求过大 | ⚠️ 技术细节太多 |
-
-**建议优化**：
-```
-测试失败 → "DeepL连接测试失败，请检查API密钥或网络"
-响应格式错误 → "DeepL返回数据异常，请重试"
-请求参数错误 → "DeepL请求失败，请重试"
-请求过大 → "DeepL单次翻译内容过多，请重试"（系统会自动调整）
-```
+> **要点**：无论是网络抖动还是 429/JSON 解析失败，DeepL 都会立即终止翻译流程，提示用户“切换服务或重试”。文案需保持口语化，避免技术术语。
 
 ---
 

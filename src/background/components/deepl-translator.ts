@@ -16,7 +16,7 @@
 /**
  * DeepL API 请求接口（基于官方文档 2025-10-22）
  */
-import { handleFetchError, TranslationError } from '@shared/types/translation-errors';
+import { TranslationError } from '@shared/types/translation-errors';
 
 interface DeepLRequest {
   // 必需参数
@@ -141,7 +141,7 @@ export class DeepLTranslator {
 
     // 检查初始信号状态
     if (signal.aborted) {
-      throw new DOMException('DeepL 翻译开始前已取消', 'AbortError');
+      throw this.createFatalError('error_translation_switch_provider');
     }
 
     const results: string[] = [];
@@ -150,7 +150,7 @@ export class DeepLTranslator {
     // 分批处理（30 条/批）
     for (let i = 0; i < texts.length; i += DeepLTranslator.BATCH_SIZE) {
       if (signal.aborted) {
-        throw new DOMException('DeepL 翻译已取消', 'AbortError');
+        throw this.createFatalError('error_translation_switch_provider');
       }
 
       const batch = texts.slice(i, i + DeepLTranslator.BATCH_SIZE);
@@ -185,11 +185,7 @@ export class DeepLTranslator {
         console.error(
           `[DeepLTranslator] ✗ 批次翻译数量不匹配: 期望${batch.length}, 实际${translations.length}`
         );
-        throw new TranslationError(
-          `DeepL 翻译数量不匹配：期望${batch.length}条，实际${translations.length}条`,
-          'retryable',
-          'deepl'
-        );
+        throw this.createFatalError('error_translation_switch_provider');
       }
 
       results.push(...translations);
@@ -236,7 +232,10 @@ export class DeepLTranslator {
         signal
       });
     } catch (error) {
-      handleFetchError(error, 'deepl', 'DeepL API 网络请求失败');
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw this.createFatalError('error_translation_switch_provider');
+      }
+      throw this.createFatalError('error_deepl_network_failed');
     }
 
     if (!response.ok) {
@@ -247,21 +246,11 @@ export class DeepLTranslator {
     try {
       data = await response.json();
     } catch {
-      throw new TranslationError(
-        'DeepL API 返回内容解析失败',
-        'retryable',
-        'deepl',
-        response.status
-      );
+      throw this.createFatalError('error_translation_switch_provider', undefined, response.status);
     }
 
     if (!data.translations || !Array.isArray(data.translations)) {
-      throw new TranslationError(
-        'DeepL API 返回格式错误：缺少translations数组',
-        'fatal',
-        'deepl',
-        response.status
-      );
+      throw this.createFatalError('error_translation_switch_provider', undefined, response.status);
     }
 
     // 记录检测到的源语言（仅第一批次记录一次）
@@ -288,69 +277,20 @@ export class DeepLTranslator {
 
     switch (status) {
       case 400:
-        throw new TranslationError(
-          `DeepL 请求参数错误: ${errorMessage}`,
-          'fatal',
-          'deepl',
-          status
-        );
-      case 403:
-        throw new TranslationError(
-          'DeepL API 密钥无效，请检查设置',
-          'fatal',
-          'deepl',
-          status
-        );
       case 404:
-        throw new TranslationError(
-          'DeepL 资源未找到，请检查配置',
-          'fatal',
-          'deepl',
-          status
-        );
       case 413:
-        throw new TranslationError(
-          'DeepL 请求过大（超过128KiB），请减少批次大小',
-          'fatal',
-          'deepl',
-          status
-        );
-      case 429:
-        throw new TranslationError(
-          'DeepL 请求过于频繁，请稍后重试',
-          'retryable',
-          'deepl',
-          status
-        );
-      case 456:
-        throw new TranslationError(
-          'DeepL 配额已用完，请检查账户额度或升级订阅',
-          'fatal',
-          'deepl',
-          status
-        );
       case 500:
-        throw new TranslationError(
-          'DeepL 服务器错误，请稍后重试',
-          'retryable',
-          'deepl',
-          status
-        );
       case 503:
       case 529:
-        throw new TranslationError(
-          'DeepL 服务暂时不可用，请稍后重试',
-          'retryable',
-          'deepl',
-          status
-        );
+        throw this.createFatalError('error_translation_switch_provider', undefined, status);
+      case 403:
+        throw this.createFatalError('error_api_key_invalid', undefined, status);
+      case 429:
+        throw this.createFatalError('error_deepl_rate_limit', undefined, status);
+      case 456:
+        throw this.createFatalError('error_deepl_quota_exhausted', undefined, status);
       default:
-        throw new TranslationError(
-          `DeepL API 错误 (${status}): ${errorMessage}`,
-          'fatal',
-          'deepl',
-          status
-        );
+        throw this.createFatalError('error_translation_switch_provider', undefined, status);
     }
   }
 
@@ -363,11 +303,19 @@ export class DeepLTranslator {
 
       const abortHandler = () => {
         clearTimeout(timer);
-        reject(new DOMException('延迟被取消', 'AbortError'));
+        reject(this.createFatalError('error_translation_switch_provider'));
       };
 
       signal.addEventListener('abort', abortHandler, { once: true });
     });
+  }
+
+  private createFatalError(messageKey?: string, fallback?: string, status?: number): TranslationError {
+    const defaultMessage = fallback || '翻译失败，请切换翻译服务或重试';
+    const resolvedMessage = messageKey
+      ? chrome.i18n.getMessage(messageKey) || defaultMessage
+      : defaultMessage;
+    return new TranslationError(resolvedMessage, 'fatal', 'deepl', status);
   }
 
   /**

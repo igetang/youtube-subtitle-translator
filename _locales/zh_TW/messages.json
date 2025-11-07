@@ -141,6 +141,7 @@
   "error_deepseek_test_failed": { "message": "DeepSeek測試失敗" },
   "error_gemini_test_failed": { "message": "Gemini測試失敗" },
   "error_deepl_test_failed": { "message": "DeepL測試失敗" },
+  "error_deepl_network_failed": { "message": "翻譯失敗，請切換翻譯服務或重試" },
   "error_qwen_test_failed": { "message": "Qwen測試失敗" },
   "error_target_lang_change_failed": { "message": "處理目標語言變更失敗" },
   "error_sidepanel_open_failed": { "message": "SidePanel開啟失敗" },
@@ -208,5 +209,8 @@
   "error_microsoft_unavailable": { "message": "翻譯失敗，請切換翻譯服務或重試" },
   "error_microsoft_rate_limit": { "message": "翻譯過於頻繁，請稍後重試" },
   "error_microsoft_service_error": { "message": "翻譯失敗，請切換翻譯服務或重試" },
-  "error_microsoft_response_format": { "message": "翻譯失敗，請切換翻譯服務或重試" }
+  "error_microsoft_response_format": { "message": "翻譯失敗，請切換翻譯服務或重試" },
+  "error_deepl_rate_limit": { "message": "翻譯過於頻繁，請稍後重試" },
+  "error_deepl_quota_exhausted": { "message": "DEEPL翻譯免費額度已用完，請明天再試或切換服務" },
+  "error_translation_switch_provider": { "message": "翻譯失敗，請切換翻譯服務或重試" }
 }

@@ -173,54 +173,42 @@ throw new Error(`所有Google免费翻译端点调用失败: ${errors.join(' | '
 
 ## 2. DeepL
 
-**API端点**:
-- 免费层: `https://api-free.deepl.com/v2/translate`
-- 付费层: `https://api.deepl.com/v2/translate`
+**API端点**：
+- 免费层：`https://api-free.deepl.com/v2/translate`
+- 付费层：`https://api.deepl.com/v2/translate`
 
-**认证方式**: `DeepL-Auth-Key` header
+**认证方式**：`DeepL-Auth-Key` header
 
-### 错误代码表
+### ❗ 一刀切策略（所有错误 = fatal）
 
-| HTTP状态码 | 含义 | 当前处理方案 | 错误分类 | 流程是否中断 |
-|-----------|------|------------|---------|------------|
-| **400** | 请求参数错误 | ✅ 抛出 `TranslationError` | `fatal` | ✅ 是 |
-| **403** | API密钥无效 | ✅ 抛出 `TranslationError` | `fatal` | ✅ 是 |
-| **404** | 资源未找到 | ✅ 抛出 `TranslationError` | `fatal` | ✅ 是 |
-| **413** | 请求过大（>128KiB） | ✅ 抛出 `TranslationError` | `fatal` | ✅ 是 |
-| **429** | 请求过于频繁（速率限制） | ✅ 抛出 `TranslationError` | `retryable` | ✅ 是 |
-| **456** | 配额已用完 | ✅ 抛出 `TranslationError` | `fatal` | ✅ 是 |
-| **500** | 服务器错误 | ✅ 抛出 `TranslationError` | `retryable` | ✅ 是 |
-| **503/529** | 服务暂时不可用 | ✅ 抛出 `TranslationError` | `retryable` | ✅ 是 |
+自 2025-11 起，DeepL 翻译器在任意阶段遇到错误都会立即抛出 `TranslationError(..., 'fatal', 'deepl')`，中断两阶段翻译流程，避免“部分成功”带来的状态不一致。下表列出所有分支及对应的用户提示。
+
+| 错误类型 | 触发条件 / 代码位置 | i18n Key | 中文提示 |
+|---------|----------------------|----------|---------|
+| 服务未配置 | `two-phase-translator-v4.ts:1718`，未提供 API Key | `error_translation_service_not_configured` | 翻译服务未配置，请在设置中添加 API 密钥。 |
+| 网络请求失败 | `deepl-translator.ts:228-240`，`fetch` 抛错 | `error_deepl_network_failed`（新增） | 翻译失败，请切换翻译服务或重试。 |
+| HTTP 400/404/413/500/503/529/其他 | `handleAPIError` 默认分支 | `error_translation_switch_provider`（新增兜底） | 翻译失败，请切换翻译服务或重试。 |
+| HTTP 403 | `handleAPIError` case 403 | `error_api_key_invalid` | API 密钥无效，请检查设置。 |
+| HTTP 429 | `handleAPIError` case 429 | `error_deepl_rate_limit`（新增） | 翻译过于频繁，请稍后重试。 |
+| HTTP 456 | `handleAPIError` case 456 | `error_deepl_quota_exhausted`（新增） | DEEPL 翻译免费配额已用完，请明天再试或切换服务。 |
+| JSON 解析失败 | `deepl-translator.ts:246-255` | `error_translation_switch_provider` | 翻译失败，请切换翻译服务或重试。 |
+| 响应缺少 `translations` | `deepl-translator.ts:258-265` | `error_translation_switch_provider` | 翻译失败，请切换翻译服务或重试。 |
+| 翻译数量不匹配 | `deepl-translator.ts:183-192` | `error_translation_switch_provider` | 翻译失败，请切换翻译服务或重试。 |
+| 调用被取消 / Abort | `deepl-translator.ts:142-206` | `error_translation_switch_provider` | 翻译失败，请切换翻译服务或重试。 |
+
+> **说明**：即便是网络波动或 429 速率限制，也不会再继续后续批次或降级处理，用户必须手动重试或切换服务。
 
 ### 代码位置
-- 文件: `src/background/components/deepl-translator.ts`
-- 错误处理: 第277-355行 (`handleAPIError`方法)
-
-### 错误处理示例
-
-```typescript
-case 429:
-  throw new TranslationError(
-    'DeepL 请求过于频繁，请稍后重试',
-    'retryable',
-    'deepl',
-    status
-  );
-
-case 456:
-  throw new TranslationError(
-    'DeepL 配额已用完，请检查账户额度或升级订阅',
-    'fatal',
-    'deepl',
-    status
-  );
-```
+- 文件：`src/background/components/deepl-translator.ts`
+- 核心方法：`translate()` / `callAPI()` / `handleAPIError()`
+- 入口判定：`src/background/components/two-phase-translator-v4.ts` 中 DeepL 分支
 
 ### 特殊说明
 
-- **批次大小**: 30条/批（优化后，原为50条）
-- **计费方式**: 按字符计费（非token）
-- **split_sentences**: 设置为"0"禁止分句，但Next-gen模型可能会忽略此参数
+- **批次大小**：30 条/批（优化后，原为 50 条）
+- **计费方式**：按字符计费（非 token）
+- **split_sentences**：设置为 `"0"` 禁止分句，但 Next-gen 模型可能会忽略此参数
+- **日志**：所有 fatal 错误都会输出 `[DeepLTranslator] ✗ ...` 便于快速定位
 
 ---
 
