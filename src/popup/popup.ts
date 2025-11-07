@@ -753,7 +753,7 @@ const apiInfoMap: Record<string, ApiInfo> = {
     infoUrl: 'https://cloud.google.com/translate/docs/getting-started',
     requiresKey: false,
     customConfig: false,
-    description: '无需额外配置，直接使用内置免费额度。',
+    description: chrome.i18n.getMessage('service_desc_google_free') || '无需额外配置，直接使用内置免费额度。',
     badgeType: 'free'
   },
   'microsoft-free': {
@@ -761,7 +761,7 @@ const apiInfoMap: Record<string, ApiInfo> = {
     infoUrl: 'https://www.microsoft.com/zh-cn/translator/',
     requiresKey: false,
     customConfig: false,
-    description: '无需配置，自动调用微软免费接口。',
+    description: chrome.i18n.getMessage('service_desc_microsoft_free') || '无需配置，自动调用微软免费接口。',
     badgeType: 'free'
   },
   'deepl': {
@@ -1059,7 +1059,7 @@ function showUsageGuide(): void {
           const domain = new URL(tabs[0].url).hostname;
           urlElement.textContent = domain;
         } catch {
-          urlElement.textContent = '未知网站';
+          urlElement.textContent = chrome.i18n.getMessage('error_unknown_website') || '未知网站';
         }
       }
     }
@@ -1186,11 +1186,13 @@ function updateApiPanels(apiType: string): void {
   // 根据API类型显示相应面板
   const apiInfo = apiInfoMap[apiType];
   if (serviceCardTitle) {
-    serviceCardTitle.textContent = apiInfo ? apiInfo.name : '翻译服务';
+    const serviceNameKey = `service_name_${apiType.replace('-free', '')}`;
+    const serviceName = chrome.i18n.getMessage(serviceNameKey);
+    serviceCardTitle.textContent = serviceName || (apiInfo ? apiInfo.name : chrome.i18n.getMessage('label_translation_service') || '翻译服务');
   }
   if (serviceCardBadge) {
     const isFree = apiInfo?.badgeType === 'free';
-    serviceCardBadge.textContent = isFree ? '免费' : '自有密钥';
+    serviceCardBadge.textContent = chrome.i18n.getMessage(isFree ? 'api_type_free' : 'service_type_api_key') || (isFree ? '免费' : '自有密钥');
     serviceCardBadge.classList.toggle('is-free', isFree);
   }
 
@@ -1216,7 +1218,7 @@ function updateApiPanels(apiType: string): void {
     // 更新API密钥提示链接
     if (apiInfoLink && apiInfo.infoUrl) {
       apiInfoLink.href = apiInfo.infoUrl;
-      apiInfoLink.textContent = `如何获取${apiInfo.name}API密钥？`;
+      apiInfoLink.textContent = getApiKeyHelpText(apiType);
     }
   }
   else if (apiType === 'openai') {
@@ -1233,7 +1235,7 @@ function updateApiPanels(apiType: string): void {
     // 更新API密钥提示链接
     if (apiInfoLink && apiInfo.infoUrl) {
       apiInfoLink.href = apiInfo.infoUrl;
-      apiInfoLink.textContent = `如何获取${apiInfo.name}API密钥？`;
+      apiInfoLink.textContent = getApiKeyHelpText(apiType);
     }
   }
   else if (apiType === 'gemini') {
@@ -1246,7 +1248,7 @@ function updateApiPanels(apiType: string): void {
     // 更新API密钥提示链接
     if (apiInfoLink && apiInfo.infoUrl) {
       apiInfoLink.href = apiInfo.infoUrl;
-      apiInfoLink.textContent = `如何获取${apiInfo.name}API密钥？`;
+      apiInfoLink.textContent = getApiKeyHelpText(apiType);
     }
   }
   else if (apiType === 'deepl') {
@@ -1259,7 +1261,7 @@ function updateApiPanels(apiType: string): void {
     // 更新API密钥提示链接
     if (apiInfoLink && apiInfo.infoUrl) {
       apiInfoLink.href = apiInfo.infoUrl;
-      apiInfoLink.textContent = `如何获取${apiInfo.name}API密钥？`;
+      apiInfoLink.textContent = getApiKeyHelpText(apiType);
     }
   }
 
@@ -1304,7 +1306,7 @@ function populateTargetLanguages(searchTerm: string = ''): void {
     if (currentSourceLang && currentSourceLang !== 'auto' && isSameLanguageFamily(currentSourceLang, lang.code)) {
       option.classList.add('disabled');
       option.setAttribute('data-disabled-reason', 'same-language-family');
-      option.title = `无法选择同语言族的语言：${lang.name} 与源语言冲突`;
+      option.title = chrome.i18n.getMessage('tooltip_cannot_select_same_family_source') || '无法选择同语言族的语言：与源语言冲突';
 
       // 创建语言名称元素
       const nameSpan = document.createElement('span');
@@ -1313,7 +1315,8 @@ function populateTargetLanguages(searchTerm: string = ''): void {
       // 创建提示文字元素
       const hintSpan = document.createElement('span');
       hintSpan.className = 'disabled-hint';
-      hintSpan.textContent = '（与源语言相同）';
+      const hintText = chrome.i18n.getMessage('hint_same_as_source') || '与源语言相同';
+      hintSpan.textContent = `(${hintText})`;
 
       option.appendChild(nameSpan);
       option.appendChild(hintSpan);
@@ -1975,7 +1978,8 @@ function generateLanguageDisplayName(trackInfo: {
 
   // 根据轨道类型决定是否添加ASR标识
   if (trackInfo.kind === 'asr') {
-    return `${baseName}（自动生成）`;
+    const autoGenSuffix = chrome.i18n.getMessage('suffix_auto_generated') || '自动生成';
+    return `${baseName} (${autoGenSuffix})`;
   } else {
     return baseName;
   }
@@ -1992,7 +1996,7 @@ function setSourceLanguageSelectorDisabled(disabled: boolean, message?: string):
   if (disabled) {
     sourceLangTrigger.classList.add('disabled');
     sourceLangTrigger.setAttribute('aria-disabled', 'true');
-    const displayText = message || '自动选择（广告播放中）';
+    const displayText = message || chrome.i18n.getMessage('status_auto_select_during_ad') || '自动选择（广告播放中）';
     sourceLangSelectedValue.textContent = displayText;
     sourceLangSelectedValue.setAttribute('data-value', 'auto');
     sourceLangSelectedValue.removeAttribute('data-kind');
@@ -2029,7 +2033,7 @@ function populateSourceLanguages(searchTerm: string = ''): void {
     if (sortedTracks.length === 0 && searchTerm.trim()) {
       const noResultOption = document.createElement('div');
       noResultOption.className = 'custom-select-option disabled';
-      noResultOption.textContent = `未找到匹配 "${searchTerm}" 的语言`;
+      noResultOption.textContent = chrome.i18n.getMessage('search_no_results') || '未找到匹配的语言';
       noResultOption.style.textAlign = 'center';
       noResultOption.style.fontStyle = 'italic';
       noResultOption.style.color = '#999';
@@ -2052,7 +2056,7 @@ function populateSourceLanguages(searchTerm: string = ''): void {
       if (currentTargetLang && isSameLanguageFamily(trackInfo.languageCode, currentTargetLang)) {
         option.classList.add('disabled');
         option.setAttribute('data-disabled-reason', 'same-language-family');
-        option.title = `无法选择同语言族的语言：${displayName} 与目标语言冲突`;
+        option.title = chrome.i18n.getMessage('tooltip_cannot_select_same_family_target') || '无法选择同语言族的语言：与目标语言冲突';
 
         // 创建语言名称元素
         const nameSpan = document.createElement('span');
@@ -2061,7 +2065,7 @@ function populateSourceLanguages(searchTerm: string = ''): void {
         // 创建提示文字元素
         const hintSpan = document.createElement('span');
         hintSpan.className = 'disabled-hint';
-        hintSpan.textContent = '（与目标语言相同）';
+        hintSpan.textContent = chrome.i18n.getMessage('hint_same_as_target') || '（与目标语言相同）';
 
         option.appendChild(nameSpan);
         option.appendChild(hintSpan);
@@ -2662,7 +2666,7 @@ async function handleTestApiConnection(): Promise<void> {
   }
 
   // 显示测试中状态
-  testResult.textContent = '正在测试API连接...';
+  testResult.textContent = chrome.i18n.getMessage('test_result_testing') || '正在测试API连接...';
   testResult.className = 'test-result in-progress';
 
   console.log('[popup] 测试API连接:', { apiType, model, hasApiKey: !!apiKey });
@@ -2680,15 +2684,19 @@ async function handleTestApiConnection(): Promise<void> {
     });
 
     if (response?.success) {
-      testResult.textContent = '连接测试成功！';
+      testResult.textContent = chrome.i18n.getMessage('test_result_success') || '连接测试成功！';
       testResult.className = 'test-result success';
     } else {
-      testResult.textContent = `测试失败: ${response?.message || '未知错误'}`;
+      const failedMsg = chrome.i18n.getMessage('test_result_failed') || '测试失败';
+      const unknownError = chrome.i18n.getMessage('error_unknown') || '未知错误';
+      testResult.textContent = `${failedMsg}: ${response?.message || unknownError}`;
       testResult.className = 'test-result error';
     }
   } catch (error) {
     console.error('[popup] API连接测试失败:', error);
-    testResult.textContent = `测试失败: ${error instanceof Error ? error.message : '未知错误'}`;
+    const failedMsg = chrome.i18n.getMessage('test_result_failed') || '测试失败';
+    const unknownError = chrome.i18n.getMessage('error_unknown') || '未知错误';
+    testResult.textContent = `${failedMsg}: ${error instanceof Error ? error.message : unknownError}`;
     testResult.className = 'test-result error';
   }
 }
@@ -2713,9 +2721,9 @@ function handleInitializationError(error: any): void {
     ">
       <div style="text-align: center; margin-bottom: 20px;">
         <div style="font-size: 48px; margin-bottom: 12px;">⚠️</div>
-        <h2 style="margin: 0 0 8px 0; color: #d32f2f;">初始化失败</h2>
+        <h2 style="margin: 0 0 8px 0; color: #d32f2f;">${chrome.i18n.getMessage('error_initialization_failed') || '初始化失败'}</h2>
       </div>
-      
+
       <div style="
         background: white;
         border-radius: 8px;
@@ -2723,7 +2731,7 @@ function handleInitializationError(error: any): void {
         margin-bottom: 16px;
         border-left: 4px solid #d32f2f;
       ">
-        <p style="margin: 0 0 8px 0; font-weight: 500;">错误信息：</p>
+        <p style="margin: 0 0 8px 0; font-weight: 500;">${chrome.i18n.getMessage('error_error_message') || '错误信息：'}</p>
         <p style="
           margin: 0;
           font-family: monospace;
@@ -2734,7 +2742,7 @@ function handleInitializationError(error: any): void {
           word-break: break-word;
         ">${error.message || error}</p>
       </div>
-      
+
       <div style="text-align: center;">
         <button onclick="location.reload()" style="
           background: #1976d2;
@@ -2745,7 +2753,7 @@ function handleInitializationError(error: any): void {
           font-size: 14px;
           cursor: pointer;
           margin-right: 12px;
-        ">重新加载</button>
+        ">${chrome.i18n.getMessage('button_reload') || '重新加载'}</button>
         <button onclick="window.close()" style="
           background: #666;
           color: white;
@@ -2754,10 +2762,99 @@ function handleInitializationError(error: any): void {
           border-radius: 6px;
           font-size: 14px;
           cursor: pointer;
-        ">关闭</button>
+        ">${chrome.i18n.getMessage('button_close') || '关闭'}</button>
       </div>
     </div>
   `;
+}
+
+/**
+ * 🌍 生成 API 帮助链接文本（国际化）
+ * @param apiType API类型（如 'deepl', 'openai' 等）
+ * @returns 国际化的帮助链接文本
+ */
+function getApiKeyHelpText(apiType: string): string {
+  // 移除 '-free' 后缀（如果有）
+  const baseApiType = apiType.replace('-free', '');
+
+  // 构造 i18n key
+  const linkKey = `link_how_to_get_${baseApiType}_key`;
+
+  // 获取翻译文本
+  const linkText = chrome.i18n.getMessage(linkKey);
+
+  // 如果没有找到翻译，使用通用 key
+  if (!linkText) {
+    const genericLinkText = chrome.i18n.getMessage('link_how_to_get_api_key');
+    return genericLinkText || '如何获取API密钥？';
+  }
+
+  return linkText;
+}
+
+/**
+ * 🌍 初始化 i18n（国际化）
+ * 将所有带有 data-i18n 属性的元素替换为对应语言的文本
+ */
+function initializeI18n(): void {
+  try {
+    // 处理 data-i18n 属性（textContent）
+    document.querySelectorAll('[data-i18n]').forEach((element) => {
+      const key = element.getAttribute('data-i18n');
+      if (key) {
+        const message = chrome.i18n.getMessage(key);
+        if (message) {
+          element.textContent = message;
+        }
+      }
+    });
+
+    // 处理 data-i18n-placeholder 属性（placeholder）
+    document.querySelectorAll('[data-i18n-placeholder]').forEach((element) => {
+      const key = element.getAttribute('data-i18n-placeholder');
+      if (key && element instanceof HTMLInputElement) {
+        const message = chrome.i18n.getMessage(key);
+        if (message) {
+          element.placeholder = message;
+        }
+      }
+    });
+
+    // 处理 document.title
+    const titleKey = 'popup_title';
+    const titleMessage = chrome.i18n.getMessage(titleKey);
+    if (titleMessage) {
+      document.title = titleMessage;
+    }
+
+    // 处理 <select> 中的 <option> 元素
+    document.querySelectorAll('select option[data-i18n]').forEach((element) => {
+      const key = element.getAttribute('data-i18n');
+      if (key && element instanceof HTMLOptionElement) {
+        const message = chrome.i18n.getMessage(key);
+        if (message) {
+          element.textContent = message;
+        }
+      }
+    });
+
+    // 处理模型选项的标签（格式：modelValue (label)）
+    document.querySelectorAll('select option[data-i18n-label]').forEach((element) => {
+      const labelKey = element.getAttribute('data-i18n-label');
+      if (labelKey && element instanceof HTMLOptionElement) {
+        const label = chrome.i18n.getMessage(labelKey);
+        if (label) {
+          // 提取模型值（括号之前的部分）
+          const modelValue = element.value;
+          element.textContent = `${modelValue} (${label})`;
+        }
+      }
+    });
+
+    console.log('[popup] i18n 初始化完成');
+  } catch (error) {
+    console.error('[popup] i18n 初始化失败:', error);
+  }
 }
 
 /**
@@ -2769,11 +2866,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log('[popup] 已初始化，跳过重复初始化');
     return;
   }
-  
+
   console.log('[popup] 初始化...');
   sidePanelInitialized = true;
-  
+
   try {
+    // 🌍 第一步：初始化 i18n
+    initializeI18n();
+
+    // 🚀 第二步：初始化 Popup UI
     await initializePopupUI();
     console.log('[popup] 🎉 初始化完成');
   } catch (error) {

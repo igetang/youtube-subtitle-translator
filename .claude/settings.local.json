@@ -22,7 +22,8 @@
       "Bash(git commit -m \"$(cat <<''''EOF''''\nfeat: 优化源语言选择i18n显示和UI术语\n\n主要改动：\n1. 术语优化：将\"源语言\"改为\"原文语言\"，提升用户体验\n2. i18n智能回退：实现两级语言代码回退机制（es-ES → es）\n3. 完善zh_CN翻译表：新增lang_zh、lang_zh_CN、lang_zh_TW\n4. 项目文档整理：归档旧文档、更新架构文档、新增测试计划\n\n技术细节：\n- popup.ts:1818-1854: 实现智能语言显示名称生成\n- messages.json: 补充基础中文语言代码翻译\n- 修复API密钥输入框对齐问题（重新应用CSS修复）\n- 新增TEST_PLAN.md（180+测试用例）\n- 优化.gitignore排除Chrome调试配置\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
       "Bash(cat:*)",
       "WebFetch(domain:cookbook.openai.com)",
-      "WebFetch(domain:medium.com)"
+      "WebFetch(domain:medium.com)",
+      "Bash(mkdir:*)"
     ],
     "deny": [],
     "ask": []

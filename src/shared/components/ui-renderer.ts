@@ -142,14 +142,14 @@ export class UIRenderer {
     
     // 根据状态决定图标和提示文本
     let buttonIcon = this.OFF_ICON_URL;  // 默认关闭图标
-    let buttonTooltip = '点击开启翻译';  // 默认提示
-    
+    let buttonTooltip = chrome.i18n.getMessage('tooltip_click_to_enable_translation') || '点击开启翻译';  // 默认提示
+
     if (isActive) {
       buttonIcon = this.ON_ICON_URL;
-      buttonTooltip = '翻译已开启';
+      buttonTooltip = chrome.i18n.getMessage('tooltip_translation_enabled') || '翻译已开启';
     } else if (isPending) {
       buttonIcon = this.OFF_ICON_URL;  // PENDING时暂时显示关闭图标，后续添加动画
-      buttonTooltip = '处理中...';
+      buttonTooltip = chrome.i18n.getMessage('tooltip_processing') || '处理中...';
     }
     
     const { button: translateButton, icon: toggleIcon } = this.createControlButton(
@@ -358,23 +358,23 @@ export class UIRenderer {
 
     // 根据状态更新图标和提示
     let buttonIcon = this.OFF_ICON_URL;
-    let buttonTooltip = '点击开启翻译';
+    let buttonTooltip = chrome.i18n.getMessage('tooltip_click_to_enable_translation') || '点击开启翻译';
     let isClickable = true;
-    
+
     switch (state) {
       case 'active':
         buttonIcon = this.ON_ICON_URL;
-        buttonTooltip = '翻译已开启';
+        buttonTooltip = chrome.i18n.getMessage('tooltip_translation_enabled') || '翻译已开启';
         break;
       case 'pending':
         buttonIcon = this.OFF_ICON_URL;  // 后续可以添加加载动画
-        buttonTooltip = '处理中...';
+        buttonTooltip = chrome.i18n.getMessage('tooltip_processing') || '处理中...';
         isClickable = false;  // PENDING状态不可点击
         break;
       case 'inactive':
       default:
         buttonIcon = this.OFF_ICON_URL;
-        buttonTooltip = '点击开启翻译';
+        buttonTooltip = chrome.i18n.getMessage('tooltip_click_to_enable_translation') || '点击开启翻译';
         break;
     }
     
@@ -411,7 +411,9 @@ export class UIRenderer {
     
     if (this.settingsButton) {
       // 更新标题和属性
-      const tooltipText = isOpen ? '关闭翻译设置' : '翻译设置';
+      const tooltipText = isOpen
+        ? (chrome.i18n.getMessage('tooltip_close_translation_settings') || '关闭翻译设置')
+        : (chrome.i18n.getMessage('tooltip_translation_settings') || '翻译设置');
       this.settingsButton.title = tooltipText;
       this.settingsButton.setAttribute('aria-label', tooltipText);
       

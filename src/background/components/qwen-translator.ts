@@ -484,15 +484,15 @@ export class QwenTranslator {
         throw new QwenTranslationError('Qwen API 密钥无效或已过期', 'fatal', status);
 
       case 429:
-        throw new QwenTranslationError('Qwen API 速率限制（超出 RPM 或 TPM）', 'retryable', status);
+        throw new QwenTranslationError(chrome.i18n.getMessage('error_qwen_rate_limit') || 'Qwen API 速率限制（超出 RPM 或 TPM）', 'retryable', status);
 
       case 400:
-        throw new QwenTranslationError(`Qwen API 请求参数错误: ${errorMessage}`, 'fatal', status);
+        throw new QwenTranslationError(`${chrome.i18n.getMessage('error_qwen_request_param') || 'Qwen API 请求参数错误'}: ${errorMessage}`, 'fatal', status);
 
       case 500:
       case 502:
       case 503:
-        throw new QwenTranslationError('Qwen API 服务器错误，请稍后重试', 'retryable', status);
+        throw new QwenTranslationError(chrome.i18n.getMessage('error_qwen_server_error') || 'Qwen API 服务器错误，请稍后重试', 'retryable', status);
 
       default:
         throw new QwenTranslationError(

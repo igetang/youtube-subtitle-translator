@@ -263,7 +263,7 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
 
       if (!Array.isArray(numberedTranslations)) {
         throw new TranslationError(
-          `OpenAI 翻译响应格式错误：返回类型为 ${typeof numberedTranslations}`,
+          `${chrome.i18n.getMessage('error_openai_response_format') || 'OpenAI 翻译响应格式错误'}：返回类型为 ${typeof numberedTranslations}`,
           'retryable',
           'openai'
         );
@@ -382,7 +382,7 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
 
       if (!structuredOutput.translations || !Array.isArray(structuredOutput.translations)) {
         throw new TranslationError(
-          'OpenAI Structured Outputs 响应格式错误：缺少translations数组',
+          chrome.i18n.getMessage('error_openai_structured_response_format') || 'OpenAI Structured Outputs 响应格式错误：缺少translations数组',
           'retryable',
           'openai'
         );
@@ -688,7 +688,7 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
     switch (status) {
       case 400:
         throw new TranslationError(
-          `OpenAI 请求参数错误: ${errorMessage}`,
+          `${chrome.i18n.getMessage('error_openai_request_param') || 'OpenAI 请求参数错误'}: ${errorMessage}`,
           'fatal',
           'openai',
           status,
@@ -705,7 +705,7 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
         );
       case 402:
         throw new TranslationError(
-          'OpenAI 账户余额不足，请前往官网充值',
+          chrome.i18n.getMessage('error_openai_quota_insufficient') || 'OpenAI 账户余额不足，请前往官网充值',
           'fatal',
           'openai',
           status,

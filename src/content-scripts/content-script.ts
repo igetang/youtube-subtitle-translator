@@ -550,7 +550,7 @@ async function autoRestoreTranslationIfNeeded(forceRestore: boolean = false): Pr
     }
 
     // === 步骤8：显示"翻译中"提示（无超时，依赖Service Worker错误处理）===
-    subtitleOverlay.showPendingMessage('正在恢复翻译...', 0);
+    subtitleOverlay.showPendingMessage(chrome.i18n.getMessage('status_restoring_translation') || '正在恢复翻译...', 0);
 
     // === 步骤9：直接发送翻译消息到Service Worker ===
     const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement;
@@ -899,7 +899,7 @@ function setupMessageHandlers(): void {
     if (source === 'main-world' && type === 'INTERCEPTOR_INIT_FAILED') {
       console.error('[content-script] ❌ 拦截器初始化失败:', payload);
       showErrorMessage({
-        message: '字幕获取失败：拦截器初始化错误',
+        message: chrome.i18n.getMessage('error_interceptor_init_failed') || '字幕获取失败：拦截器初始化错误',
         level: 'error',
         duration: 3000
       });
@@ -927,7 +927,7 @@ function setupMessageHandlers(): void {
       }
 
       showErrorMessage({
-        message: '字幕获取超时',
+        message: chrome.i18n.getMessage('error_interceptor_timeout') || '字幕获取超时',
         level: 'warning',
         duration: 3000
       });
@@ -1054,7 +1054,7 @@ function handleCheckPlayerAdState(sendResponse: (response: any) => void): void {
       success: false,
       error: 'CHECK_AD_STATUS_TIMEOUT'
     });
-  }, 3000);
+  }, 5000);
 
   apiResponseHandlers.set(requestId, (response) => {
     clearTimeout(timeout);
@@ -1727,7 +1727,7 @@ function setupTranslationServiceChangeListener(): void {
 
         subtitleOverlay.hide();
         stateManager?.updateState('translateActive', 'pending');
-        subtitleOverlay.showPendingMessage('翻译服务切换，重新翻译中...');
+        subtitleOverlay.showPendingMessage(chrome.i18n.getMessage('status_service_switched_retranslating') || '翻译服务切换，重新翻译中...');
 
         const videoId = getVideoId();
         if (!videoId) {
@@ -1784,12 +1784,12 @@ function setupTranslationServiceChangeListener(): void {
         if (!response) {
           console.error('[content-script] 无响应');
           subtitleOverlay.hide();
-          showErrorMessage({ message: '翻译服务无响应，请重试', duration: ERROR_MESSAGE_DURATION });
+          showErrorMessage({ message: chrome.i18n.getMessage('error_translation_no_response') || '翻译服务无响应，请重试', duration: ERROR_MESSAGE_DURATION });
         } else if (!response.success) {
           console.error('[content-script] 翻译失败:', response.error);
           subtitleOverlay.hide();
           showErrorMessage({
-            message: response.error || '翻译失败，请重试',
+            message: response.error || chrome.i18n.getMessage('error_translation_failed_retry') || '翻译失败，请重试',
             duration: ERROR_MESSAGE_DURATION
           });
         } else if (response.action === 'translated' || response.action === 'cached') {
@@ -1800,7 +1800,7 @@ function setupTranslationServiceChangeListener(): void {
         } else {
           console.warn('[content-script] 未知响应格式:', response);
           subtitleOverlay.hide();
-          showErrorMessage({ message: '翻译响应格式异常', duration: ERROR_MESSAGE_DURATION });
+          showErrorMessage({ message: chrome.i18n.getMessage('error_translation_format_error') || '翻译响应格式异常', duration: ERROR_MESSAGE_DURATION });
         }
       } catch (error) {
         console.error('[content-script] 处理翻译服务变更监听失败:', error);
@@ -1888,7 +1888,7 @@ async function handleSourceLanguageChange(newSourceLang: string, newSourceKind?:
     stateManager?.updateState('translateActive', 'pending');
 
     // 2. 使用新添加的showPendingMessage方法
-    subtitleOverlay.showPendingMessage('源语言切换，重新进行字幕翻译...');
+    subtitleOverlay.showPendingMessage(chrome.i18n.getMessage('status_source_lang_switched_retranslating') || '源语言切换，重新进行字幕翻译...');
 
     // 3. 复用UserPreferencesManager获取偏好
     const userPrefs = await UserPreferencesManager.getInstance().getUserPreferences();
@@ -1943,12 +1943,12 @@ async function handleSourceLanguageChange(newSourceLang: string, newSourceKind?:
       if (!response) {
         console.error('[content-script] 无响应');
         subtitleOverlay.hide();
-        showErrorMessage({ message: '翻译服务无响应，请重试', duration: ERROR_MESSAGE_DURATION });
+        showErrorMessage({ message: chrome.i18n.getMessage('error_translation_service_no_response') || '翻译服务无响应，请重试', duration: ERROR_MESSAGE_DURATION });
       } else if (!response.success) {
         console.error('[content-script] 翻译失败:', response.error);
         subtitleOverlay.hide();
         showErrorMessage({
-          message: response.error || '翻译失败，请重试',
+          message: response.error || chrome.i18n.getMessage('error_translation_failed_retry') || '翻译失败，请重试',
           duration: ERROR_MESSAGE_DURATION
         });
       } else if (response.action === 'translated' || response.action === 'cached') {
@@ -1959,7 +1959,7 @@ async function handleSourceLanguageChange(newSourceLang: string, newSourceKind?:
       } else {
         console.warn('[content-script] 未知响应格式:', response);
         subtitleOverlay.hide();
-        showErrorMessage({ message: '翻译响应格式异常', duration: ERROR_MESSAGE_DURATION });
+        showErrorMessage({ message: chrome.i18n.getMessage('error_translation_response_format') || '翻译响应格式异常', duration: ERROR_MESSAGE_DURATION });
       }
     }
   } catch (error) {
@@ -1976,7 +1976,7 @@ async function handleTargetLanguageChangeRealtime(newTargetLang: string, oldTarg
   try {
     subtitleOverlay.hide();
     stateManager?.updateState('translateActive', 'pending');
-    subtitleOverlay.showPendingMessage('目标语言切换，重新翻译中...');
+    subtitleOverlay.showPendingMessage(chrome.i18n.getMessage('status_target_lang_switched_retranslating') || '目标语言切换，重新翻译中...');
 
     const videoId = getVideoId();
     if (!videoId) {
@@ -2038,14 +2038,14 @@ async function handleTargetLanguageChangeRealtime(newTargetLang: string, oldTarg
       // 无响应
       console.error('[content-script] 无响应');
       subtitleOverlay.hide();
-      showErrorMessage({ message: '翻译服务无响应，请重试', duration: ERROR_MESSAGE_DURATION });
+      showErrorMessage({ message: chrome.i18n.getMessage('error_translation_service_no_response') || '翻译服务无响应，请重试', duration: ERROR_MESSAGE_DURATION });
       stateManager?.updateState('translateActive', 'inactive');
     } else if (!response.success) {
       // 失败响应
       console.error('[content-script] 翻译失败:', response.error);
       subtitleOverlay.hide();
       showErrorMessage({
-        message: response.error || '翻译失败，请重试',
+        message: response.error || chrome.i18n.getMessage('error_translation_failed_retry') || '翻译失败，请重试',
         duration: ERROR_MESSAGE_DURATION
       });
       stateManager?.updateState('translateActive', 'inactive');
@@ -2060,14 +2060,14 @@ async function handleTargetLanguageChangeRealtime(newTargetLang: string, oldTarg
       // 未知响应
       console.warn('[content-script] 未知响应格式:', response);
       subtitleOverlay.hide();
-      showErrorMessage({ message: '翻译响应格式异常', duration: ERROR_MESSAGE_DURATION });
+      showErrorMessage({ message: chrome.i18n.getMessage('error_translation_response_format') || '翻译响应格式异常', duration: ERROR_MESSAGE_DURATION });
       stateManager?.updateState('translateActive', 'inactive');
     }
   } catch (error) {
     console.error('[content-script] 处理目标语言变更失败:', error);
     stateManager?.updateState('translateActive', 'inactive');
     subtitleOverlay.hide();
-    showErrorMessage({ message: '处理目标语言变更失败', duration: ERROR_MESSAGE_DURATION });
+    showErrorMessage({ message: chrome.i18n.getMessage('error_target_lang_change_failed') || '处理目标语言变更失败', duration: ERROR_MESSAGE_DURATION });
   }
 }
 

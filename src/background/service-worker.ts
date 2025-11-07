@@ -1586,7 +1586,7 @@ async function handleOpenSidePanel(sender: chrome.runtime.MessageSender, message
         return {
           success: false,
           status: 'error',
-          message: `SidePanel打开失败: ${openError instanceof Error ? openError.message : 'Unknown error'}`,
+          message: `${chrome.i18n.getMessage('error_sidepanel_open_failed') || 'SidePanel打开失败'}: ${openError instanceof Error ? openError.message : 'Unknown error'}`,
           fallback: 'popup'
         };
       }
@@ -2695,7 +2695,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
             chrome.tabs.sendMessage(tabId, {
               type: 'SHOW_ERROR_MESSAGE',
               data: {
-                message: '字幕获取超时，请检查网络连接后重试',
+                message: chrome.i18n.getMessage('error_subtitle_fetch_timeout') || '字幕获取超时，请检查网络连接后重试',
                 duration: 3000
               }
             }).catch(() => {});
@@ -2772,7 +2772,7 @@ async function continueTranslationWithSubtitles(data: any): Promise<any> {
         chrome.tabs.sendMessage(data.tabId, {
           type: 'SHOW_ERROR_MESSAGE',
           data: {
-            message: '当前视频无字幕',
+            message: chrome.i18n.getMessage('error_no_subtitles') || '当前视频无字幕',
             duration: ERROR_MESSAGE_DURATION,
             level: 'warning'
           }
@@ -3551,7 +3551,7 @@ async function handleApiConnectionTest(data: any): Promise<any> {
       if (!apiKey || apiKey.trim() === '') {
         return {
           success: false,
-          message: '请输入API密钥'
+          message: chrome.i18n.getMessage('error_please_enter_api_key') || '请输入API密钥'
         };
       }
       return await testPaidApiService(apiType, apiKey, model);
@@ -3560,7 +3560,7 @@ async function handleApiConnectionTest(data: any): Promise<any> {
     console.error(`[service-worker] ✗ testApiConnection: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
-      message: error instanceof Error ? error.message : '未知错误'
+      message: error instanceof Error ? error.message : chrome.i18n.getMessage('error_unknown') || '未知错误'
     };
   }
 }
@@ -3772,7 +3772,7 @@ async function testFreeTranslationService(apiType: string): Promise<{success: bo
     console.error(`[service-worker] ✗ 免费翻译服务测试: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
-      message: error instanceof Error ? error.message : '测试失败'
+      message: error instanceof Error ? error.message : chrome.i18n.getMessage('error_test_failed') || '测试失败'
     };
   }
 }
@@ -3804,7 +3804,7 @@ async function testPaidApiService(apiType: string, apiKey: string, model?: strin
     console.error(`[service-worker] ✗ 付费API服务测试: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
-      message: error instanceof Error ? error.message : '测试失败'
+      message: error instanceof Error ? error.message : chrome.i18n.getMessage('error_test_failed') || '测试失败'
     };
   }
 }
@@ -4215,7 +4215,7 @@ async function testOpenAIService(apiKey: string, model: string): Promise<{succes
     console.error(`[service-worker] ✗ OpenAI测试: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
-      message: error instanceof Error ? error.message : 'OpenAI测试失败'
+      message: error instanceof Error ? error.message : chrome.i18n.getMessage('error_openai_test_failed') || 'OpenAI测试失败'
     };
   }
 }
@@ -4269,7 +4269,7 @@ async function testDeepSeekService(apiKey: string): Promise<{success: boolean, m
     console.error(`[service-worker] ✗ DeepSeek测试: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
-      message: error instanceof Error ? error.message : 'DeepSeek测试失败'
+      message: error instanceof Error ? error.message : chrome.i18n.getMessage('error_deepseek_test_failed') || 'DeepSeek测试失败'
     };
   }
 }
@@ -4343,7 +4343,7 @@ async function testGeminiService(apiKey: string, model: string): Promise<{succes
     console.error(`[service-worker] ✗ Gemini测试失败:`, error);
     return {
       success: false,
-      message: error instanceof Error ? error.message : 'Gemini测试失败'
+      message: error instanceof Error ? error.message : chrome.i18n.getMessage('error_gemini_test_failed') || 'Gemini测试失败'
     };
   }
 }
@@ -4381,10 +4381,10 @@ async function testDeepLService(apiKey: string): Promise<{success: boolean, mess
       let errorMsg = '';
       switch (response.status) {
         case 403:
-          errorMsg = 'API密钥无效，请检查设置';
+          errorMsg = chrome.i18n.getMessage('error_api_key_invalid') || 'API密钥无效，请检查设置';
           break;
         case 456:
-          errorMsg = '配额已用完，请检查账户额度';
+          errorMsg = chrome.i18n.getMessage('error_quota_exceeded') || '配额已用完，请检查账户额度';
           break;
         case 429:
         case 529:
@@ -4421,7 +4421,7 @@ async function testDeepLService(apiKey: string): Promise<{success: boolean, mess
     console.error(`[service-worker] ✗ DeepL测试失败:`, error);
     return {
       success: false,
-      message: error instanceof Error ? error.message : 'DeepL测试失败'
+      message: error instanceof Error ? error.message : chrome.i18n.getMessage('error_deepl_test_failed') || 'DeepL测试失败'
     };
   }
 }
@@ -4463,7 +4463,7 @@ async function testQwenService(apiKey: string): Promise<{success: boolean, messa
       switch (response.status) {
         case 401:
         case 403:
-          errorMsg = 'API密钥无效或已过期，请检查设置';
+          errorMsg = chrome.i18n.getMessage('error_api_key_invalid_or_expired') || 'API密钥无效或已过期，请检查设置';
           break;
         case 429:
           errorMsg = 'API速率限制（超出 RPM 或 TPM），请稍后重试';
@@ -4506,7 +4506,7 @@ async function testQwenService(apiKey: string): Promise<{success: boolean, messa
     console.error(`[service-worker] ✗ Qwen测试失败:`, error);
     return {
       success: false,
-      message: error instanceof Error ? error.message : 'Qwen测试失败'
+      message: error instanceof Error ? error.message : chrome.i18n.getMessage('error_qwen_test_failed') || 'Qwen测试失败'
     };
   }
 }
