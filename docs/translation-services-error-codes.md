@@ -214,56 +214,38 @@ throw new Error(`所有Google免费翻译端点调用失败: ${errors.join(' | '
 
 ## 3. DeepSeek
 
-**API端点**: `https://api.deepseek.com/chat/completions`
+**API端点**：`https://api.deepseek.com/chat/completions`
 
-**认证方式**: `Bearer Token`
+**认证方式**：`Bearer Token`
 
-### 错误代码表
+### ❗ 一刀切策略（所有错误 = fatal）
 
-| HTTP状态码 | 含义 | 当前处理方案 | 错误分类 | 流程是否中断 |
-|-----------|------|------------|---------|------------|
-| **400** | 请求格式错误 | ✅ 抛出 `TranslationError` | `fatal` | ✅ 是 |
-| **401** | API密钥无效 | ✅ 抛出 `TranslationError` | `fatal` | ✅ 是 |
-| **402** | 账户余额不足 | ✅ 抛出 `TranslationError` | `fatal` | ✅ 是 |
-| **403** | 无权限/密钥已过期 | ✅ 抛出 `TranslationError` | `fatal` | ✅ 是 |
-| **422** | 请求参数错误 | ✅ 抛出 `TranslationError` | `fatal` | ✅ 是 |
-| **429** | API速率限制 | ✅ 抛出 `TranslationError` | `retryable` | ✅ 是 |
-| **500/502/503** | 服务器错误 | ✅ 抛出 `TranslationError` | `retryable` | ✅ 是 |
+与 DeepL 相同，DeepSeek 现在在任意阶段遇到错误都会立即抛出 `TranslationError(..., 'fatal', 'deepseek')`，中断两阶段翻译。下表列出所有分支及提示。
+
+| 错误类型 | 触发条件 / 代码位置 | i18n Key | 中文提示 |
+|---------|----------------------|----------|---------|
+| 服务未配置 | `two-phase-translator-v4.ts:1665-1674`，未提供 API Key | `error_deepseek_service_not_configured` | 服务未配置，请在设置中添加API密钥。 |
+| 网络请求失败 / Abort | `deepseek-translator.ts:264-305`，`fetch` 抛错或 response 为空 | `error_deepseek_network_failed` | 翻译失败，请切换翻译服务或重试。 |
+| HTTP 400/422 | `deepseek-translator.ts:359-437` | `error_deepseek_request_format` / `error_deepseek_request_param` | 翻译失败，请切换翻译服务或重试。 |
+| HTTP 401/403 | 同上 | `error_deepseek_api_key_invalid` | API 密钥无效或已过期。 |
+| HTTP 402 | 同上 | `error_deepseek_quota_insufficient` | DeepSeek 账户余额不足，请前往官网充值。 |
+| HTTP 429 | 同上 | `error_deepseek_rate_limit` | 翻译过于频繁，请稍后重试。 |
+| HTTP 500/502/503 | 同上 | `error_deepseek_server_error` | 翻译失败，请切换翻译服务或重试。 |
+| JSON 解析失败 | `deepseek-translator.ts:306-320` | `error_deepseek_parse_failed` | 翻译失败，请切换翻译服务或重试。 |
+| 响应缺少内容 | `deepseek-translator.ts:322-329` | `error_deepseek_response_format` | 翻译失败，请切换翻译服务或重试。 |
+| 翻译数量不匹配 | `deepseek-translator.ts:186-205` | `error_translation_switch_provider` | 翻译失败，请切换翻译服务或重试。 |
 
 ### 代码位置
-- 文件: `src/background/components/deepseek-translator.ts`
-- 错误处理: 第359-437行 (`handleAPIError`方法)
-
-### 错误处理示例
-
-```typescript
-case 402:
-  throw new TranslationError(
-    chrome.i18n.getMessage('error_deepseek_quota_insufficient') ||
-    'DeepSeek 账户余额不足，请前往官网充值',
-    'fatal',
-    'deepseek',
-    status,
-    errorCode
-  );
-
-case 429:
-  throw new TranslationError(
-    chrome.i18n.getMessage('error_deepseek_rate_limit') ||
-    'DeepSeek API 速率限制，请稍后重试',
-    'retryable',
-    'deepseek',
-    status,
-    errorCode
-  );
-```
+- 文件：`src/background/components/deepseek-translator.ts`
+- 核心方法：`translate()` / `callAPI()` / `handleAPIError()`
+- 入口判定：`src/background/components/two-phase-translator-v4.ts` 中 DeepSeek 分支
 
 ### 特殊说明
 
-- **模型**: `deepseek-chat`
-- **批次大小**: 10条/批（优化后，原为20条）
-- **温度参数**: 1.3（官方推荐值）
-- **分隔符**: `\n---\n`（用于批量翻译）
+- **模型**：`deepseek-chat`
+- **批次大小**：10 条/批
+- **温度参数**：1.3
+- **分隔符**：`\n---\n`
 
 ---
 

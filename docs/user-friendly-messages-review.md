@@ -115,27 +115,24 @@
 
 ## 5. DeepSeek
 
-### ✅ 状态：100%完整（9个消息全部实现）⭐⭐⭐
+### ✅ 一刀切策略（全部 fatal）对应的提示
 
-| 错误类型 | HTTP | 中文提示 | 英文提示 | 触发场景 | 友好性评价 |
-|---------|------|---------|---------|---------|-----------|
-| 测试失败 | - | **DeepSeek测试失败** | DeepSeek test failed | 测试连接失败 | ⚠️ 缺少操作建议 |
-| 服务未配置 | - | **DeepSeek服务未配置，请在设置中添加API密钥** | DeepSeek not configured, please add API key in settings | 未配置 | ✅ 清晰+详细指导 |
-| API密钥无效 | 401/403 | **DeepSeek API 密钥无效或已过期** | DeepSeek API key invalid or expired | API密钥无效 | ✅ 明确原因 |
-| 余额不足 | 402 | **DeepSeek 账户余额不足，请前往官网充值** | DeepSeek balance insufficient, please recharge | 余额不足 | ✅ 清晰+操作建议 |
-| 速率限制 | 429 | **DeepSeek API 速率限制，请稍后重试** | DeepSeek rate limit, please try again later | 速率限制 | ✅ 清晰+操作建议 |
-| 服务器错误 | 500/502/503 | **DeepSeek API 服务器错误，请稍后重试** | DeepSeek server error, please try again later | 服务器错误 | ✅ 清晰+操作建议 |
-| 请求格式错误 | 400 | **DeepSeek API 请求格式错误** | DeepSeek request format error | 格式错误 | ⚠️ 用户看不懂 |
-| 请求参数错误 | 422 | **DeepSeek API 请求参数错误** | DeepSeek parameter error | 参数错误 | ⚠️ 用户看不懂 |
-| 响应格式错误 | - | **DeepSeek API 返回格式错误：缺少必要字段** | DeepSeek response format error: missing required fields | 响应格式错误 | ⚠️ 技术术语太多 |
+| Key | 中文提示 | 英文提示 | 触发场景 | 友好性 |
+|-----|---------|---------|---------|--------|
+| `error_deepseek_test_failed` | **DeepSeek测试失败** | DeepSeek test failed | 设置页连接测试 | ⚠️ 缺少操作建议 |
+| `error_deepseek_service_not_configured` | **服务未配置，请在设置中添加API密钥** | Service not configured, please add API key in settings | 未配置 | ✅ 明确行动 |
+| `error_deepseek_api_key_invalid` | **API 密钥无效或已过期** | API key invalid or expired | HTTP 401/403 | ✅ 明确原因 |
+| `error_deepseek_quota_insufficient` | **DeepSeek 账户余额不足，请前往官网充值** | DeepSeek account balance insufficient, please recharge | HTTP 402 | ✅ 行动指引 |
+| `error_deepseek_network_failed` | **翻译失败，请切换翻译服务或重试** | Translation failed. Please switch a provider or try again. | 网络/Abort | ✅ 统一兜底 |
+| `error_deepseek_request_format` | **翻译失败，请切换翻译服务或重试** | Translation failed. Please switch a provider or try again. | HTTP 400 | ✅ 行动指引 |
+| `error_deepseek_request_param` | **DeepSeek API 请求参数错误** | DeepSeek API request parameter error | HTTP 422 | ⚠️ 技术术语，建议口语化 |
+| `error_deepseek_rate_limit` | **翻译过于频繁，请稍后重试** | Translation requests are too frequent. Please try again later. | HTTP 429 | ✅ 明确节奏 |
+| `error_deepseek_server_error` | **翻译失败，请切换翻译服务或重试** | Translation failed. Please switch a provider or try again. | HTTP 500/502/503 | ✅ 行动指引 |
+| `error_deepseek_parse_failed` | **翻译失败，请切换翻译服务或重试** | Translation failed. Please switch a provider or try again. | JSON 解析失败 | ✅ 统一兜底 |
+| `error_deepseek_response_format` | **翻译失败，请切换翻译服务或重试** | Translation failed. Please switch a provider or try again. | 响应缺字段 | ✅ 统一兜底 |
+| `error_translation_switch_provider` | **翻译失败，请切换翻译服务或重试** | Translation failed. Please switch a provider or try again. | 数量不匹配等兜底 | ✅ 行动指引 |
 
-**建议优化**：
-```
-测试失败 → "DeepSeek连接测试失败，请检查API密钥或网络"
-请求格式错误 → "DeepSeek请求失败，请重试"
-请求参数错误 → "DeepSeek请求失败，请重试"
-响应格式错误 → "DeepSeek返回数据异常，请重试"
-```
+> **要点**：DeepSeek 现在与 DeepL 相同，任何异常都会立即终止翻译流程并提示“切换服务或重试”。请确保 UI/日志不再依赖“retryable”行为。
 
 ---
 

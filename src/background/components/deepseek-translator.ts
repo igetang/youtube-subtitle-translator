@@ -5,10 +5,7 @@
  * @date 2025-10-06
  */
 
-import {
-  handleFetchError,
-  TranslationError,
-} from '@shared/types/translation-errors';
+import { TranslationError } from '@shared/types/translation-errors';
 import { LanguageCodeMapper } from '@shared/utils/language-code-mapper';
 import { TokenEstimator } from '@shared/utils/token-estimator';
 
@@ -101,7 +98,7 @@ export class DeepSeekTranslator {
 
     // 检查初始信号状态
     if (signal.aborted) {
-      throw new DOMException('DeepSeek翻译开始前已取消', 'AbortError');
+      throw this.createFatalError('error_translation_switch_provider');
     }
 
     // ✅ 直接使用上层传入的英文名称（已在callTranslationAPI中统一转换）
@@ -118,7 +115,7 @@ export class DeepSeekTranslator {
     const totalBatches = Math.ceil(texts.length / DeepSeekTranslator.BATCH_SIZE);
     for (let i = 0; i < texts.length; i += DeepSeekTranslator.BATCH_SIZE) {
       if (signal.aborted) {
-        throw new DOMException('DeepSeek翻译已取消', 'AbortError');
+        throw this.createFatalError('error_translation_switch_provider');
       }
 
       const batch = texts.slice(i, i + DeepSeekTranslator.BATCH_SIZE);
@@ -195,11 +192,7 @@ export class DeepSeekTranslator {
           console.error(`  实际输出: ${translations.length}条`);
           console.error(`  差异: ${translations.length - batch.length}条`);
         }
-        throw new TranslationError(
-          `DeepSeek 翻译数量不匹配: 期望 ${batch.length} 条，实际返回 ${translations.length} 条`,
-          'retryable',
-          'deepseek'
-        );
+        throw this.createFatalError('error_translation_switch_provider');
       }
 
       results.push(...translations.map(t => t.trim()));
@@ -292,15 +285,14 @@ No explanations. Only translations.`
         signal
       });
     } catch (error) {
-      handleFetchError(error, 'deepseek', 'DeepSeek API 网络请求失败');
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw this.createFatalError('error_translation_switch_provider');
+      }
+      throw this.createFatalError('error_deepseek_network_failed');
     }
 
     if (!response) {
-      throw new TranslationError(
-        'DeepSeek API 请求失败',
-        'retryable',
-        'deepseek'
-      );
+      throw this.createFatalError('error_deepseek_network_failed');
     }
 
     if (!response.ok) {
@@ -311,21 +303,11 @@ No explanations. Only translations.`
     try {
       data = await response.json();
     } catch (error) {
-      throw new TranslationError(
-        'DeepSeek API 返回内容解析失败',
-        'retryable',
-        'deepseek',
-        response.status
-      );
+      throw this.createFatalError('error_deepseek_parse_failed', undefined, response.status);
     }
 
     if (!data.choices?.[0]?.message?.content) {
-      throw new TranslationError(
-        'DeepSeek API 返回格式错误：缺少必要字段',
-        'fatal',
-        'deepseek',
-        response.status
-      );
+      throw this.createFatalError('error_deepseek_response_format', undefined, response.status);
     }
 
     return {
@@ -349,7 +331,7 @@ No explanations. Only translations.`
       const abortHandler = () => {
         clearTimeout(timer);
         signal.removeEventListener('abort', abortHandler);
-        reject(new DOMException('延迟被取消', 'AbortError'));
+        reject(this.createFatalError('error_translation_switch_provider'));
       };
 
       signal.addEventListener('abort', abortHandler);
@@ -375,65 +357,30 @@ No explanations. Only translations.`
 
     switch (status) {
       case 400:
-        throw new TranslationError(
-          `DeepSeek API 请求格式错误: ${errorMessage}`,
-          'fatal',
-          'deepseek',
-          status,
-          errorCode
-        );
+        throw this.createFatalError('error_deepseek_request_format', errorMessage, status);
       case 401:
       case 403:
-        throw new TranslationError(
-          'DeepSeek API 密钥无效或已过期',
-          'fatal',
-          'deepseek',
-          status,
-          errorCode
-        );
+        throw this.createFatalError('error_deepseek_api_key_invalid', undefined, status);
       case 402:
-        throw new TranslationError(
-          'DeepSeek 账户余额不足，请前往官网充值',
-          'fatal',
-          'deepseek',
-          status,
-          errorCode
-        );
+        throw this.createFatalError('error_deepseek_quota_insufficient', undefined, status);
       case 422:
-        throw new TranslationError(
-          `DeepSeek API 请求参数错误: ${errorMessage}`,
-          'fatal',
-          'deepseek',
-          status,
-          errorCode
-        );
+        throw this.createFatalError('error_deepseek_request_param', errorMessage, status);
       case 429:
-        throw new TranslationError(
-          'DeepSeek API 速率限制，请稍后重试',
-          'retryable',
-          'deepseek',
-          status,
-          errorCode
-        );
+        throw this.createFatalError('error_deepseek_rate_limit', undefined, status);
       case 500:
       case 502:
       case 503:
-        throw new TranslationError(
-          'DeepSeek API 服务器错误，请稍后重试',
-          'retryable',
-          'deepseek',
-          status,
-          errorCode
-        );
+        throw this.createFatalError('error_deepseek_server_error', undefined, status);
       default:
-        throw new TranslationError(
-          `DeepSeek API 错误 (${status}): ${errorMessage}`,
-          'fatal',
-          'deepseek',
-          status,
-          errorCode
-        );
+        throw this.createFatalError('error_translation_switch_provider', errorMessage, status);
     }
   }
 
+  private createFatalError(messageKey?: string, fallback?: string, status?: number): TranslationError {
+    const defaultMessage = fallback || '翻译失败，请切换翻译服务或重试';
+    const resolvedMessage = messageKey
+      ? chrome.i18n.getMessage(messageKey) || defaultMessage
+      : defaultMessage;
+    return new TranslationError(resolvedMessage, 'fatal', 'deepseek', status);
+  }
 }

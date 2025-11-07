@@ -117,19 +117,22 @@
 
 ### 3.4 DeepSeek
 
-**当前状态**：✅ **已完整实现**
+**当前状态**：✅ **一刀切（全部 fatal）**
 
-| i18n键 | 中文消息 | 英文消息 | 错误代码 | 使用场景 |
-|--------|---------|---------|---------|---------|
-| `error_deepseek_test_failed` | DeepSeek测试失败 | DeepSeek test failed | - | 测试连接失败 |
-| `error_deepseek_service_not_configured` | DeepSeek服务未配置，请在设置中添加API密钥 | DeepSeek not configured | - | 未配置 |
-| `error_deepseek_api_key_invalid` | DeepSeek API 密钥无效或已过期 | DeepSeek API key invalid | 401/403 | API密钥无效 |
-| `error_deepseek_quota_insufficient` | DeepSeek 账户余额不足，请前往官网充值 | DeepSeek balance insufficient | 402 | 余额不足 |
-| `error_deepseek_rate_limit` | DeepSeek API 速率限制，请稍后重试 | DeepSeek rate limit | 429 | 速率限制 |
-| `error_deepseek_server_error` | DeepSeek API 服务器错误，请稍后重试 | DeepSeek server error | 500/502/503 | 服务器错误 |
-| `error_deepseek_request_format` | DeepSeek API 请求格式错误 | DeepSeek request format error | 400 | 格式错误 |
-| `error_deepseek_request_param` | DeepSeek API 请求参数错误 | DeepSeek parameter error | 422 | 参数错误 |
-| `error_deepseek_response_format` | DeepSeek API 返回格式错误：缺少必要字段 | DeepSeek response format error | - | 响应格式错误 |
+| i18n键 | 中文消息 | 英文消息 | 使用场景 |
+|--------|---------|---------|---------|
+| `error_deepseek_test_failed` | DeepSeek测试失败 | DeepSeek test failed | 测试连接失败 |
+| `error_deepseek_service_not_configured` | 服务未配置，请在设置中添加API密钥 | Service not configured | 未配置 |
+| `error_deepseek_api_key_invalid` | API 密钥无效或已过期 | API key invalid or expired | HTTP 401/403 |
+| `error_deepseek_quota_insufficient` | DeepSeek 账户余额不足，请前往官网充值 | DeepSeek account balance insufficient, please recharge | HTTP 402 |
+| `error_deepseek_network_failed` | 翻译失败，请切换翻译服务或重试 | Translation failed. Please switch a provider or try again. | 网络失败/Abort |
+| `error_deepseek_request_format` | 翻译失败，请切换翻译服务或重试 | Translation failed. Please switch a provider or try again. | HTTP 400 |
+| `error_deepseek_request_param` | DeepSeek API 请求参数错误 | DeepSeek API request parameter error | HTTP 422 |
+| `error_deepseek_rate_limit` | 翻译过于频繁，请稍后重试 | Translation requests are too frequent. Please try again later. | HTTP 429 |
+| `error_deepseek_server_error` | 翻译失败，请切换翻译服务或重试 | Translation failed. Please switch a provider or try again. | HTTP 500/502/503 |
+| `error_deepseek_parse_failed` | 翻译失败，请切换翻译服务或重试 | Translation failed. Please switch a provider or try again. | JSON 解析失败 |
+| `error_deepseek_response_format` | 翻译失败，请切换翻译服务或重试 | Translation failed. Please switch a provider or try again. | 响应缺字段 |
+| `error_translation_switch_provider` | 翻译失败，请切换翻译服务或重试 | Translation failed. Please switch a provider or try again. | 数量不匹配/兜底 |
 
 ---
 
@@ -421,7 +424,7 @@ throw new TranslationError(
 | **Google** | 0 | 4 | 0% |
 | **Microsoft** | 0 | 7 | 0% |
 | **DeepL** | 4 | 4 | 50% |
-| **DeepSeek** | 9 | 0 | 100% ✅ |
+| **DeepSeek** | 12 | 0 | 100% ✅ |
 | **Gemini** | 4 | 7 | 36% |
 | **OpenAI** | 6 | 4 | 60% |
 | **Qwen** | 4 | 2 | 67% |

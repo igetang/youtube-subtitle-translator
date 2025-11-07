@@ -62,6 +62,10 @@
 | 超时风险 | 20条/批 | 10条/批 | ↓ 50% |
 | 代码行数 | 基准 | -85行 | ↓ 21% |
 
+**2025-11-07 补充：错误策略同步DeepL**  
+- DeepSeek 现已与 DeepL 一致采用“一刀切”策略，所有错误（网络/JSON/HTTP/Abort）都会立即抛 `TranslationError('fatal','deepseek')`，提示“翻译失败，请切换翻译服务或重试”。  
+- 新增 `error_deepseek_network_failed`、`error_deepseek_parse_failed` 等 i18n 字符串，并将 429/5xx 从 retryable 改为 fatal，避免用户在两阶段之间看到“部分成功”。
+
 **关键实现**：
 ```typescript
 // 顶层统一准备（handle-toggle-translate-v4.ts）
