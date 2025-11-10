@@ -1,3 +1,5 @@
+import '@shared/utils/console-sanitizer';
+
 /**
  * @file service-worker.ts
  * @description YouTube字幕翻译助手 - 后台服务工作脚本 (Service Worker)

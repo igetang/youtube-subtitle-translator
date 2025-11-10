@@ -1,3 +1,5 @@
+import '@shared/utils/console-sanitizer';
+
 /**
  * @file content-script.ts
  * @description YouTube字幕翻译助手 - 整合后的内容脚本

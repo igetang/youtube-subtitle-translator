@@ -1,3 +1,5 @@
+import '@shared/utils/console-sanitizer';
+
 /**
  * Main World Script (injected into the page)
  * Responsible for accessing page-level APIs like getPlayerResponse()

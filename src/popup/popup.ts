@@ -1,3 +1,5 @@
+import '@shared/utils/console-sanitizer';
+
 /**
  * [popup] YouTube字幕翻译助手 - Popup界面
  * YouTube字幕翻译助手 - Popup设置界面
