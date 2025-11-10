@@ -12,7 +12,8 @@
     "build:content": "vite build --mode content-script",
     "build:mainworld": "vite build --mode main-world",
     "build:worker": "vite build --mode service-worker",
-    "fix:worker": "node scripts/fix-service-worker.js"
+    "fix:worker": "node scripts/fix-service-worker.js",
+    "package": "bash scripts/package.sh"
   },
   "keywords": [
     "chrome-extension",
