@@ -198,7 +198,7 @@ export class GeminiTranslator {
         const inputBytes = encoder.encode(batch.join('\n')).length;
         // ⭐ JSON Schema格式开销大：基础估算 + JSON结构开销
         // 公式：(inputBytes / 2.5) * 倍数 + 每条固定开销
-        const baseTokens = Math.ceil((inputBytes / 2.5) * 2.0);  // 基础翻译token
+        const baseTokens = Math.ceil((inputBytes / 2.5) * 3.0);  // 基础翻译token（提高安全系数）
         const jsonOverhead = batch.length * 30;  // 每条JSON结构约30 tokens
         const estimatedOutputTokens = baseTokens + jsonOverhead;
         const maxOutputTokens = Math.min(estimatedOutputTokens, this.modelConfig.maxOutput);

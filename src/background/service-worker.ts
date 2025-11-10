@@ -3539,7 +3539,7 @@ async function translateWithOpenAI(
 async function handleApiConnectionTest(data: any): Promise<any> {
   console.log('[service-worker] <- testApiConnection:', data);
 
-  const { apiType, apiKey, model } = data;
+  const { apiType, apiKey, model, tier } = data;
 
   try {
     // 免费API测试逻辑
@@ -3554,7 +3554,7 @@ async function handleApiConnectionTest(data: any): Promise<any> {
           message: chrome.i18n.getMessage('error_please_enter_api_key') || '请输入API密钥'
         };
       }
-      return await testPaidApiService(apiType, apiKey, model);
+      return await testPaidApiService(apiType, apiKey, model, tier);
     }
   } catch (error) {
     console.error(`[service-worker] ✗ testApiConnection: ${error instanceof Error ? error.message : String(error)}`);
@@ -3780,8 +3780,8 @@ async function testFreeTranslationService(apiType: string): Promise<{success: bo
 /**
  * 测试付费API服务
  */
-async function testPaidApiService(apiType: string, apiKey: string, model?: string): Promise<{success: boolean, message: string}> {
-  console.log(`[service-worker] 测试付费API服务: ${apiType}, 模型: ${model || '默认'}`);
+async function testPaidApiService(apiType: string, apiKey: string, model?: string, tier?: 'free' | 'pro'): Promise<{success: boolean, message: string}> {
+  console.log(`[service-worker] 测试付费API服务: ${apiType}, 模型: ${model || '默认'}, tier: ${tier || '默认'}`);
 
   try {
     if (apiType === 'openai') {
@@ -3789,7 +3789,7 @@ async function testPaidApiService(apiType: string, apiKey: string, model?: strin
     } else if (apiType === 'deepseek') {
       return await testDeepSeekService(apiKey);
     } else if (apiType === 'deepl') {
-      return await testDeepLService(apiKey);
+      return await testDeepLService(apiKey, tier);
     } else if (apiType === 'gemini') {
       return await testGeminiService(apiKey, model || 'gemini-2.5-flash-lite');
     } else if (apiType === 'qwen') {
@@ -4351,9 +4351,9 @@ async function testGeminiService(apiKey: string, model: string): Promise<{succes
 /**
  * 测试DeepL API服务
  */
-async function testDeepLService(apiKey: string): Promise<{success: boolean, message: string}> {
-  // 判断API Key类型（免费层以:fx结尾）
-  const isFreeKey = apiKey.endsWith(':fx');
+async function testDeepLService(apiKey: string, tier?: 'free' | 'pro'): Promise<{success: boolean, message: string}> {
+  // 优先使用用户指定的tier，否则根据API Key类型判断（免费层以:fx结尾）
+  const isFreeKey = tier ? (tier === 'free') : apiKey.endsWith(':fx');
   const endpoint = isFreeKey
     ? 'https://api-free.deepl.com/v2/translate'
     : 'https://api.deepl.com/v2/translate';

@@ -141,12 +141,12 @@ export const TRANSLATION_SERVICE_TEMPLATES: Record<TranslationServiceType, Omit<
     rpm: 60,                                      // 默认RPM（实际会根据tier调整）
     tpm: 120000,                                  // 默认TPM（实际会根据tier调整）
     tier: 'free',                                 // 'free' | 'paid'（用户选择）
-    batchDelay: 6000,                             // 兼容性保留（并发模式下忽略）
+    batchDelay: 3000,                             // 兼容性保留（并发模式下忽略，优化后）
 
     // 🔥 双模式并发配置（默认免费层）
     enableConcurrentTranslation: true,  // 启用并发
     concurrencyLimit: 999,              // 免费层流水线：一轮发完所有批次（paid层运行时调整为5）
-    requestDelay: 6000                  // 免费层流水线：每批延迟6秒（paid层运行时调整为0）
+    requestDelay: 3000                  // 免费层流水线：每批延迟3秒（优化后，paid层运行时调整为0）
   },
   [TranslationServiceType.DEEPSEEK]: {
     type: TranslationServiceType.DEEPSEEK,

@@ -31,7 +31,7 @@ export const DEFAULT_TIMEOUT_MS = 8000;      // 默认: 8秒
 export const GOOGLE_TRANSLATE_BATCH_TIMEOUT_MS = GOOGLE_TIMEOUT_MS;
 
 // ========== 并发配置（按服务导出，便于统一维护）==========
-export const DEEPSEEK_CONCURRENCY_LIMIT = 5;
+export const DEEPSEEK_CONCURRENCY_LIMIT = 10;  // 优化：5→10，提升并发性能
 export const OPENAI_CONCURRENCY_LIMIT = 10;
 export const GEMINI_CONCURRENCY_LIMIT = 5;
 export const DEEPL_CONCURRENCY_LIMIT = 10;
@@ -233,7 +233,7 @@ export class TwoPhaseTranslatorV4 {
       if (service.tier === 'paid') {
         return 0;  // 付费层：0ms延迟（真并发）
       } else {
-        return 3000;  // 免费层：3000ms延迟（测试：从6秒改为3秒）⚠️ 可能触发429
+        return 3000;  // 免费层：3000ms延迟（优化后：10 RPM → 20 RPM）
       }
     }
 
@@ -766,36 +766,111 @@ export class TwoPhaseTranslatorV4 {
       let sendStartTime = Date.now();
       let completedCount = 0;  // 已完成批次数
 
+      // ⭐ 创建pipeline级别的AbortController，用于fatal错误时立即中断所有批次
+      const pipelineController = new AbortController();
+      // 监听主信号，如果主信号abort，pipeline也要abort
+      signal.addEventListener('abort', () => pipelineController.abort(signal.reason), { once: true });
+
+      const getPipelineAwareDelaySignal = (): AbortSignal => {
+        try {
+          if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.any === 'function') {
+            return AbortSignal.any([signal, pipelineController.signal]);
+          }
+        } catch {
+          // 降级到手动组合
+        }
+
+        const delayController = new AbortController();
+        const abortDelay = (abortReason?: any) => {
+          if (!delayController.signal.aborted) {
+            delayController.abort(abortReason);
+          }
+        };
+
+        if (signal.aborted) {
+          abortDelay(signal.reason);
+        } else {
+          signal.addEventListener('abort', () => abortDelay(signal.reason), { once: true });
+        }
+
+        if (pipelineController.signal.aborted) {
+          abortDelay(pipelineController.signal.reason);
+        } else {
+          pipelineController.signal.addEventListener(
+            'abort',
+            () => abortDelay(pipelineController.signal.reason),
+            { once: true }
+          );
+        }
+
+        return delayController.signal;
+      };
+
+      const logPipelineAbort = (context: string): void => {
+        const abortReason = pipelineController.signal.reason as any;
+        const reasonMessage = abortReason?.message || abortReason || 'unknown';
+        console.debug(
+          `[debug][TwoPhaseTranslatorV4] pipeline已中断（${context}），停止调度剩余批次: ${reasonMessage}`
+        );
+      };
+
       for (let i = 0; i < batches.length; i++) {
+        if (pipelineController.signal.aborted) {
+          logPipelineAbort('发送前');
+          break;
+        }
+
         // 检查主信号
         if (signal.aborted) {
           throw new DOMException(`批量翻译在批次 ${i + 1} 发送前被取消`, 'AbortError');
         }
 
+        // 延迟发送（除第一个批次外）
+        if (i > 0 && requestDelay > 0) {
+          const delaySignal = getPipelineAwareDelaySignal();
+          try {
+            await this.delayWithSignal(requestDelay, delaySignal);
+          } catch (delayError: any) {
+            if (pipelineController.signal.aborted) {
+              logPipelineAbort('延迟阶段');
+              break;
+            }
+
+            if (signal.aborted) {
+              throw new DOMException(`批量翻译在批次 ${i + 1} 发送前被取消`, 'AbortError');
+            }
+
+            throw delayError;
+          }
+        }
+
+        if (pipelineController.signal.aborted) {
+          logPipelineAbort('延迟完成后');
+          break;
+        }
+
         const batch = batches[i];
         const texts = batch.map(sub => sub.text.replace(/\n/g, ' ').trim());
 
-        // 延迟发送（除第一个批次外）
-        if (i > 0 && requestDelay > 0) {
-          await this.delayWithSignal(requestDelay, signal);
-        }
-
-        // 创建批次超时信号
+        // ⭐ 创建批次超时信号（组合主信号、pipeline信号、超时信号）
         let batchSignal: AbortSignal;
         try {
           const timeoutSignal = AbortSignal.timeout(perBatchTimeout);
-          batchSignal = AbortSignal.any([signal, timeoutSignal]);
+          batchSignal = AbortSignal.any([signal, pipelineController.signal, timeoutSignal]);
         } catch (e) {
+          // 降级方案：手动组合信号
           const batchController = new AbortController();
           if (signal.aborted) {
             batchController.abort();
           } else {
-            signal.addEventListener('abort', () => batchController.abort());
+            signal.addEventListener('abort', () => batchController.abort(), { once: true });
+            pipelineController.signal.addEventListener('abort', () =>
+              batchController.abort(pipelineController.signal.reason), { once: true });
           }
           const timeoutId = setTimeout(() => {
             batchController.abort(new DOMException('批次翻译超时', 'TimeoutError'));
           }, perBatchTimeout);
-          batchController.signal.addEventListener('abort', () => clearTimeout(timeoutId));
+          batchController.signal.addEventListener('abort', () => clearTimeout(timeoutId), { once: true });
           batchSignal = batchController.signal;
         }
 
@@ -851,6 +926,12 @@ export class TwoPhaseTranslatorV4 {
               fractionalSecondDigits: 3
             });
 
+            // ⭐ 检测fatal错误，立即中断其他批次
+            if (error instanceof TranslationError && error.category === 'fatal') {
+              console.error(`[TwoPhaseTranslatorV4] ✗ 检测到fatal错误，立即中断所有其他批次: ${error.message}`);
+              pipelineController.abort(error); // 中断所有其他批次
+            }
+
             // 失败时不打印进度日志（错误已在其他地方打印）
             completedCount++;
 
@@ -869,9 +950,37 @@ export class TwoPhaseTranslatorV4 {
       }
 
       // 🔑 Promise.all统一等待所有结果
+      console.log(`[TwoPhaseTranslatorV4] → 等待Promise.all完成，共${promises.length}个Promise...`);
       const batchResults = await Promise.all(promises);
+      console.log(`[TwoPhaseTranslatorV4] ✓ Promise.all完成，共${batchResults.length}个结果`);
 
-      // 打印实际返回顺序（按时间排序）
+      const totalDuration = Date.now() - sendStartTime;
+
+      // ⭐ 优化：优先检查fatal错误（在打印"翻译完成"之前）
+      let fatalError: TranslationError | null = null;
+      let fatalCount = 0;
+      let abortCount = 0;
+      for (const result of batchResults) {
+        if (!result.success) {
+          if (result.error instanceof TranslationError && result.error.category === 'fatal') {
+            fatalCount++;
+            if (!fatalError) {
+              fatalError = result.error;
+            }
+          } else if (result.error.name === 'AbortError') {
+            abortCount++;
+          }
+        }
+      }
+      console.log(`[TwoPhaseTranslatorV4] 错误统计: fatal=${fatalCount}, abort=${abortCount}, success=${batchResults.filter(r => r.success).length}`);
+
+      // 如果有fatal错误，立即抛出（不打印"翻译完成"日志）
+      if (fatalError) {
+        console.error(`[TwoPhaseTranslatorV4] ✗ 流水线并发翻译失败（fatal错误）: ${fatalError.message}`);
+        throw fatalError;
+      }
+
+      // 没有fatal错误，正常打印返回顺序和完成日志
       const sortedByTime = [...batchResults].sort((a, b) =>
         a.returnTime.localeCompare(b.returnTime)
       );
@@ -882,12 +991,17 @@ export class TwoPhaseTranslatorV4 {
         console.debug(`  ${idx + 1}. [${result.returnTime}] 批次${result.batchIndex + 1} ${status}`);
       });
 
-      const totalDuration = Date.now() - sendStartTime;
       console.log(`[TwoPhaseTranslatorV4] ✓ 批量翻译完成 | ${subtitles.length}条 | 总耗时: ${totalDuration}ms`);
 
       // 处理结果（按逻辑顺序）
       for (const result of batchResults) {
         if (!result.success) {
+          // 忽略因fatal错误导致的AbortError（这些是我们主动取消的）
+          if (result.error.name === 'AbortError') {
+            console.debug(`[debug][TwoPhaseTranslatorV4] 批次 ${result.batchIndex + 1} 被中断（因其他批次fatal错误）`);
+            continue; // 跳过，继续检查其他结果
+          }
+
           const errorMsg = result.error.name === 'TimeoutError' || result.error.message === '批次翻译超时'
             ? '翻译超时'
             : result.error.message || '翻译失败';
@@ -1696,12 +1810,15 @@ export class TwoPhaseTranslatorV4 {
             );
           }
 
+          // Gemini延迟：根据tier决定（免费3000ms，付费0ms）
+          const geminiDelay = service.tier === 'paid' ? 0 : 3000;
+
           const translator = new GeminiTranslator(
             service.apiKey,
             service.model || 'gemini-2.5-flash-lite',
             service.temperature ?? 0,
             service.maxTokens || 65536,
-            service.batchDelay || 6000  // Phase 1: 从配置读取延迟
+            geminiDelay  // ⭐ 使用tier逻辑，忽略旧的batchDelay字段
           );
 
           const stage = options?.stage ?? 'batch';

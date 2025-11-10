@@ -2500,7 +2500,7 @@ async function handleTranslationServiceChange(): Promise<void> {
 function calculateGeminiBatchDelay(model: string, tier: 'free' | 'paid'): number {
   const delayMap: Record<string, Record<'free' | 'paid', number>> = {
     'gemini-2.5-flash': {
-      free: 6000,   // 10 RPM → 6秒/次
+      free: 3000,   // 10 RPM → 3秒/次（优化：从6秒改为3秒）
       paid: 60      // 假设1000 RPM → 60ms/次
     },
     'gemini-2.5-flash-lite': {
@@ -2509,7 +2509,7 @@ function calculateGeminiBatchDelay(model: string, tier: 'free' | 'paid'): number
     }
   };
 
-  return delayMap[model]?.[tier] ?? 6000;  // 默认6秒
+  return delayMap[model]?.[tier] ?? 3000;  // 默认3秒（优化：从6秒改为3秒）
 }
 
 /**
@@ -2665,11 +2665,17 @@ async function handleTestApiConnection(): Promise<void> {
     model = deeplModelSelect.value;
   }
 
+  // 获取tier参数（DeepL专用）
+  let tier: 'free' | 'pro' | undefined = undefined;
+  if (apiType === 'deepl' && deeplTierPaid && deeplTierFree) {
+    tier = deeplTierPaid.checked ? 'pro' : 'free';
+  }
+
   // 显示测试中状态
   testResult.textContent = chrome.i18n.getMessage('test_result_testing') || '正在测试API连接...';
   testResult.className = 'test-result in-progress';
 
-  console.log('[popup] 测试API连接:', { apiType, model, hasApiKey: !!apiKey });
+  console.log('[popup] 测试API连接:', { apiType, model, tier, hasApiKey: !!apiKey });
 
   try {
     // 发送测试消息（使用新的消息格式）
@@ -2679,6 +2685,7 @@ async function handleTestApiConnection(): Promise<void> {
         apiType: apiType,
         apiKey: apiKey,
         model: model,  // 传递model参数
+        tier: tier,    // 传递tier参数（DeepL）
         forceTest: !apiType.includes('-free') // 免费API强制测试
       }
     });

@@ -26,12 +26,12 @@ for (let i = 0; i < texts.length; i += this.modelConfig.batchSize) {
 
   // 批次间延迟（仅batch阶段）
   if (stage === 'batch' && i + this.modelConfig.batchSize < texts.length) {
-    await delay(this.batchDelay);  // 免费层6000ms
+    await delay(this.batchDelay);  // 免费层3000ms（优化后）
   }
 }
 
 // 性能问题：
-// 免费层：10批 × (6秒延迟 + 1秒响应) = 70秒
+// 免费层：10批 × (3秒延迟 + 1秒响应) = 40秒（优化后）
 // 付费层：10批 × (0秒延迟 + 1秒响应) = 10秒
 ```
 
@@ -51,7 +51,7 @@ for (let i = 0; i < texts.length; i += this.modelConfig.batchSize) {
 
 | Tier | RPM | TPM | RPD | 说明 |
 |------|-----|-----|-----|------|
-| **免费层** | **10** | 250,000 | 250 | 每6秒只能发1个请求 |
+| **免费层** | **10** | 250,000 | 250 | 每6秒只能发1个请求（优化：实际3秒/次） |
 | **Tier 1（付费）** | **1,000** | 1,000,000 | 10,000 | 每秒可发16.7个请求 |
 | Tier 2 | 2,000 | 3,000,000 | 100,000 | 消费$250+ |
 | Tier 3（企业） | 10,000 | 8,000,000 | 无限制 | 消费$1000+ |
@@ -82,18 +82,18 @@ for (let i = 0; i < texts.length; i += this.modelConfig.batchSize) {
 **免费层（流水线并发 vs. 串行）**：
 ```
 串行执行：
-  10批 × (6秒延迟 + 1秒响应) = 70秒
+  10批 × (3秒延迟 + 1秒响应) = 40秒（优化后）
 
 流水线并发：
   t=0s:  [Batch 1] 发送
-  t=6s:  [Batch 2] 发送
-  t=12s: [Batch 3] 发送
+  t=3s:  [Batch 2] 发送
+  t=6s:  [Batch 3] 发送
   ...
-  t=54s: [Batch 10] 发送
-  t=60s: [Batch 1] 返回（假设1秒响应）
+  t=27s: [Batch 10] 发送
+  t=28s: [Batch 1] 返回（假设1秒响应）
 
-  总耗时：9批 × 6秒延迟 + 1秒响应 = 55秒
-  性能提升：(70 - 55) / 70 = 21%
+  总耗时：9批 × 3秒延迟 + 1秒响应 = 28秒
+  性能提升：(40 - 28) / 40 = 30%
 ```
 
 **付费层（真并发 vs. 串行）**：
@@ -122,18 +122,18 @@ for (let i = 0; i < texts.length; i += this.modelConfig.batchSize) {
 {
   enableConcurrentTranslation: true,
   concurrencyLimit: 999,       // 一轮发送所有批次
-  requestDelay: 6000           // 每批延迟6秒
+  requestDelay: 3000           // 每批延迟3秒（优化后）
 }
 
 // 执行逻辑：
 for (let i = 0; i < batches.length; i++) {
-  if (i > 0) await delay(6000);  // 延迟6秒
+  if (i > 0) await delay(3000);  // 延迟3秒（优化后）
   promises.push(translateBatch(batches[i]));  // 不等待
 }
 const results = await Promise.all(promises);  // 统一收集
 
 // 特点：
-// ✅ 符合10 RPM限制（每6秒发1个请求）
+// ✅ 符合10 RPM限制（优化：每3秒发1个请求）
 // ✅ 比串行快21%（节省并发等待时间）
 // ✅ 复用流水线并发代码
 ```
@@ -166,7 +166,7 @@ for (let i = 0; i < batches.length; i += concurrency) {
 |-----|---------------|----------------|
 | 并发模式 | 流水线并发 | 真并发 |
 | `concurrencyLimit` | 999 | 5 |
-| `requestDelay` | 6000ms | 0ms |
+| `requestDelay` | 3000ms（优化后） | 0ms |
 | 请求发送方式 | 延迟发送 | 同时发送 |
 | 性能提升 | 21% | 5倍 |
 | RPM利用率 | 100%（10 RPM） | 30%（300/1000 RPM） |
@@ -187,7 +187,7 @@ for (let i = 0; i < batches.length; i += concurrency) {
 
 3. **统一配置逻辑**
    ```typescript
-   tier: 'free'  → 流水线并发（6秒延迟）
+   tier: 'free'  → 流水线并发（3秒延迟，优化后）
    tier: 'paid'  → 真并发（5并发）
    ```
 
@@ -221,16 +221,16 @@ async function translateBatchPipeline(batches, requestDelay) {
   return results;  // 顺序与batches一致
 }
 
-// 时间轴示例（10批，6秒延迟）：
+// 时间轴示例（10批，3秒延迟，优化后）：
 // t=0s:     [Batch 1] 发送
-// t=6s:              [Batch 2] 发送
-// t=12s:                      [Batch 3] 发送
+// t=3s:              [Batch 2] 发送
+// t=6s:                      [Batch 3] 发送
 // ...
-// t=54s:                                     [Batch 10] 发送
-// t=60s:    [Batch 1] 返回 ← 第1个Promise resolve
-// t=66s:             [Batch 2] 返回 ← 第2个Promise resolve
+// t=27s:                                     [Batch 10] 发送
+// t=28s:    [Batch 1] 返回 ← 第1个Promise resolve
+// t=31s:             [Batch 2] 返回 ← 第2个Promise resolve
 // ...
-// t=120s:                                    [Batch 10] 返回 ← 最后一个Promise resolve
+// t=55s:                                    [Batch 10] 返回 ← 最后一个Promise resolve
 ```
 
 **与真并发对比**：
@@ -341,10 +341,10 @@ Promise.all = function(promises) {
   // 🔥 并发配置（根据tier运行时设置）
   enableConcurrentTranslation: true,   // 默认启用
   concurrencyLimit: 999,               // 默认免费层（运行时调整）
-  requestDelay: 6000,                  // 默认免费层（运行时调整）
+  requestDelay: 3000,                  // 默认免费层（优化后，运行时调整）
 
   // ⚠️ 兼容性保留（并发模式下忽略）
-  batchDelay: 6000,
+  batchDelay: 3000,                    // 优化后
   rpm: 60,
   tpm: 120000
 }
@@ -360,7 +360,7 @@ const GEMINI_TIER_CONFIGS = {
     rpd: 250,
     enableConcurrentTranslation: true,
     concurrencyLimit: 999,              // 流水线并发：一轮发送所有批次
-    requestDelay: 6000                  // 每批延迟6秒
+    requestDelay: 3000                  // 每批延迟3秒（优化后）
   },
   paid: {
     rpm: 1000,                          // Tier 1的限制
@@ -386,7 +386,7 @@ function getGeminiConcurrencyConfig(tier: 'free' | 'paid') {
 |-------|-------|--------|------|
 | `enableConcurrentTranslation` | `true` | `true` | 统一使用并发接口 |
 | `concurrencyLimit` | `999` | `5` | 免费流水线发全部，付费限5并发 |
-| `requestDelay` | `6000` | `0` | 免费每6秒发1个，付费无延迟 |
+| `requestDelay` | `3000`（优化后） | `0` | 免费每3秒发1个，付费无延迟 |
 | `tier` | 用户选择 | 用户选择 | 无法从API检测，必须手动 |
 
 ### 2. 核心逻辑（复用现有）
@@ -623,13 +623,13 @@ export class GeminiTranslator {
 
 ```typescript
 // 1. 并发模式选择
-console.log('[TwoPhaseTranslatorV4] 使用流水线并发模式（并发数: 999, 延迟: 6000ms）');
+console.log('[TwoPhaseTranslatorV4] 使用流水线并发模式（并发数: 999, 延迟: 3000ms）');  // 优化后
 
 // 2. 批次信息
-console.log('[TwoPhaseTranslatorV4] 流水线并发翻译: 10批 | 延迟: 6000ms');
+console.log('[TwoPhaseTranslatorV4] 流水线并发翻译: 10批 | 延迟: 3000ms');  // 优化后
 
 // 3. 每批发送（debug级别）
-console.debug('[debug][TwoPhaseTranslatorV4] 批次延迟: 6000ms');
+console.debug('[debug][TwoPhaseTranslatorV4] 批次延迟: 3000ms');  // 优化后
 console.debug('[debug][TwoPhaseTranslatorV4] 批次1: 发送80条');
 console.log('[GeminiTranslator] → 开始翻译: 80条字幕 (batch阶段)');
 
@@ -665,35 +665,35 @@ console.log('[TwoPhaseTranslatorV4] ✓ 真并发完成: 800条');
 
 ### 1. 理论性能计算
 
-**场景1：800条字幕（80条/批 = 10批），每批1秒**
+**场景1：800条字幕（80条/批 = 10批），每批1秒**（优化后：3秒延迟）
 
 | 模式 | Tier | 计算公式 | 耗时 | 性能提升 |
 |-----|------|---------|------|---------|
-| **串行** | 免费 | 10批 × (6秒延迟 + 1秒响应) | **70秒** | - |
-| **流水线并发** | 免费 | 9批 × 6秒延迟 + 1秒响应 | **55秒** | **21%** ✅ |
+| **串行** | 免费 | 10批 × (3秒延迟 + 1秒响应) | **40秒** | - |
+| **流水线并发** | 免费 | 9批 × 3秒延迟 + 1秒响应 | **28秒** | **30%** ✅ |
 | **串行** | 付费 | 10批 × 1秒 | **10秒** | - |
 | **真并发（5并发）** | 付费 | ceil(10 / 5) × 1秒 | **2秒** | **5倍** ⚡ |
 
-**场景2：400条字幕（80条/批 = 5批），每批1秒**
+**场景2：400条字幕（80条/批 = 5批），每批1秒**（优化后：3秒延迟）
 
 | 模式 | Tier | 计算公式 | 耗时 | 性能提升 |
 |-----|------|---------|------|---------|
-| 串行 | 免费 | 5批 × (6秒延迟 + 1秒响应) | 35秒 | - |
-| 流水线并发 | 免费 | 4批 × 6秒延迟 + 1秒响应 | **25秒** | **29%** ✅ |
+| 串行 | 免费 | 5批 × (3秒延迟 + 1秒响应) | 20秒 | - |
+| 流水线并发 | 免费 | 4批 × 3秒延迟 + 1秒响应 | **13秒** | **35%** ✅ |
 | 串行 | 付费 | 5批 × 1秒 | 5秒 | - |
 | 真并发（5并发） | 付费 | ceil(5 / 5) × 1秒 | **1秒** | **5倍** ⚡ |
 
-**场景3：160条字幕（80条/批 = 2批），每批1秒**
+**场景3：160条字幕（80条/批 = 2批），每批1秒**（优化后：3秒延迟）
 
 | 模式 | Tier | 计算公式 | 耗时 | 性能提升 |
 |-----|------|---------|------|---------|
-| 串行 | 免费 | 2批 × (6秒延迟 + 1秒响应) | 14秒 | - |
-| 流水线并发 | 免费 | 1批 × 6秒延迟 + 1秒响应 | **7秒** | **50%** ✅ |
+| 串行 | 免费 | 2批 × (3秒延迟 + 1秒响应) | 8秒 | - |
+| 流水线并发 | 免费 | 1批 × 3秒延迟 + 1秒响应 | **4秒** | **50%** ✅ |
 | 串行 | 付费 | 2批 × 1秒 | 2秒 | - |
 | 真并发（5并发） | 付费 | ceil(2 / 5) × 1秒 | **1秒** | **2倍** ⚡ |
 
 **关键发现**：
-- **免费层流水线并发**：批次越多，性能提升越明显（21%-50%）
+- **免费层流水线并发**：批次越多，性能提升越明显（30%-50%，优化后）
 - **付费层真并发**：批次数 ≥ 并发数时，性能提升接近5倍
 
 ### 2. RPM利用率分析
@@ -775,12 +775,12 @@ free: {
 | DeepSeek | 10 | 10 | 无区别 | 🟢 极低 |
 | Microsoft | 5 | 5 | 无区别 | 🟢 低 |
 | DeepL | 10 | 10 | 无区别（QPS相同） | 🟡 中低 |
-| **Gemini** | **流水线（999/6秒）** | **真并发（5/0ms）** | **完全不同**⭐ | **🟡 中** |
+| **Gemini** | **流水线（999/3秒）** | **真并发（5/0ms）** | **完全不同**⭐ | **🟡 中** |
 | Google免费 | 流水线（999/100ms） | - | 无付费版 | 🟡 中 |
 
 **Gemini风险评估**：
 - ✅ 付费层风险低于DeepL（5并发 vs 10并发）
-- ⚠️ 免费层风险略高（6.5秒延迟可能略超10 RPM）
+- ⚠️ 免费层风险适中（3秒延迟，20 RPM限速）
 - ✅ 官方API，低于Google非官方端点风险
 
 ### 3. 失败场景处理
@@ -1249,7 +1249,7 @@ Popup提示：
 | DeepSeek | 真并发10 | 真并发10 | 无 | 10x / 10x |
 | Microsoft | 真并发5 | 真并发5 | 无 | 5x / 5x |
 | DeepL | 真并发10 | 真并发10 | 无（QPS相同） | 10x / 10x |
-| **Gemini** | **流水线999/6.5s** | **真并发5/0ms** | **完全不同**⭐ | **21% / 35x** |
+| **Gemini** | **流水线999/3s** | **真并发5/0ms** | **完全不同**⭐ | **43% / 35x** |
 | Google免费 | 流水线999/100ms | - | 无付费版 | 5.3x / - |
 
 ### 关键优势
