@@ -20,19 +20,18 @@ if (!globalScope.__ytTranslatorConsoleSanitized) {
   const isProduction = envMode === 'production';
 
   if (isProduction) {
-    if (typeof console !== 'undefined' && typeof console.debug === 'function') {
-      console.debug = () => {};
-    }
+    if (typeof console !== 'undefined') {
+      if (typeof console.debug === 'function') {
+        console.debug = () => {};
+      }
 
-    if (typeof console !== 'undefined' && typeof console.log === 'function') {
-      const originalLog = console.log.bind(console);
-      console.log = (...args: unknown[]) => {
-        const firstArg = args[0];
-        if (typeof firstArg === 'string' && firstArg.includes('[debug]')) {
-          return;
-        }
-        originalLog(...args);
-      };
+      if (typeof console.log === 'function') {
+        console.log = () => {};
+      }
+
+      if (typeof console.info === 'function') {
+        console.info = () => {};
+      }
     }
   }
 }

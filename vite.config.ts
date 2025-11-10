@@ -2,6 +2,7 @@ import { defineConfig, mergeConfig } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url'; // 用于处理 ES Module 中的 __dirname
 import { viteStaticCopy } from 'vite-plugin-static-copy'; // 导入插件
+import removeConsole from 'vite-plugin-remove-console'; // 导入console删除插件
 
 // 获取当前文件的目录路径，适用于 ES Module
 const __filename = fileURLToPath(import.meta.url);
@@ -22,6 +23,12 @@ const baseConfig = {
   define: {
     __CAPTION_TRANSLATION_DEBUG__: true,
   },
+  plugins: [
+    // 生产构建时删除console.log/debug/info，保留warn/error
+    removeConsole({
+      includes: ['log', 'debug', 'info'],
+    }),
+  ],
 };
 
 // 为多个配置创建一个条件配置函数

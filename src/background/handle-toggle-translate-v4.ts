@@ -641,11 +641,19 @@ export async function handleToggleTranslateV4(
           // 特殊情况处理（提前返回）
           if (failureReason === 'player_not_ready') {
             handlePlayerNotReady();
-            return;
+            return {
+              success: false,
+              action: 'error',
+              error: chrome.i18n.getMessage('error_player_not_ready') || 'Player not ready yet, please try again later'
+            };
           }
           if (failureReason === 'ad_playing') {
             handleAdPlaying();
-            return;
+            return {
+              success: false,
+              action: 'error',
+              error: chrome.i18n.getMessage('info_ad_playback_skip_translation') || 'Ad playing, translation paused'
+            };
           }
 
           // ⭐ 空字幕轨道：直接抛出错误终止流程
