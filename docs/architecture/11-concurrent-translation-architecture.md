@@ -296,6 +296,11 @@ await Promise.all(level1Promises);
 - 嵌套不会更快，反而会失败
 - "在限制内最大化效率"才是王道
 
+#### Gemini 免费层流水线策略（现状说明）
+- 官方 Free tier 限制 5 RPM，但扩展需要在单轮 SPA 路由内完成翻译，因此当前实现采用“高并发提交 + 请求间延迟”模式（参考 `src/background/components/two-phase-translator-v4.ts` 中 `getConcurrencyLimit/getRequestDelay`）。
+- 行为：一次性生成 Promise 数组（`concurrency` 设为 999），再在流水线模式下为每个批次插入 3000ms 间隔，既能维持顺序，也能让 Google 端缓冲节流。
+- 调整策略：若后续限流收紧，只需把 `requestDelay` 调整为 5000ms+ 并在设置页提示“Free tier 建议串行”；若升级到付费 tier，可将 `requestDelay=0` 并复用真并发逻辑，无需改主流程。
+
 ---
 
 ### 3. 通用并发控制器设计
