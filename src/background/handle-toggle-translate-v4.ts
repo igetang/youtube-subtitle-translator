@@ -396,6 +396,19 @@ export async function handleToggleTranslateV4(
       }
     };
 
+    const sendDisableSubtitles = async (): Promise<void> => {
+      try {
+        const result = await chrome.tabs.sendMessage(tabId, { type: 'disableSubtitles' });
+        if (result?.success) {
+          console.debug('[debug][service-worker-v4] ✓ 已关闭YouTube原生字幕');
+        } else {
+          console.debug('[debug][service-worker-v4] → 尝试关闭YouTube字幕，返回: ' + (result?.reason || 'unknown'));
+        }
+      } catch (error) {
+        console.debug('[debug][service-worker-v4] 关闭YouTube字幕失败（忽略）:', error);
+      }
+    };
+
     // 检查完整缓存（使用初步选择的源语言name）
     const cachedResult = await translationCacheManager.get(
       videoId,
@@ -427,6 +440,7 @@ export async function handleToggleTranslateV4(
 
       // 发送缓存的字幕数据到Content Script
       try {
+        await sendDisableSubtitles();
         await chrome.tabs.sendMessage(tabId, {
           type: 'TRANSLATION_UPDATE',
           data: {
@@ -776,6 +790,8 @@ export async function handleToggleTranslateV4(
     const effectiveSubtitleData = subtitleData as SubtitleData;
 
     console.log(`[service-worker-v4] 字幕数据就绪 | ${effectiveSubtitleData.subtitles.length} 条 | 源语言: ${sourceLanguageName}`);
+
+    await sendDisableSubtitles();
 
     // 如果字幕数据中包含源语言信息，且当前是auto，更新源语言
     if (effectiveSubtitleData.sourceLanguageName && sourceLanguageName === 'auto') {

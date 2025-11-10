@@ -118,8 +118,7 @@ export class SubtitleOverlay {
       left: 0;
       right: 0;
       top: 0;
-      /* bottom: 2%; */  /* 临时调试：向上移动100px验证同步 */
-      bottom: calc(2% + 100px);
+      bottom: 2%;
       margin-bottom: 0;
       z-index: 2147483647;
       pointer-events: none;

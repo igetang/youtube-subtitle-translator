@@ -859,6 +859,26 @@ function setupMessageHandlers(): void {
       return true; // 异步响应
     }
 
+    if (messageType === 'disableSubtitles') {
+      const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement | null;
+      if (!subtitleBtn) {
+        console.warn('[content-script] 找不到YouTube字幕按钮，无法关闭字幕');
+        sendResponse({ success: false, reason: 'button_not_found' });
+        return false;
+      }
+
+      const isPressed = subtitleBtn.getAttribute('aria-pressed') === 'true';
+      if (isPressed) {
+        subtitleBtn.click();
+        console.debug('[debug][content-script] → 点击字幕按钮，关闭YouTube原生字幕');
+        sendResponse({ success: true, toggled: true });
+      } else {
+        console.debug('[debug][content-script] → YouTube字幕已关闭，无需操作');
+        sendResponse({ success: true, toggled: false });
+      }
+      return false;
+    }
+
     // 检测播放器广告状态
     if (messageType === 'checkPlayerAdState') {
       handleCheckPlayerAdState(sendResponse);
