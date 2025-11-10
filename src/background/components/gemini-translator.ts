@@ -7,13 +7,13 @@
  * - 支持 stage ('urgent' | 'batch') 和 AbortSignal
  * - 非流式响应（stream: false）
  * - 批次大小 80（利用1M token上下文窗口）
- * - YAML格式（id + text结构，强制一对一对应）
+ * - Structured Output（JSON Schema，强制一对一对应）
  * - Phase 1: 从配置读取 batchDelay（手动选择 tier）
  * - 细化错误处理
  */
 
 /**
- * Gemini API 请求接口
+ * Gemini API 请求接口（REST API 使用 snake_case）
  */
 interface GeminiRequest {
   contents: Array<{
@@ -23,10 +23,9 @@ interface GeminiRequest {
   }>;
   generationConfig: {
     temperature: number;
-    maxOutputTokens: number;
-    thinkingConfig?: {      // ⭐ 新增：thinking配置
-      thinkingBudget?: number;  // 0 = 禁用thinking
-    };
+    max_output_tokens: number;           // ✓ REST API 使用下划线命名
+    response_mime_type?: string;         // ✓ REST API 使用下划线命名
+    response_schema?: Record<string, unknown>;  // ✓ 注意：是 response_schema 而非 responseJsonSchema
   };
 }
 
@@ -50,12 +49,30 @@ interface GeminiResponse {
 }
 
 /**
- * YAML字幕项接口
+ * 字幕条目（Structured Output）
  */
-interface YAMLSubtitleItem {
+interface SubtitleItem {
   id: number;
   text: string;
 }
+
+const SUBTITLE_TRANSLATION_SCHEMA: Readonly<Record<string, unknown>> = {
+  type: 'object',
+  properties: {
+    translations: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'integer' },
+          text: { type: 'string' }
+        },
+        required: ['id', 'text']
+      }
+    }
+  },
+  required: ['translations']
+} as const;
 
 /**
  * 模型配置映射表
@@ -68,12 +85,12 @@ const MODEL_CONFIGS: Record<string, {
   'gemini-2.5-flash': {
     contextWindow: 1_000_000,  // 1M tokens 上下文窗口
     maxOutput: 65_536,         // 64K tokens 最大输出
-    batchSize: 80              // 建议批次大小
+    batchSize: 25              // ⭐ 改为25，实现二次断句（50条→25+25）
   },
   'gemini-2.5-flash-lite': {
     contextWindow: 1_000_000,  // 1M tokens 上下文窗口
     maxOutput: 65_536,         // 64K tokens 最大输出
-    batchSize: 80              // 建议批次大小
+    batchSize: 25              // ⭐ 改为25，实现二次断句（50条→25+25）
   }
 };
 
@@ -113,7 +130,6 @@ export class GeminiTranslator {
     this.batchDelay = batchDelay;
     this.modelConfig = MODEL_CONFIGS[model] || MODEL_CONFIGS['gemini-2.5-flash'];
 
-    // ✅ 已改为debug级别（避免在两阶段翻译中重复打印）
     console.debug(
       `[debug][GeminiTranslator] 初始化: 模型=${model}, temperature=${temperature}, ` +
       `上下文=${this.modelConfig.contextWindow} tokens, 最大输出=${this.maxOutputTokens} tokens, ` +
@@ -168,54 +184,43 @@ export class GeminiTranslator {
         // ⏱️ 性能分析：记录各环节耗时
         const perfStart = performance.now();
 
-        // 1. 转换为YAML格式（id + text结构）
+        // 1. 转换为JSON结构
         const t1 = performance.now();
-        const yamlInput = this.convertToYAML(batch);
+        const jsonInput = this.convertToJSON(batch);
         const t2 = performance.now();
 
-        // 2. 构建prompt（传入已转换的语言名称）
-        const prompt = this.buildTranslationPrompt(yamlInput, batch.length, sourceLangName, targetLangName);
+        // 2. 构建prompt
+        const prompt = this.buildTranslationPrompt(jsonInput, sourceLangName, targetLangName);
         const t3 = performance.now();
 
-        // ✅ 合并3条debug日志为1条
-        console.debug(
-          `[debug][GeminiTranslator] 翻译批次 ${batchNumber}/${totalBatches}: ${batch.length}条字幕 | YAML输入${yamlInput.length}字符, Prompt${prompt.length}字符`
-        );
-
-        // 3. 估算maxOutputTokens（对比两种算法）
+        // 3. 估算maxOutputTokens（JSON Schema格式需要更多token）
         const encoder = new TextEncoder();
-        const inputBytes = encoder.encode(yamlInput).length;
-
-        // Token估算：inputBytes ÷ 2.5 × 1.5
-        const estimatedOutputTokens = Math.ceil((inputBytes / 2.5) * 1.5);
+        const inputBytes = encoder.encode(batch.join('\n')).length;
+        // ⭐ JSON Schema格式开销大：基础估算 + JSON结构开销
+        // 公式：(inputBytes / 2.5) * 倍数 + 每条固定开销
+        const baseTokens = Math.ceil((inputBytes / 2.5) * 2.0);  // 基础翻译token
+        const jsonOverhead = batch.length * 30;  // 每条JSON结构约30 tokens
+        const estimatedOutputTokens = baseTokens + jsonOverhead;
         const maxOutputTokens = Math.min(estimatedOutputTokens, this.modelConfig.maxOutput);
 
-        // ✅ 删除调用API参数日志（内部实现细节，Token统计日志已包含关键信息）
-
-        // 4. 调用Gemini API
-        const responseText = await this.callGeminiAPI(prompt, signal, maxOutputTokens);
+        // 4. 调用Gemini API（Structured Output）
+        const translatedItems = await this.callGeminiAPI(prompt, signal, maxOutputTokens);
         const t4 = performance.now();
 
-        // 4. 解析YAML结果
-        const translations = this.parseYAMLResponse(responseText, batch.length);
+        // 5. 验证翻译结果（传入原文用于对比）
+        this.validateTranslationResult(translatedItems, batch.length, batch);
         const t5 = performance.now();
+
+        const translations = translatedItems.map(item => item.text);
 
         // ⏱️ 性能统计
         const perfTotal = t5 - perfStart;
         console.log(
           `[GeminiTranslator] ⏱️ 批次${batchNumber}性能分析: 总耗时${perfTotal.toFixed(0)}ms | ` +
-          `YAML转换=${(t2-t1).toFixed(0)}ms, Prompt构建=${(t3-t2).toFixed(0)}ms, ` +
+          `JSON转换=${(t2-t1).toFixed(0)}ms, Prompt构建=${(t3-t2).toFixed(0)}ms, ` +
           `API调用=${(t4-t3).toFixed(0)}ms (${((t4-t3)/perfTotal*100).toFixed(1)}%), ` +
-          `YAML解析=${(t5-t4).toFixed(0)}ms`
+          `验证=${(t5-t4).toFixed(0)}ms`
         );
-
-        // 5. 验证数量匹配
-        if (translations.length !== batch.length) {
-          console.error(
-            `[GeminiTranslator] ❌ 翻译数量不匹配: 期望${batch.length}条，实际${translations.length}条`
-          );
-          throw this.createFatalError('error_translation_switch_provider');
-        }
 
         results.push(...translations);
 
@@ -237,24 +242,13 @@ export class GeminiTranslator {
 
 
   /**
-   * 转换为YAML格式
-   * @param texts 文本数组
-   * @returns YAML字符串
+   * 转换为 JSON 结构供 Schema 使用
    */
-  private convertToYAML(texts: string[]): string {
-    const items: YAMLSubtitleItem[] = texts.map((text, index) => ({
+  private convertToJSON(texts: string[]): SubtitleItem[] {
+    return texts.map((text, index) => ({
       id: index,
-      text: text.replace(/\n/g, ' ').trim()  // 清理内部换行符
+      text: text.replace(/\n/g, ' ').trim()
     }));
-
-    const yamlLines = ['subtitles:'];
-    items.forEach(item => {
-      // YAML格式：缩进2空格，使用引号包裹text（避免特殊字符问题）
-      yamlLines.push(`  - id: ${item.id}`);
-      yamlLines.push(`    text: "${item.text.replace(/"/g, '\\"')}"`);  // 转义引号
-    });
-
-    return yamlLines.join('\n');
   }
 
   /**
@@ -266,47 +260,31 @@ export class GeminiTranslator {
    * @returns 完整prompt
    */
   private buildTranslationPrompt(
-    yamlInput: string,
-    count: number,
+    items: SubtitleItem[],
     sourceLangName: string,
     targetLangName: string
   ): string {
-    // ✅ 直接使用传入的英文名称（不再内部转换）
-    return `You are a professional subtitle translator.
-Translate from ${sourceLangName} to ${targetLangName}.
+    return `You are a professional subtitle translator. Translate these ${items.length} subtitles from ${sourceLangName} to ${targetLangName}.
 
-INPUT FORMAT: YAML containing ${count} subtitle items (id + text)
-OUTPUT FORMAT: YAML with EXACTLY ${count} translated items (keep the same id numbers!)
+CRITICAL RULES - MUST FOLLOW EXACTLY:
+1. Each input item has an "id" and "text" field
+2. Output MUST have EXACTLY ${items.length} items with THE SAME id numbers (0, 1, 2, ... ${items.length - 1})
+3. Translate EACH subtitle INDEPENDENTLY - do NOT combine multiple subtitles into one translation
+4. NEVER skip any subtitle - every input id MUST have a corresponding output
+5. NEVER merge translations - each output text must correspond to ONE input text only
+6. Keep the same id numbers in the same order: 0→0, 1→1, 2→2, etc.
 
-CRITICAL RULES:
-1. Input has items with id: 0, 1, 2... ${count - 1}
-2. Output MUST have the SAME id numbers: 0, 1, 2... ${count - 1}
-3. Translate ONLY the text field, keep id unchanged
-4. NEVER skip or merge items - every input id must have a corresponding output id
-5. Return ONLY the YAML output, NO explanations
+EXAMPLE (for 3 subtitles):
+Input:  [{"id":0,"text":"Hello"},{"id":1,"text":"World"},{"id":2,"text":"!"}]
+Output: [{"id":0,"text":"你好"},{"id":1,"text":"世界"},{"id":2,"text":"！"}]
 
-Example:
-Input:
-subtitles:
-  - id: 0
-    text: "Hello world"
-  - id: 1
-    text: "How are you"
+WRONG - DO NOT DO THIS:
+Output: [{"id":0,"text":"你好世界！"}]  ← This merges 3 subtitles into 1, WRONG!
 
-Output:
-subtitles:
-  - id: 0
-    text: "你好世界"
-  - id: 1
-    text: "你好吗"
+Now translate these ${items.length} subtitles:
+${JSON.stringify(items, null, 2)}
 
-IMPORTANT:
-- Missing ANY id means the translation failed!
-- The output must be valid YAML that can be parsed
-
-Now translate this:
-
-${yamlInput}`;
+Remember: Output must have EXACTLY ${items.length} items with ids from 0 to ${items.length - 1}.`;
   }
 
   /**
@@ -316,7 +294,11 @@ ${yamlInput}`;
    * @param maxOutputTokens 动态计算的最大输出tokens
    * @returns API响应文本
    */
-  private async callGeminiAPI(prompt: string, signal: AbortSignal, maxOutputTokens: number): Promise<string> {
+  private async callGeminiAPI(
+    prompt: string,
+    signal: AbortSignal,
+    maxOutputTokens: number
+  ): Promise<SubtitleItem[]> {
     // Gemini API endpoint（使用beta版支持最新模型）
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
 
@@ -326,14 +308,14 @@ ${yamlInput}`;
       }],
       generationConfig: {
         temperature: this.temperature,
-        maxOutputTokens: maxOutputTokens,
-        thinkingConfig: {
-          thinkingBudget: 0
-        }
+        max_output_tokens: maxOutputTokens,        // ✓ 使用 snake_case
+        response_mime_type: 'application/json',    // ✓ 使用 snake_case
+        response_schema: SUBTITLE_TRANSLATION_SCHEMA  // ✓ 使用 response_schema（REST API 字段名）
       }
     };
 
-    // 日志已在translate方法中输出，这里不重复打印
+    // 🔍 打印请求参数（调试用）
+    console.log(`[GeminiTranslator] 📤 API请求参数: max_output_tokens=${maxOutputTokens}, temperature=${this.temperature}`);
 
     let response: Response;
 
@@ -354,6 +336,7 @@ ${yamlInput}`;
     }
 
     if (!response.ok) {
+      console.error(`[GeminiTranslator] ❌ API返回错误状态: ${response.status} ${response.statusText}`);
       await this.handleAPIError(response);
     }
 
@@ -374,9 +357,16 @@ ${yamlInput}`;
     }
 
     const finishReason = data.candidates[0].finishReason;
-    this.handleFinishReason(finishReason);
 
-    // ✅ 删除响应文本长度日志（内部实现细节，对用户无意义）
+    // 🔍 调试：打印完整响应结构（帮助排查问题）
+    console.debug('[debug][GeminiTranslator] API响应结构:', {
+      finishReason,
+      hasContent: !!content,
+      contentLength: content?.length || 0,
+      usageMetadata: data.usageMetadata
+    });
+
+    this.handleFinishReason(finishReason);
 
     if (data.usageMetadata) {
       const actualInput = data.usageMetadata.promptTokenCount;
@@ -392,69 +382,76 @@ ${yamlInput}`;
       );
     }
 
-    return content;
+    try {
+      const parsed = JSON.parse(content);
+      const translations = parsed?.translations;
+      if (!Array.isArray(translations)) {
+        console.error('[GeminiTranslator] ❌ JSON 响应缺少 translations 字段');
+        console.error('[GeminiTranslator] 📄 原始响应:', content);
+        throw this.createFatalError('error_gemini_parse_failed', undefined, response.status);
+      }
+      return translations as SubtitleItem[];
+    } catch (error) {
+      console.error('[GeminiTranslator] ❌ JSON 解析失败:', error);
+      console.error('[GeminiTranslator] 📄 原始响应:', content);
+      throw this.createFatalError('error_gemini_parse_failed', undefined, response.status);
+    }
   }
 
   /**
-   * 解析YAML响应
-   * @param responseText API响应文本
-   * @param expectedCount 期望的字幕条数
-   * @returns 翻译后的文本数组
+   * 验证翻译结果
+   * @param items 翻译后的字幕
+   * @param expectedCount 期望数量
+   * @param originalTexts 原始文本数组（用于对比调试）
    */
-  private parseYAMLResponse(responseText: string, expectedCount: number): string[] {
-    try {
-      // 简单的YAML解析（针对我们的特定格式）
-      const lines = responseText.split('\n');
-      const items: YAMLSubtitleItem[] = [];
-      let currentItem: Partial<YAMLSubtitleItem> | null = null;
+  private validateTranslationResult(
+    items: SubtitleItem[],
+    expectedCount: number,
+    originalTexts?: string[]
+  ): void {
+    if (items.length !== expectedCount) {
+      console.error(
+        `[GeminiTranslator] ❌ 翻译数量不匹配: 期望${expectedCount}条，实际${items.length}条`
+      );
+      throw this.createFatalError('error_translation_switch_provider');
+    }
 
-      for (const line of lines) {
-        const trimmed = line.trim();
-
-        // 匹配 "- id: N"
-        const idMatch = trimmed.match(/^-\s*id:\s*(\d+)$/);
-        if (idMatch) {
-          // 保存上一个item
-          if (currentItem && currentItem.id !== undefined && currentItem.text !== undefined) {
-            items.push(currentItem as YAMLSubtitleItem);
-          }
-          // 开始新item
-          currentItem = { id: parseInt(idMatch[1], 10) };
-          continue;
-        }
-
-        // 匹配 "text: "..."" 或 "text: ..."
-        const textMatch = trimmed.match(/^text:\s*"(.+)"$/) || trimmed.match(/^text:\s*(.+)$/);
-        if (textMatch && currentItem) {
-          // 反转义引号
-          currentItem.text = textMatch[1].replace(/\\"/g, '"');
-        }
-      }
-
-      // 保存最后一个item
-      if (currentItem && currentItem.id !== undefined && currentItem.text !== undefined) {
-        items.push(currentItem as YAMLSubtitleItem);
-      }
-
-      // 排序确保顺序正确
-      items.sort((a, b) => a.id - b.id);
-
-      // 验证数量
-      if (items.length !== expectedCount) {
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].id !== i) {
         console.error(
-          `[GeminiTranslator] ⚠️ YAML解析数量不匹配: 期望${expectedCount}, 解析到${items.length}`
+          `[GeminiTranslator] ❌ ID 不连续: 期望 id=${i}, 实际 id=${items[i].id}`
         );
-        console.error('[GeminiTranslator] 原始响应:', responseText);
         throw this.createFatalError('error_translation_switch_provider');
       }
 
-      // 提取text字段
-      return items.map(item => item.text);
+      // 检查空翻译
+      if (!items[i].text || items[i].text.trim() === '') {
+        const originalText = originalTexts?.[i] || '(无原文)';
 
-    } catch (error) {
-      console.error('[GeminiTranslator] ❌ YAML解析失败:', error);
-      console.error('[GeminiTranslator] 原始响应:', responseText);
-      throw this.createFatalError('error_gemini_parse_failed');
+        // 🔍 打印详细的翻译前后对比
+        console.error(`[GeminiTranslator] ❌ 发现空翻译: id=${items[i].id}`);
+        console.error(`[GeminiTranslator] 📋 翻译前后对比:`);
+        console.error(`  原文[${i}]: "${originalText}"`);
+        console.error(`  译文[${i}]: "${items[i].text}"`);
+
+        // 打印全部翻译对比（完整batch）
+        console.error(`[GeminiTranslator] 📊 完整批次翻译对比（共${items.length}条）:`);
+        console.error('========================================');
+        for (let j = 0; j < items.length; j++) {
+          const orig = originalTexts?.[j] || '(无)';
+          const trans = items[j]?.text || '(空)';
+          const marker = j === i ? '❌' : '  ';
+          const status = j === i ? '[空翻译]' : (trans === '(空)' ? '[空]' : '[正常]');
+
+          console.error(`${marker} [${j}] ${status}`);
+          console.error(`    原文: "${orig}"`);
+          console.error(`    译文: "${trans}"`);
+          console.error('----------------------------------------');
+        }
+        console.error('========================================');
+
+        throw this.createFatalError('error_translation_switch_provider');
+      }
     }
   }
 
@@ -465,16 +462,29 @@ ${yamlInput}`;
   private async handleAPIError(response: Response): Promise<never> {
     let errorMessage = '未知错误';
     let errorCode: string | undefined;
+    let rawBody: unknown = undefined;
 
     try {
       const errorData = await response.json();
+       rawBody = errorData;
       errorMessage = errorData.error?.message || errorData.message || '未知错误';
       errorCode = errorData.error?.status || errorData.status;
     } catch (parseError) {
-      errorMessage = await response.text().catch(() => '未知错误');
+      rawBody = await response.text().catch(() => undefined);
+      if (typeof rawBody === 'string' && rawBody.trim() !== '') {
+        errorMessage = rawBody;
+      } else {
+        errorMessage = '未知错误';
+      }
     }
 
     const status = response.status;
+    console.error('[GeminiTranslator] ⚠️ API错误响应:', {
+      status,
+      errorCode,
+      message: errorMessage,
+      body: rawBody
+    });
 
     switch (status) {
       case 400:
@@ -507,14 +517,21 @@ ${yamlInput}`;
       return;
     }
 
+    // ⚠️ 打印实际的 finishReason 以便调试
+    console.error(`[GeminiTranslator] ❌ 非正常结束: finishReason="${finishReason}"`);
+
     switch (finishReason) {
       case 'MAX_TOKENS':
+        console.error('[GeminiTranslator] 原因: Token超限，请减少批次大小或增加max_output_tokens');
         throw this.createFatalError('error_translation_switch_provider');
       case 'SAFETY':
+        console.error('[GeminiTranslator] 原因: 内容被安全过滤器拦截');
         throw this.createFatalError('error_translation_switch_provider');
       case 'RECITATION':
+        console.error('[GeminiTranslator] 原因: 检测到重复内容');
         throw this.createFatalError('error_translation_switch_provider');
       default:
+        console.error(`[GeminiTranslator] 原因: 未知的finishReason="${finishReason}"，请检查API文档`);
         throw this.createFatalError('error_translation_switch_provider');
     }
   }
