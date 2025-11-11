@@ -2188,13 +2188,16 @@ interface SubtitleData {
 }
 
 /**
- * 统一的源语言选择规则系统
- * 
+ * 统一的源语言选择规则系统（方案1：严格"质量优先"）
+ *
  * 规则优先级：
  * 1. 用户历史选择（如果存在于当前轨道中）
- * 2. 英语优先（当目标语言非英语时）
- * 3. 手动字幕优于ASR
- * 4. 降级到第一个可用轨道
+ * 2. 英语手动字幕
+ * 3. 第一个非英语手动字幕
+ * 4. 英语ASR字幕
+ * 5. 第一个ASR字幕（降级策略）
+ *
+ * 核心原则：手动字幕 > ASR字幕（严格质量优先）
  */
 function selectBestSourceLanguage(
   tracks: Array<{ languageCode: string; name: string; kind?: 'asr' | 'forced' }>,
@@ -2227,36 +2230,22 @@ function selectBestSourceLanguage(
   // 准备数据：区分手动字幕和ASR
   const manualTracks = tracks.filter(t => !t.kind || t.kind !== 'asr');
   const asrTracks = tracks.filter(t => t.kind === 'asr');
-  const targetIsEnglish = targetLang.startsWith('en');
 
-  // 规则2+3: 英语优先（非英语目标时）+ 手动字幕优先
-  if (!targetIsEnglish) {
-    // 优先级：英语手动 > 英语ASR
-    const englishManual = manualTracks.find(t => t.languageCode.startsWith('en'));
-    if (englishManual) {
-      console.debug(`[debug][service-worker] 选择英语手动字幕: ${englishManual.languageCode}`);
-      return {
-        languageCode: englishManual.languageCode,
-        name: englishManual.name,
-        kind: englishManual.kind
-      };
-    }
-
-    const englishAsr = asrTracks.find(t => t.languageCode.startsWith('en'));
-    if (englishAsr) {
-      console.debug(`[debug][service-worker] 选择英语ASR字幕: ${englishAsr.languageCode}`);
-      return {
-        languageCode: englishAsr.languageCode,
-        name: englishAsr.name,
-        kind: englishAsr.kind
-      };
-    }
+  // 规则2: 英语手动字幕优先
+  const englishManual = manualTracks.find(t => t.languageCode.startsWith('en'));
+  if (englishManual) {
+    console.debug(`[debug][service-worker] 选择英语手动字幕: ${englishManual.languageCode}`);
+    return {
+      languageCode: englishManual.languageCode,
+      name: englishManual.name,
+      kind: englishManual.kind
+    };
   }
 
-  // 规则3: 手动字幕优先（非英语或目标为英语时）
+  // 规则3: 第一个非英语手动字幕
   if (manualTracks.length > 0) {
     const selected = manualTracks[0];
-    console.debug(`[debug][service-worker] 选择手动字幕: ${selected.languageCode}`);
+    console.debug(`[debug][service-worker] 选择非英语手动字幕: ${selected.languageCode}`);
     return {
       languageCode: selected.languageCode,
       name: selected.name,
@@ -2264,9 +2253,20 @@ function selectBestSourceLanguage(
     };
   }
 
-  // 规则4: 降级策略 - 使用第一个可用轨道
+  // 规则4: 英语ASR字幕
+  const englishAsr = asrTracks.find(t => t.languageCode.startsWith('en'));
+  if (englishAsr) {
+    console.debug(`[debug][service-worker] 选择英语ASR字幕: ${englishAsr.languageCode}`);
+    return {
+      languageCode: englishAsr.languageCode,
+      name: englishAsr.name,
+      kind: englishAsr.kind
+    };
+  }
+
+  // 规则5: 第一个ASR字幕（降级策略）
   const selected = tracks[0];
-  console.debug(`[debug][service-worker] 使用默认轨道: ${selected.languageCode} (${selected.kind === 'asr' ? 'ASR' : '手动'})`);
+  console.debug(`[debug][service-worker] 使用第一个ASR字幕（降级）: ${selected.languageCode}`);
   return {
     languageCode: selected.languageCode,
     name: selected.name,
