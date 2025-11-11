@@ -12,3 +12,6 @@ dist/
 
 # Chrome debug profile (exclude home directory paths)
 ~/.config/
+dist.crx
+dist.pem
+extension-release.zip
