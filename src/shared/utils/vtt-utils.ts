@@ -196,6 +196,22 @@ export function mergeSubtitles(
 }
 
 /**
+ * 将 SubtitleData/subtitle entries 转换为 VTT 字符串
+ */
+export function convertSubtitleEntriesToVtt(
+  subtitles: Array<{ start: number; end: number; text: string; id?: string }>
+): string {
+  const events: SubtitleEvent[] = subtitles.map((sub, idx) => ({
+    start: sub.start,
+    duration: Math.max(0, (sub.end ?? sub.start) - sub.start),
+    text: sub.text,
+    id: sub.id ?? String(sub.start ?? idx)
+  }));
+
+  return createVttString(events);
+}
+
+/**
  * 验证VTT格式字符串是否有效
  * @param vttString VTT格式字符串
  * @returns 是否为有效的VTT格式

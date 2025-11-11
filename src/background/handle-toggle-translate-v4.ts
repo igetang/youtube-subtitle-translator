@@ -49,8 +49,9 @@ import {
   MICROSOFT_TIMEOUT_MS,
   DEFAULT_TIMEOUT_MS
 } from './components/two-phase-translator-v4';
-import { createVttString, parseVttString, mergeVttStrings } from '../shared/utils/vtt-utils';
+import { createVttString, parseVttString, mergeVttStrings, convertSubtitleEntriesToVtt } from '../shared/utils/vtt-utils';
 import { LanguageCodeMapper } from '../shared/utils/language-code-mapper';
+import { canReuseYouTubeTranslation, CaptionTrack } from '../shared/utils/youtube-subtitle-utils';
 
 /**
  * 语言参数接口
@@ -294,10 +295,13 @@ export async function handleToggleTranslateV4(
     let sourceLanguageCode = 'auto';  // 用于YouTube API
     let sourceLanguageName = 'auto';  // 用于翻译API
     let sourceKind: string | undefined;
+    let availableTracks: CaptionTrack[] | undefined;
+    let resolvedSourceTrack: CaptionTrack | undefined;
 
     // 如果有缓存的轨道信息，先尝试使用缓存选择源语言
     if (sourceData?.availableSourceLanguages?.length > 0) {
-      const availableTracks = sourceData.availableSourceLanguages;
+      availableTracks = sourceData.availableSourceLanguages;
+      const cachedTracks = sourceData.availableSourceLanguages;
       const cachedTrack = sourceData.selectedSourceTrack;
 
       const matchWithKind = (
@@ -321,24 +325,24 @@ export async function handleToggleTranslateV4(
       let sourceTrack: { languageCode: string; name: string; kind?: string } | undefined;
 
       if (requestedSourceLang) {
-        const candidates = availableTracks.filter((track: { languageCode: string; name: string; kind?: string }) => track.languageCode === requestedSourceLang);
+        const candidates = cachedTracks.filter((track: { languageCode: string; name: string; kind?: string }) => track.languageCode === requestedSourceLang);
         // 优先使用用户明确指定的sourceKind，其次使用缓存的kind
         const preferredKind = requestedSourceKind || (cachedTrack?.languageCode === requestedSourceLang ? cachedTrack.kind : undefined);
         sourceTrack = matchWithKind(candidates, preferredKind);
       }
 
       if (!sourceTrack && cachedTrack) {
-        const candidates = availableTracks.filter((track: { languageCode: string; name: string; kind?: string }) => track.languageCode === cachedTrack.languageCode);
+        const candidates = cachedTracks.filter((track: { languageCode: string; name: string; kind?: string }) => track.languageCode === cachedTrack.languageCode);
         sourceTrack = matchWithKind(candidates, cachedTrack.kind) || cachedTrack;
       }
 
       if (!sourceTrack) {
         if (requestedSourceLang) {
           console.log('[service-worker-v4] ⚠ 源语言 ' + requestedSourceLang + ' 不可用，可选: ' +
-                      availableTracks.map((track: any) => track.languageCode + (track.kind ? '(' + track.kind + ')' : '')).join(', '));
+                      cachedTracks.map((track: any) => track.languageCode + (track.kind ? '(' + track.kind + ')' : '')).join(', '));
         }
         sourceTrack = selectBestSourceLanguage(
-          availableTracks,
+          cachedTracks,
           preferences.targetLang,
           cachedTrack
         );
@@ -349,6 +353,7 @@ export async function handleToggleTranslateV4(
       sourceLanguageCode = sourceTrack!.languageCode;  // 用于YouTube API（如 "en"）
       sourceLanguageName = sourceTrack!.name;          // 用于翻译API（如 "English"）
       sourceKind = sourceTrack!.kind;
+      resolvedSourceTrack = sourceTrack!;
       console.log('[service-worker-v4] ✓ 源语言: ' + sourceLanguageName +
                   ' [' + sourceLanguageCode + ']' +
                   (sourceKind ? ' (' + sourceKind + ')' : '') +
@@ -419,6 +424,133 @@ export async function handleToggleTranslateV4(
       } catch (error) {
         console.debug('[debug][service-worker-v4] 关闭YouTube字幕失败（忽略）:', error);
       }
+    };
+
+    interface FetchSubtitleOptions {
+      stageLabel: string;
+      reuseCachedSource?: boolean;
+    }
+
+    const fetchSubtitlesByTrack = async (
+      track: CaptionTrack,
+      options: FetchSubtitleOptions
+    ): Promise<SubtitleData> => {
+      let subtitleData: SubtitleData | null = null;
+
+      if (options?.reuseCachedSource && reuseOriginalSubtitles && track.name && track.name !== 'auto') {
+        try {
+          const cachedEntries = await translationCacheManager.findByVideoAndSourceLang(videoId, track.name);
+          const reusableEntry = cachedEntries.find((entry: any) => entry.originalSubtitles);
+
+          if (reusableEntry?.originalSubtitles) {
+            const parsed = parseVttString(reusableEntry.originalSubtitles, false);
+            if (parsed.length > 0) {
+              subtitleData = {
+                subtitles: parsed.map((entry, idx) => ({
+                  text: entry.text,
+                  start: entry.start,
+                  end: entry.start + entry.duration,
+                  index: idx
+                })),
+                sourceLanguageName: track.name,
+                sourceLanguageCode: track.languageCode,
+                currentTime: typeof currentTime === 'number' ? currentTime : 0,
+                videoId
+              };
+              console.log(`[service-worker-v4] ✓ 复用缓存字幕: ${parsed.length} 条 (${options.stageLabel})`);
+            }
+          }
+        } catch (error) {
+          console.warn(`[service-worker-v4] 复用缓存字幕失败（${options.stageLabel}），继续抓取:`, error);
+        }
+      }
+
+      const setResult = await sendSetSubtitleTrack(track.languageCode, track.kind);
+      if (!setResult.success && setResult.reason === 'player_not_ready') {
+        handlePlayerNotReady();
+      }
+      if (!setResult.success && setResult.reason === 'ad_playing') {
+        handleAdPlaying();
+      }
+
+      if (!subtitleData) {
+        await session.executeStage(
+          `${options.stageLabel}_trigger`,
+          async (signal) => {
+            const triggerPayload = {
+              type: 'TRIGGER_SUBTITLE_LOAD',
+              sourceLanguageCode: track.languageCode,
+              sourceLanguageName: track.name,
+              sourceKind: track.kind,
+              originalSubtitleState
+            };
+            console.debug(`[debug][service-worker-v4] → 触发字幕加载(${options.stageLabel}): ${track.name} [${track.languageCode}]`);
+            await chrome.tabs.sendMessage(tabId, triggerPayload);
+            return true;
+          },
+          { timeoutMs: 5000 }
+        );
+
+        subtitleData = await session.executeStage(
+          `${options.stageLabel}_fetch`,
+          async (signal) => {
+            return new Promise((resolve, reject) => {
+              let resolved = false;
+
+              const messageListener = (message: any, msgSender: any) => {
+                if (message.type === 'SUBTITLE_DATA' &&
+                    msgSender.tab?.id === tabId &&
+                    message.data?.videoId === videoId) {
+                  if (!resolved) {
+                    resolved = true;
+                    chrome.runtime.onMessage.removeListener(messageListener);
+
+                    if (message.data?.error === 'INTERCEPTOR_TIMEOUT') {
+                      console.log(`[service-worker-v4] ✗ ${options.stageLabel} 拦截器5秒超时，终止`);
+                      reject(new Error('拦截器超时: ' + (message.data?.errorMessage || '5秒超时')));
+                      return true;
+                    }
+
+                    const subtitleLabel = message.data?.sourceLanguageName
+                      ? ` (${message.data.sourceLanguageName}${message.data?.sourceLanguageCode ? ' [' + message.data.sourceLanguageCode + ']' : ''})`
+                      : '';
+                    console.log(`[service-worker-v4] ✓ 接收字幕数据(${options.stageLabel}): ${(message.data?.subtitles?.length || 0)} 条${subtitleLabel}`);
+                    resolve(message.data as SubtitleData);
+                  }
+                  return true;
+                }
+              };
+
+              chrome.runtime.onMessage.addListener(messageListener);
+
+              signal.addEventListener('abort', () => {
+                if (!resolved) {
+                  resolved = true;
+                  chrome.runtime.onMessage.removeListener(messageListener);
+                  reject(new StageTimeoutError(`${options.stageLabel}_subtitle_fetch`, 15000));
+                }
+              });
+            });
+          },
+          {
+            timeoutMs: 15000,
+            critical: true
+          }
+        );
+      }
+
+      if (!subtitleData?.subtitles || subtitleData.subtitles.length === 0) {
+        throw new Error('No subtitles available for track: ' + track.languageCode);
+      }
+
+      if (!subtitleData.sourceLanguageName) {
+        subtitleData.sourceLanguageName = track.name;
+      }
+      if (!subtitleData.sourceLanguageCode) {
+        subtitleData.sourceLanguageCode = track.languageCode;
+      }
+      subtitleData.videoId = videoId;
+      return subtitleData;
     };
 
     // 检查完整缓存（使用初步选择的源语言name）
@@ -616,6 +748,17 @@ export async function handleToggleTranslateV4(
                       (sourceKind ? ' (' + sourceKind + ')' : '') +
                       ' | 智能选择 (' + trackResponse.tracks.length + '个可用)');
 
+          availableTracks = trackResponse.tracks.map((track: any) => ({
+            languageCode: track.languageCode,
+            name: track.name,
+            kind: track.kind
+          }));
+          resolvedSourceTrack = {
+            languageCode: sourceLanguageCode,
+            name: sourceLanguageName,
+            kind: sourceKind
+          };
+
           const trackSwitchResult = await sendSetSubtitleTrack(sourceLanguageCode, sourceKind);  // ✅ YouTube API使用code
           if (!trackSwitchResult.success && trackSwitchResult.reason === 'player_not_ready') {
             handlePlayerNotReady();
@@ -699,6 +842,81 @@ export async function handleToggleTranslateV4(
       }
       if (!finalTrackResult.success && finalTrackResult.reason === 'ad_playing') {
         handleAdPlaying();
+      }
+    }
+
+    // ========== Stage 4.7: 检查是否可以复用YouTube翻译 ==========
+    if (availableTracks?.length && resolvedSourceTrack) {
+      const reuseCheck = canReuseYouTubeTranslation(
+        availableTracks,
+        resolvedSourceTrack.languageCode,
+        resolvedSourceTrack.kind,
+        preferences.targetLang
+      );
+
+      if (reuseCheck.canReuse && reuseCheck.targetTrack) {
+        console.log(`[service-worker-v4] 🎯 复用YouTube字幕: ${resolvedSourceTrack.languageCode} → ${reuseCheck.targetTrack.languageCode}`);
+
+        try {
+          const targetSubtitleData = await fetchSubtitlesByTrack(reuseCheck.targetTrack, {
+            stageLabel: 'native_target'
+          });
+          const nativeSourceData = await fetchSubtitlesByTrack(resolvedSourceTrack, {
+            stageLabel: 'native_source',
+            reuseCachedSource: true
+          });
+
+          await sendDisableSubtitles();
+
+          if (nativeSourceData.sourceLanguageName && sourceLanguageName === 'auto') {
+            sourceLanguageName = nativeSourceData.sourceLanguageName;
+          }
+          if (nativeSourceData.sourceLanguageCode && sourceLanguageCode === 'auto') {
+            sourceLanguageCode = nativeSourceData.sourceLanguageCode;
+          }
+
+          const originalVtt = convertSubtitleEntriesToVtt(nativeSourceData.subtitles);
+          const translatedVtt = convertSubtitleEntriesToVtt(targetSubtitleData.subtitles);
+          const mergedSubtitles = mergeVttStrings(originalVtt, translatedVtt);
+
+          await translationCacheManager.set({
+            videoId,
+            sourceLang: sourceLanguageName,
+            sourceKind: sourceKind,
+            targetLang: preferences.targetLang,
+            translationService: preferences.translationService,
+            originalSubtitles: originalVtt,
+            translatedSubtitles: translatedVtt,
+            lastUsed: Date.now(),
+            dataHash: ''
+          });
+
+          try {
+            await chrome.tabs.sendMessage(tabId, {
+              type: 'TRANSLATION_UPDATE',
+              data: {
+                updateType: 'progressive',
+                translatedSubtitles: mergedSubtitles
+              }
+            });
+            console.log(`[service-worker-v4] ✓ 已发送YouTube原生字幕 ${mergedSubtitles.length} 条`);
+          } catch (err) {
+            console.error('[service-worker-v4] 发送原生字幕失败:', err);
+          }
+
+          await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
+          session.complete();
+          await notifyStateChange(tabId, 'translateActive', TranslateActiveState.ACTIVE);
+
+          return {
+            success: true,
+            action: 'native',
+            message: chrome.i18n.getMessage('status_translation_streamed') || 'Translation delivered via live updates'
+          };
+        } catch (nativeError) {
+          console.warn('[service-worker-v4] ⚠️ YouTube字幕复用失败，继续走翻译流程', nativeError);
+          await sendSetSubtitleTrack(resolvedSourceTrack.languageCode, resolvedSourceTrack.kind);
+        }
       }
     }
 

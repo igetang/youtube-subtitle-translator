@@ -623,7 +623,9 @@ function generateTargetLanguageDisplayName(language: Language): string {
   // 直接使用全局变量 currentSourceLang（定义在第818行）
   if (currentSourceLang && currentSourceLang !== 'auto') {
     if (isSameLanguageFamily(currentSourceLang, language.code)) {
-      return `${localizedName}（与源语言相同）`;
+      const sameAsSourceHint = chrome.i18n.getMessage('hint_same_as_source') || 'Same as source';
+      // 使用半角括号以便在不同语言环境下显示一致
+      return `${localizedName} (${sameAsSourceHint})`;
     }
   }
 
