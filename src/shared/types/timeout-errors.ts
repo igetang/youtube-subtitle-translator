@@ -277,6 +277,15 @@ export function getUserFriendlyMessage(error: any): string {
     return getI18nMessage('error_subtitle_fetch_failed', '字幕获取失败，请重试');
   }
 
+  // 语言冲突错误
+  if (
+    normalizedMessage.includes('翻译语言选择前后相同') ||
+    normalizedMessage.includes('语言相同') ||
+    normalizedMessage.includes('same language')
+  ) {
+    return getI18nMessage('error_same_language', '源语言和目标语言相同，无需翻译');
+  }
+
   if (
     (normalizedMessage.includes('google') && normalizedMessage.includes('端点')) ||
     (normalizedMessage.includes('google') && normalizedMessage.includes('endpoint'))

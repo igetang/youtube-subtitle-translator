@@ -534,6 +534,9 @@
   "error_subtitle_fetch_failed": {
     "message": "字幕取得失敗，請重試"
   },
+  "error_same_language": {
+    "message": "來源語言和目標語言相同，無需翻譯"
+  },
   "error_translation_failed": {
     "message": "翻譯失敗"
   },

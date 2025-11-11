@@ -184,6 +184,7 @@
     }
   },
   "error_subtitle_fetch_failed": { "message": "Failed to fetch subtitles, please retry" },
+  "error_same_language": { "message": "Source and target languages are the same, no translation needed" },
   "error_translation_failed": { "message": "Translation failed" },
   "error_translation_failed_try_later": { "message": "Translation failed, please try again later" },
   "tooltip_translation_settings": { "message": "Translation settings" },

@@ -184,6 +184,7 @@
     }
   },
   "error_subtitle_fetch_failed": { "message": "字幕获取失败，请重试" },
+  "error_same_language": { "message": "源语言和目标语言相同，无需翻译" },
   "error_translation_failed": { "message": "翻译失败" },
   "error_translation_failed_try_later": { "message": "翻译失败，请稍后重试" },
   "tooltip_translation_settings": { "message": "翻译设置" },

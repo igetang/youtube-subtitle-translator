@@ -618,6 +618,15 @@ function getLocalizedLanguageName(langCode: string, fallbackName: string): strin
 function generateTargetLanguageDisplayName(language: Language): string {
   // 获取本地化名称，统一不显示语言代码，保持界面简洁
   const localizedName = getLocalizedLanguageName(language.code, language.name);
+
+  // 检查是否与源语言冲突（相同或同一语言族）
+  // 直接使用全局变量 currentSourceLang（定义在第818行）
+  if (currentSourceLang && currentSourceLang !== 'auto') {
+    if (isSameLanguageFamily(currentSourceLang, language.code)) {
+      return `${localizedName}（与源语言相同）`;
+    }
+  }
+
   return localizedName;
 }
 
@@ -1853,9 +1862,18 @@ async function loadSourceLanguageData(popupContext: any): Promise<void> {
     if (popupContext && popupContext.detectedSourceLang && !selectedTrack) {
       handleDetectedSourceLanguageUI(popupContext.detectedSourceLang);
     }
-    
+
+    // ✅ 刷新目标语言显示，以便显示语言冲突提示
+    // 此时 currentSourceLang 已经被正确设置，可以进行语言族检测
+    if (targetLangSelectedValue && currentTargetLang) {
+      const lang = targetLanguages.find(l => l.code === currentTargetLang);
+      if (lang) {
+        targetLangSelectedValue.textContent = generateTargetLanguageDisplayName(lang);
+      }
+    }
+
     console.log('[popup] 源语言数据加载完成');
-    
+
   } catch (error) {
     console.error('[popup] 加载源语言数据失败:', error);
   }

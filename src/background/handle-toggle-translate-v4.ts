@@ -61,6 +61,18 @@ interface LanguageParams {
 }
 
 /**
+ * 提取语言代码的基础部分
+ * @param langCode 语言代码 (如: "en-US", "zh-CN")
+ * @returns 基础语言代码 (如: "en", "zh")
+ */
+function getBaseLangCode(langCode: string): string {
+  if (!langCode || langCode.trim() === '' || langCode === 'auto') {
+    return langCode;
+  }
+  return langCode.split('-')[0].toLowerCase();
+}
+
+/**
  * 根据翻译服务类型准备语言参数
  * 统一在最顶层转换一次，避免重复转换和日志打印
  *
@@ -818,6 +830,16 @@ export async function handleToggleTranslateV4(
       preferences.targetLang,
       preferences.translationService?.type || 'google-free'
     );
+
+    // ========== Stage 4.6: 验证语言选择 ==========
+    // 检查源语言和目标语言是否相同或属于同一语言族
+    const sourceBase = getBaseLangCode(sourceLanguageCode);
+    const targetBase = getBaseLangCode(preferences.targetLang);
+
+    if (sourceBase !== 'auto' && sourceBase === targetBase) {
+      console.log(`[service-worker-v4] ❌ 语言验证失败: ${sourceLanguageCode} → ${preferences.targetLang} (同一语言族)`);
+      throw new Error('翻译语言选择前后相同，无需翻译');
+    }
 
     // ========== Stage 5: 执行翻译 ==========
 
