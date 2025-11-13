@@ -250,5 +250,6 @@
   "button_reload": { "message": "Reload" },
   "button_close": { "message": "Close" },
   "service_desc_google_free": { "message": "No additional configuration required, uses built-in free quota." },
-  "service_desc_microsoft_free": { "message": "No configuration required, automatically calls Microsoft free API." }
+  "service_desc_microsoft_free": { "message": "No configuration required, automatically calls Microsoft free API." },
+  "brand_notice_translated_by": { "message": "Translated by YouTube Subtitle Translator" }
 }

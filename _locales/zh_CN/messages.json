@@ -250,5 +250,6 @@
   "button_reload": { "message": "重新加载" },
   "button_close": { "message": "关闭" },
   "service_desc_google_free": { "message": "无需额外配置，直接使用内置免费额度。" },
-  "service_desc_microsoft_free": { "message": "无需配置，自动调用微软免费接口。" }
+  "service_desc_microsoft_free": { "message": "无需配置，自动调用微软免费接口。" },
+  "brand_notice_translated_by": { "message": "由YouTube字幕翻译助手翻译" }
 }

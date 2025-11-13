@@ -40,6 +40,12 @@ export class SubtitleOverlay {
   private playerElement: HTMLElement | null = null;
   private hasLoggedInitialization: boolean = false;
 
+  // 品牌提示相关属性（用于审核标识）
+  private hasShownBrandNotice: boolean = false;
+  private shouldShowBrandNotice: boolean = false;
+  private brandNoticeElement: HTMLDivElement | null = null;
+  private subtitleWrapperContainer: HTMLDivElement | null = null;
+
   constructor() {
     this.userPreferencesManager = UserPreferencesManager.getInstance();
     this.initializePreferencesListener();
@@ -146,7 +152,18 @@ export class SubtitleOverlay {
       pointer-events: none;
     `;
 
-    // 🆕 第三层：字幕容器（自适应内容宽度，可选择文本）
+    // 🆕 第三层：包装容器（包裹品牌提示和字幕容器）
+    this.subtitleWrapperContainer = document.createElement('div');
+    this.subtitleWrapperContainer.id = 'subtitle-wrapper-container';
+    this.subtitleWrapperContainer.style.cssText = `
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: fit-content;
+      max-width: 100%;
+    `;
+
+    // 🆕 第四层：字幕容器（自适应内容宽度，可选择文本）
     this.subtitleContainer = document.createElement('div');
     this.subtitleContainer.id = 'subtitle-container';
     this.subtitleContainer.style.cssText = `
@@ -164,7 +181,8 @@ export class SubtitleOverlay {
     `;
 
     // 组装DOM结构
-    this.subtitleWindow.appendChild(this.subtitleContainer);
+    this.subtitleWrapperContainer.appendChild(this.subtitleContainer);
+    this.subtitleWindow.appendChild(this.subtitleWrapperContainer);
     this.overlayElement.appendChild(this.subtitleWindow);
 
     // 将覆盖层添加到视频容器
@@ -369,6 +387,12 @@ export class SubtitleOverlay {
 
       this.subtitleContainer.innerHTML = subtitleHTML;
       this.subtitleContainer.style.visibility = 'visible';
+
+      // 显示品牌提示（首次翻译）
+      if (this.shouldShowBrandNotice && !this.hasShownBrandNotice) {
+        this.showBrandNotice();
+        this.shouldShowBrandNotice = false;
+      }
     } else {
       // 没有字幕需要显示
       this.subtitleContainer.style.visibility = 'hidden';
@@ -546,7 +570,12 @@ export class SubtitleOverlay {
         return aStart - bStart;
       });
     }
-    
+
+    // 品牌提示逻辑：首次翻译显示
+    if (!this.hasShownBrandNotice) {
+      this.shouldShowBrandNotice = true;
+    }
+
     // 触发显示更新（使用当前时间）
     if (this.videoElement) {
       this.updateSubtitleDisplay(this.videoElement.currentTime);
@@ -764,6 +793,55 @@ export class SubtitleOverlay {
     this.playerObserver.observe(this.playerElement);
   }
 
+
+  /**
+   * 显示品牌提示（用于Chrome Web Store审核标识）
+   */
+  private showBrandNotice(): void {
+    if (!this.subtitleWrapperContainer) return;
+
+    // 🆕 如果已有品牌提示元素，先移除（避免重复创建）
+    if (this.brandNoticeElement) {
+      this.brandNoticeElement.remove();
+      this.brandNoticeElement = null;
+    }
+
+    this.hasShownBrandNotice = true;
+
+    this.brandNoticeElement = document.createElement('div');
+    this.brandNoticeElement.id = 'subtitle-brand-notice';
+    this.brandNoticeElement.style.cssText = `
+      color: #ffeb3b;
+      font-size: var(--calculated-font-size);
+      line-height: normal;
+      background: rgba(8, 8, 8, 0.75);
+      padding: 0px 5px;
+      white-space: nowrap;
+      margin-bottom: 8px;
+      opacity: 1;
+      transition: opacity 1s ease-out;
+      pointer-events: none;
+      text-align: center;
+    `;
+
+    const brandMessage = chrome.i18n.getMessage('brand_notice_translated_by');
+    this.brandNoticeElement.textContent = `[${brandMessage}]`;
+
+    this.subtitleWrapperContainer.insertBefore(this.brandNoticeElement, this.subtitleWrapperContainer.firstChild);
+
+    // 5秒后淡出，1秒后移除
+    setTimeout(() => {
+      if (this.brandNoticeElement) {
+        this.brandNoticeElement.style.opacity = '0';
+        setTimeout(() => {
+          if (this.brandNoticeElement) {
+            this.brandNoticeElement.remove();
+            this.brandNoticeElement = null;
+          }
+        }, 1000);
+      }
+    }, 5000);
+  }
 
   /**
    * 重写销毁方法，清理ResizeObserver

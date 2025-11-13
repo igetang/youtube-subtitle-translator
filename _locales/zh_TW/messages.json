@@ -734,5 +734,8 @@
   },
   "service_desc_microsoft_free": {
     "message": "不需設定，會自動呼叫微軟免費 API。"
+  },
+  "brand_notice_translated_by": {
+    "message": "由YouTube字幕翻譯助手翻譯"
   }
 }

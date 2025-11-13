@@ -93,7 +93,6 @@ The extension requests the following permissions:
 
 - **storage:** To save your preferences and API keys locally
 - **tabs:** To detect when you're on a YouTube page
-- **notifications:** To show translation status notifications
 - **host_permissions (youtube.com):** To access and translate YouTube subtitles
 - **host_permissions (translation APIs):** To send subtitle text to translation services
 
@@ -218,7 +217,6 @@ YouTube字幕翻译助手（"我们"或"本扩展"）致力于保护您的隐私
 
 - **storage:** 用于本地保存您的偏好设置和API密钥
 - **tabs:** 用于检测您何时在YouTube页面
-- **notifications:** 用于显示翻译状态通知
 - **host_permissions (youtube.com):** 用于访问和翻译YouTube字幕
 - **host_permissions (翻译API):** 用于向翻译服务发送字幕文本
 
