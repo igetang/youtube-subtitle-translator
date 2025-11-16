@@ -276,7 +276,7 @@ export class UserPreferencesManager {
         // 🔴 注意：由于 LegacySettingsManager 已被移除，这里的迁移逻辑需要重新审视。
         // 暂时跳过基于旧管理器的自动迁移，以避免错误。
         // 如果需要保留迁移，应提供一个独立的、不依赖旧文件的数据转换函数。
-        console.warn('[user-preferences-manager] LegacySettingsManager 已移除，暂时跳过旧数据迁移。');
+        console.debug('[debug][user-preferences-manager] LegacySettingsManager 已移除，暂时跳过旧数据迁移。');
       }
 
       // 确保默认偏好设置存在
@@ -345,7 +345,7 @@ export class UserPreferencesManager {
           });
           return data;
         } else {
-          console.warn('[user-preferences-manager] 存储的偏好设置数据无效:', validation.errors);
+          console.debug('[debug][user-preferences-manager] 存储的偏好设置数据无效:', validation.errors);
         }
       }
 
@@ -528,7 +528,7 @@ export class UserPreferencesManager {
    */
   public async saveVideoSettings(videoData: VideoSettings): Promise<void> {
     if (!videoData || !videoData.videoId) {
-      console.warn('[user-preferences-manager] 无效的视频数据，跳过保存');
+      console.debug('[debug][user-preferences-manager] 无效的视频数据，跳过保存');
       return;
     }
 

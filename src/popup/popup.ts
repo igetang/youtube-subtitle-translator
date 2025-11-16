@@ -1528,7 +1528,7 @@ function addEventListeners(): void {
       );
 
       if (!trackInfo) {
-        console.warn('[popup] 未找到对应的track信息:', { languageCode, trackKind });
+        console.debug('[debug][popup] 未找到对应的track信息:', { languageCode, trackKind });
         return;
       }
 
@@ -1672,7 +1672,7 @@ async function updateUserPreferencesUI(userPreferences: UserPreferences): Promis
         updateApiPanels(service.type);
         console.log('[popup] 翻译API选择器设置完成，当前值:', translationApiSelect.value);
       } else {
-        console.warn('[popup] translationApiSelect 元素未找到');
+        console.debug('[debug][popup] translationApiSelect 元素未找到');
       }
       
       // 设置API密钥
@@ -1910,14 +1910,14 @@ function handleDetectedSourceLanguageUI(detectedLang: string): void {
         populateSourceLanguages();
         updateSourceLanguageDisplay(detectedLang, trackKind);
       } else {
-        console.warn('[popup] 智能选择的语言不在可用轨道列表中:', detectedLang);
+        console.debug('[debug][popup] 智能选择的语言不在可用轨道列表中:', detectedLang);
       }
     } else if (hasUserSelection) {
       console.log('[popup] 用户已选择源语言，跳过自动设置:', currentSourceLang);
     }
 
   } catch (error) {
-    console.error('[popup] 处理检测到的源语言失败:', error);
+    console.debug('[debug][popup] 处理检测到的源语言失败:', error);
   }
 }
 
@@ -1952,14 +1952,14 @@ async function handleDetectedSourceLanguage(detectedLang: string): Promise<void>
         populateSourceLanguages();
         updateSourceLanguageDisplay(detectedLang, trackKind);
       } else {
-        console.warn('[popup] 智能选择的语言不在可用轨道列表中:', detectedLang);
+        console.debug('[debug][popup] 智能选择的语言不在可用轨道列表中:', detectedLang);
       }
     } else if (hasUserSelection) {
       console.log('[popup] 用户已选择源语言，跳过自动设置:', currentSourceLang);
     }
 
   } catch (error) {
-    console.error('[popup] 处理检测到的源语言失败:', error);
+    console.debug('[debug][popup] 处理检测到的源语言失败:', error);
   }
 }
 
@@ -2038,7 +2038,7 @@ function populateSourceLanguages(searchTerm: string = ''): void {
   }
 
   if (!sourceLangOptions) {
-    console.warn('[popup] populateSourceLanguages: sourceLangOptions元素不存在');
+    console.debug('[debug][popup] populateSourceLanguages: sourceLangOptions元素不存在');
     return;
   }
   
@@ -2129,7 +2129,7 @@ function updateSourceLanguageDisplay(languageCode: string, trackKind: 'asr' | 'f
   console.log('[popup] updateSourceLanguageDisplay 被调用:', { languageCode, trackKind });
   
   if (!sourceLangSelectedValue) {
-    console.warn('[popup] sourceLangSelectedValue 元素不存在');
+    console.debug('[debug][popup] sourceLangSelectedValue 元素不存在');
     return;
   }
   
@@ -2145,7 +2145,7 @@ function updateSourceLanguageDisplay(languageCode: string, trackKind: 'asr' | 'f
     displayText = generateLanguageDisplayName(trackInfo);
   } else {
     displayText = languageCode;
-    console.warn('[popup] 未找到匹配的轨道信息:', { languageCode, trackKind, uiTrackData });
+    console.debug('[debug][popup] 未找到匹配的轨道信息:', { languageCode, trackKind, uiTrackData });
   }
 
   console.log('[popup] 设置源语言显示文本:', displayText);
@@ -2210,7 +2210,7 @@ async function saveSourceLanguage(languageCode: string, trackKind: 'asr' | 'forc
       await saveSelectedSourceTrack(currentVideoId, trackMetadata);
       console.log('[popup] 源语言设置已保存:', trackMetadata);
     } else {
-      console.warn('[popup] 未找到匹配的源语言轨道:', { languageCode, trackKind, uiTrackData });
+      console.debug('[debug][popup] 未找到匹配的源语言轨道:', { languageCode, trackKind, uiTrackData });
     }
   } catch (error) {
     console.error('[popup] 保存源语言设置失败:', error);
@@ -2587,10 +2587,10 @@ async function saveVideoSourceLanguageCache(
         availableCount: availableSourceLanguages.length
       });
     } else {
-      console.warn('[popup][source] saveVideoSourceLanguageCache 后台返回失败', response);
+      console.debug('[debug][popup][source] saveVideoSourceLanguageCache 后台返回失败', response);
     }
   } catch (error) {
-    console.error('[popup] 保存源语言缓存失败:', error);
+    console.debug('[debug][popup] 保存源语言缓存失败:', error);
   }
 }
 

@@ -336,7 +336,7 @@ Remember: Output must have EXACTLY ${items.length} items with ids from 0 to ${it
     }
 
     if (!response.ok) {
-      console.error(`[GeminiTranslator] ❌ API返回错误状态: ${response.status} ${response.statusText}`);
+      console.debug(`[debug][GeminiTranslator] ❌ API返回错误状态: ${response.status} ${response.statusText}`);
       await this.handleAPIError(response);
     }
 
@@ -386,14 +386,14 @@ Remember: Output must have EXACTLY ${items.length} items with ids from 0 to ${it
       const parsed = JSON.parse(content);
       const translations = parsed?.translations;
       if (!Array.isArray(translations)) {
-        console.error('[GeminiTranslator] ❌ JSON 响应缺少 translations 字段');
-        console.error('[GeminiTranslator] 📄 原始响应:', content);
+        console.debug('[debug][GeminiTranslator] ❌ JSON 响应缺少 translations 字段');
+        console.debug('[debug][GeminiTranslator] 📄 原始响应:', content);
         throw this.createFatalError('error_gemini_parse_failed', undefined, response.status);
       }
       return translations as SubtitleItem[];
     } catch (error) {
-      console.error('[GeminiTranslator] ❌ JSON 解析失败:', error);
-      console.error('[GeminiTranslator] 📄 原始响应:', content);
+      console.debug('[debug][GeminiTranslator] ❌ JSON 解析失败:', error);
+      console.debug('[debug][GeminiTranslator] 📄 原始响应:', content);
       throw this.createFatalError('error_gemini_parse_failed', undefined, response.status);
     }
   }
@@ -410,16 +410,16 @@ Remember: Output must have EXACTLY ${items.length} items with ids from 0 to ${it
     originalTexts?: string[]
   ): void {
     if (items.length !== expectedCount) {
-      console.error(
-        `[GeminiTranslator] ❌ 翻译数量不匹配: 期望${expectedCount}条，实际${items.length}条`
+      console.debug(
+        `[debug][GeminiTranslator] ❌ 翻译数量不匹配: 期望${expectedCount}条，实际${items.length}条`
       );
       throw this.createFatalError('error_translation_switch_provider');
     }
 
     for (let i = 0; i < items.length; i++) {
       if (items[i].id !== i) {
-        console.error(
-          `[GeminiTranslator] ❌ ID 不连续: 期望 id=${i}, 实际 id=${items[i].id}`
+        console.debug(
+          `[debug][GeminiTranslator] ❌ ID 不连续: 期望 id=${i}, 实际 id=${items[i].id}`
         );
         throw this.createFatalError('error_translation_switch_provider');
       }
@@ -429,26 +429,26 @@ Remember: Output must have EXACTLY ${items.length} items with ids from 0 to ${it
         const originalText = originalTexts?.[i] || '(无原文)';
 
         // 🔍 打印详细的翻译前后对比
-        console.error(`[GeminiTranslator] ❌ 发现空翻译: id=${items[i].id}`);
-        console.error(`[GeminiTranslator] 📋 翻译前后对比:`);
-        console.error(`  原文[${i}]: "${originalText}"`);
-        console.error(`  译文[${i}]: "${items[i].text}"`);
+        console.debug(`[debug][GeminiTranslator] ❌ 发现空翻译: id=${items[i].id}`);
+        console.debug(`[debug][GeminiTranslator] 📋 翻译前后对比:`);
+        console.debug(`  原文[${i}]: "${originalText}"`);
+        console.debug(`  译文[${i}]: "${items[i].text}"`);
 
         // 打印全部翻译对比（完整batch）
-        console.error(`[GeminiTranslator] 📊 完整批次翻译对比（共${items.length}条）:`);
-        console.error('========================================');
+        console.debug(`[debug][GeminiTranslator] 📊 完整批次翻译对比（共${items.length}条）:`);
+        console.debug('========================================');
         for (let j = 0; j < items.length; j++) {
           const orig = originalTexts?.[j] || '(无)';
           const trans = items[j]?.text || '(空)';
           const marker = j === i ? '❌' : '  ';
           const status = j === i ? '[空翻译]' : (trans === '(空)' ? '[空]' : '[正常]');
 
-          console.error(`${marker} [${j}] ${status}`);
-          console.error(`    原文: "${orig}"`);
-          console.error(`    译文: "${trans}"`);
-          console.error('----------------------------------------');
+          console.debug(`${marker} [${j}] ${status}`);
+          console.debug(`    原文: "${orig}"`);
+          console.debug(`    译文: "${trans}"`);
+          console.debug('----------------------------------------');
         }
-        console.error('========================================');
+        console.debug('========================================');
 
         throw this.createFatalError('error_translation_switch_provider');
       }
@@ -479,7 +479,7 @@ Remember: Output must have EXACTLY ${items.length} items with ids from 0 to ${it
     }
 
     const status = response.status;
-    console.error('[GeminiTranslator] ⚠️ API错误响应:', {
+    console.debug('[debug][GeminiTranslator] ⚠️ API错误响应:', {
       status,
       errorCode,
       message: errorMessage,
@@ -518,20 +518,20 @@ Remember: Output must have EXACTLY ${items.length} items with ids from 0 to ${it
     }
 
     // ⚠️ 打印实际的 finishReason 以便调试
-    console.error(`[GeminiTranslator] ❌ 非正常结束: finishReason="${finishReason}"`);
+    console.debug(`[debug][GeminiTranslator] ❌ 非正常结束: finishReason="${finishReason}"`);
 
     switch (finishReason) {
       case 'MAX_TOKENS':
-        console.error('[GeminiTranslator] 原因: Token超限，请减少批次大小或增加max_output_tokens');
+        console.debug('[debug][GeminiTranslator] 原因: Token超限，请减少批次大小或增加max_output_tokens');
         throw this.createFatalError('error_translation_switch_provider');
       case 'SAFETY':
-        console.error('[GeminiTranslator] 原因: 内容被安全过滤器拦截');
+        console.debug('[debug][GeminiTranslator] 原因: 内容被安全过滤器拦截');
         throw this.createFatalError('error_translation_switch_provider');
       case 'RECITATION':
-        console.error('[GeminiTranslator] 原因: 检测到重复内容');
+        console.debug('[debug][GeminiTranslator] 原因: 检测到重复内容');
         throw this.createFatalError('error_translation_switch_provider');
       default:
-        console.error(`[GeminiTranslator] 原因: 未知的finishReason="${finishReason}"，请检查API文档`);
+        console.debug(`[debug][GeminiTranslator] 原因: 未知的finishReason="${finishReason}"，请检查API文档`);
         throw this.createFatalError('error_translation_switch_provider');
     }
   }

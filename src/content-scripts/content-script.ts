@@ -193,7 +193,7 @@ async function checkAndCreateButtons(): Promise<void> {
     }
     
     if (attempts >= maxAttempts) {
-      console.warn('[content-script] 达到最大尝试次数，停止检查');
+      console.debug('[debug][content-script] 达到最大尝试次数，停止检查');
       clearInterval(checkInterval);
     }
   }, 500); // 每500ms检查一次
@@ -215,7 +215,7 @@ function setupVisibilityChangeListener(): void {
         // 🆕 标签页激活后,自动恢复翻译状态
         await autoRestoreTranslationIfNeeded();
       } catch (error) {
-        console.error('[content-script] 标签页激活刷新状态失败:', error);
+        console.debug('[debug][content-script] 标签页激活刷新状态失败:', error);
       }
     }
   });
@@ -241,7 +241,7 @@ function handleUserAction(action: string, data: any): void {
       handleChromeMessage(data);
       break;
     default:
-      console.warn(`[content-script] 未知的用户行为: ${action}`);
+      console.debug(`[debug][content-script] 未知的用户行为: ${action}`);
   }
 }
 
@@ -259,7 +259,7 @@ function handleButtonClick(data: any): void {
       togglePopup();
       break;
     default:
-      console.warn(`[content-script] 未知的按钮类型: ${buttonType}`);
+      console.debug(`[debug][content-script] 未知的按钮类型: ${buttonType}`);
   }
 }
 
@@ -340,7 +340,7 @@ async function toggleTranslation(): Promise<void> {
   
   const videoId = getVideoId();
   if (!videoId) {
-    console.error('[content-script] 无法获取视频ID');
+    console.debug('[debug][content-script] 无法获取视频ID');
     return;
   }
 
@@ -472,7 +472,7 @@ async function waitForYouTubePlayer(timeout: number = 10000): Promise<boolean> {
     }
   }
 
-  console.error('[content-script] YouTube播放器未就绪，轮询超时');
+  console.debug('[debug][content-script] YouTube播放器未就绪，轮询超时');
   return false;
 }
 
@@ -577,7 +577,7 @@ async function autoRestoreTranslationIfNeeded(forceRestore: boolean = false): Pr
       // Service Worker会设置状态为ACTIVE并通过消息通知更新UI
       // 这里不需要手动设置状态
     } else {
-      console.error('[content-script] ❌ 自动恢复翻译失败:', response?.error);
+      console.debug('[debug][content-script] ❌ 自动恢复翻译失败:', response?.error);
       if (stateManager) {
         await stateManager.updateState('translateActive', TranslateActiveState.INACTIVE);
       }
@@ -585,7 +585,7 @@ async function autoRestoreTranslationIfNeeded(forceRestore: boolean = false): Pr
     }
 
   } catch (error) {
-    console.error('[content-script] ❌ 自动恢复翻译失败:', error);
+    console.debug('[debug][content-script] ❌ 自动恢复翻译失败:', error);
 
     // 失败时重置状态为INACTIVE
     if (stateManager) {
@@ -649,7 +649,7 @@ async function togglePopup(): Promise<void> {
       }
     }
   } catch (error) {
-    console.error('[content-script] ✗ togglePopup:', error);
+    console.debug('[debug][content-script] ✗ togglePopup:', error);
   }
 }
 
@@ -668,6 +668,7 @@ function setupMessageHandlers(): void {
     // 处理REQUEST_SUBTITLE_CAPTURE消息（旧路径，保留兼容）
     if (messageType === 'REQUEST_SUBTITLE_CAPTURE') {
       console.debug(`[debug][content-script] 收到Chrome消息: ${messageType}`);
+
       // 保存源语言信息
       const sourceLanguageCode = message.data?.sourceLanguageCode ?? null;
       const sourceLanguageName = message.data?.sourceLanguageName ?? null;
@@ -760,7 +761,7 @@ function setupMessageHandlers(): void {
           // 调试：检查接收到的批量翻译数据的isUrgent标记
           const urgentIncoming = translatedSubtitles?.filter((s: any) => s.isUrgent === true).length || 0;
           if (urgentIncoming > 0) {
-            console.warn(`[content-script] ⚠️ 接收到的批量翻译中有 ${urgentIncoming}/${translatedSubtitles?.length || 0} 条标记为紧急！前3条:`,
+            console.debug(`[debug][content-script] ⚠️ 接收到的批量翻译中有 ${urgentIncoming}/${translatedSubtitles?.length || 0} 条标记为紧急！前3条:`,
               translatedSubtitles?.slice(0, 3).map((s: any) => ({ start: s.start, isUrgent: s.isUrgent })));
           }
 
@@ -864,7 +865,7 @@ function setupMessageHandlers(): void {
     if (messageType === 'disableSubtitles') {
       const subtitleBtn = document.querySelector('.ytp-subtitles-button') as HTMLElement | null;
       if (!subtitleBtn) {
-        console.warn('[content-script] 找不到YouTube字幕按钮，无法关闭字幕');
+        console.debug('[debug][content-script] 找不到YouTube字幕按钮，无法关闭字幕');
         sendResponse({ success: false, reason: 'button_not_found' });
         return false;
       }
@@ -929,7 +930,7 @@ function setupMessageHandlers(): void {
 
     // 处理拦截器超时
     if (source === 'main-world' && type === 'INTERCEPTOR_TIMEOUT') {
-      console.warn('[content-script] ⏱️ 拦截器超时自动销毁:', payload);
+      console.debug('[debug][content-script] ⏱️ 拦截器超时自动销毁:', payload);
 
       // 立即通知Service Worker失败（避免Service Worker继续等待15秒）
       const videoId = getVideoId();
@@ -944,7 +945,7 @@ function setupMessageHandlers(): void {
             errorMessage: '拦截器5秒超时'
           }
         }).catch(err => {
-          console.error('[content-script] 发送超时通知失败:', err);
+          console.debug('[debug][content-script] 发送超时通知失败:', err);
         });
       }
 
@@ -1001,7 +1002,7 @@ function handleGetSubtitleTracksAPI(sendResponse: (response: any) => void): void
 
   handleCheckPlayerAdState((adResult) => {
     if (adResult?.success && adResult.isAdPlaying) {
-      console.warn('[content-script] 检测到广告播放，跳过轨道获取');
+      console.debug('[debug][content-script] 检测到广告播放，跳过轨道获取');
       sendResponse({
         success: false,
         reason: 'ad_playing',
@@ -1016,7 +1017,7 @@ function handleGetSubtitleTracksAPI(sendResponse: (response: any) => void): void
 
     const timeout = setTimeout(() => {
       apiResponseHandlers.delete(requestId);
-      console.warn(`[content-script] getSubtitleTracksAPI 超时，requestId: ${requestId}, videoId: ${requestVideoId}`);
+      console.debug(`[debug][content-script] getSubtitleTracksAPI 超时，requestId: ${requestId}, videoId: ${requestVideoId}`);
       sendResponse({
         success: false,
         error: 'API获取字幕轨道超时',
@@ -1032,7 +1033,7 @@ function handleGetSubtitleTracksAPI(sendResponse: (response: any) => void): void
 
       const latestVideoId = getVideoId();
       if (latestVideoId !== requestVideoId) {
-        console.warn('[content-script] 忽略过期的轨道响应', {
+        console.debug('[debug][content-script] 忽略过期的轨道响应', {
           requestId,
           expectedVideoId: requestVideoId,
           latestVideoId
@@ -1121,7 +1122,7 @@ async function setSubtitleTrackAPI(
 
     const timeout = setTimeout(() => {
       apiResponseHandlers.delete(requestId);
-      console.warn(`[content-script] setSubtitleTrackAPI 超时，requestId: ${requestId}, videoId: ${requestVideoId}`);
+      console.debug(`[debug][content-script] setSubtitleTrackAPI 超时，requestId: ${requestId}, videoId: ${requestVideoId}`);
       resolve({
         success: false,
         error: 'API设置字幕语言超时',
@@ -1137,7 +1138,7 @@ async function setSubtitleTrackAPI(
 
       const latestVideoId = getVideoId();
       if (latestVideoId !== requestVideoId) {
-        console.warn('[content-script] 忽略过期的字幕轨道设置响应', {
+        console.debug('[content-script] 忽略过期的字幕轨道设置响应', {
           requestId,
           expectedVideoId: requestVideoId,
           latestVideoId
@@ -1195,7 +1196,7 @@ function handleGetVideoTrackData(videoId: string, sendResponse: (response: any) 
   
   const timeout = setTimeout(() => {
     window.removeEventListener('message', responseHandler);
-    console.warn(`[content-script] 获取轨道数据超时`);
+    console.debug(`[content-script] 获取轨道数据超时`);
     sendResponse({ 
       success: false, 
       error: '获取轨道数据超时',
@@ -1290,7 +1291,7 @@ function handleSubtitleCaptured(payload: any): void {
 
   const videoId = getVideoId();
   if (!videoId) {
-    console.warn('[content-script] 无法获取视频ID');
+    console.debug('[content-script] 无法获取视频ID');
     return;
   }
 
@@ -1601,7 +1602,7 @@ async function handleVideoChange(oldVideoId: string | null, newVideoId: string):
       shouldAutoRestore = previousState === 'active' || previousState === TranslateActiveState.ACTIVE;
       console.log('[content-script] 视频切换前翻译状态(background):', previousState, '| 需要恢复:', shouldAutoRestore);
     } else {
-      console.warn('[content-script] 获取切换前状态失败:', response?.error);
+        console.debug('[content-script] 获取切换前状态失败:', response?.error);
     }
   } catch (error) {
     console.error('[content-script] 获取切换前状态失败:', error);
@@ -1753,7 +1754,7 @@ function setupTranslationServiceChangeListener(): void {
 
         const videoId = getVideoId();
         if (!videoId) {
-          console.warn('[content-script] 无法获取视频ID，终止翻译服务变更处理');
+          console.debug('[content-script] 无法获取视频ID，终止翻译服务变更处理');
           return;
         }
 
@@ -1820,7 +1821,7 @@ function setupTranslationServiceChangeListener(): void {
           // V4架构成功 - 数据已通过TRANSLATION_UPDATE推送
           console.log('[content-script] V4架构翻译成功，数据已流式推送');
         } else {
-          console.warn('[content-script] 未知响应格式:', response);
+          console.debug('[content-script] 未知响应格式:', response);
           subtitleOverlay.hide();
           showErrorMessage({ message: chrome.i18n.getMessage('error_translation_format_error') || '翻译响应格式异常', duration: ERROR_MESSAGE_DURATION });
         }
@@ -1936,7 +1937,7 @@ async function handleSourceLanguageChange(newSourceLang: string, newSourceKind?:
       if (setResult.success) {
         console.log(`[content-script] ✓ 已切换YouTube字幕轨道: ${newSourceLang}${newSourceKind ? ` (${newSourceKind})` : ''}`);
       } else {
-        console.warn('[content-script] ⚠️ 切换YouTube字幕轨道失败，但仍显示翻译字幕');
+        console.debug('[content-script] ⚠️ 切换YouTube字幕轨道失败，但仍显示翻译字幕');
       }
 
       await subtitleOverlay.show(cacheResponse.data);
@@ -1979,7 +1980,7 @@ async function handleSourceLanguageChange(newSourceLang: string, newSourceKind?:
         // V4架构成功 - 数据已通过TRANSLATION_UPDATE推送
         console.log('[content-script] V4架构翻译成功，数据已流式推送');
       } else {
-        console.warn('[content-script] 未知响应格式:', response);
+        console.debug('[content-script] 未知响应格式:', response);
         subtitleOverlay.hide();
         showErrorMessage({ message: chrome.i18n.getMessage('error_translation_response_format') || '翻译响应格式异常', duration: ERROR_MESSAGE_DURATION });
       }
@@ -2002,7 +2003,7 @@ async function handleTargetLanguageChangeRealtime(newTargetLang: string, oldTarg
 
     const videoId = getVideoId();
     if (!videoId) {
-      console.warn('[content-script] 无法获取视频ID，终止目标语言变更处理');
+      console.debug('[content-script] 无法获取视频ID，终止目标语言变更处理');
       return;
     }
 
@@ -2080,7 +2081,7 @@ async function handleTargetLanguageChangeRealtime(newTargetLang: string, oldTarg
       // 状态会通过其他消息更新，这里不需要额外处理
     } else {
       // 未知响应
-      console.warn('[content-script] 未知响应格式:', response);
+      console.debug('[content-script] 未知响应格式:', response);
       subtitleOverlay.hide();
       showErrorMessage({ message: chrome.i18n.getMessage('error_translation_response_format') || '翻译响应格式异常', duration: ERROR_MESSAGE_DURATION });
       stateManager?.updateState('translateActive', 'inactive');
@@ -2106,7 +2107,7 @@ async function getCurrentSourceLanguageForRealtime(videoId: string): Promise<str
       return cachedItem.selectedSourceTrack.languageCode;
     }
   } catch (error) {
-    console.warn('[content-script] 获取源语言缓存失败:', error);
+    console.debug('[content-script] 获取源语言缓存失败:', error);
   }
 
   return 'auto';
@@ -2127,7 +2128,7 @@ async function getCurrentSourceTrack(videoId: string): Promise<{ languageCode: s
       };
     }
   } catch (error) {
-    console.warn('[content-script] 获取源语言轨道失败:', error);
+    console.debug('[content-script] 获取源语言轨道失败:', error);
   }
   return null;
 }

@@ -182,7 +182,7 @@ export class DeepLTranslator {
 
       // 验证数量匹配
       if (translations.length !== batch.length) {
-        console.error(
+        console.debug(
           `[DeepLTranslator] ✗ 批次翻译数量不匹配: 期望${batch.length}, 实际${translations.length}`
         );
         throw this.createFatalError('error_translation_switch_provider');

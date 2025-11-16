@@ -94,7 +94,7 @@ export class AbortTimeoutController {
       // 区分不同类型的错误（2025年最佳实践）
       if (error.name === 'TimeoutError' || 
           (error.name === 'AbortError' && error.message.includes('timeout'))) {
-        console.warn(`[AbortTimeoutController] ${stage} 超时（${timeoutMs}ms）`);
+        console.debug(`[AbortTimeoutController] ${stage} 超时（${timeoutMs}ms）`);
         
         if (fallback !== undefined) {
           console.log(`[AbortTimeoutController] 使用降级方案`);
@@ -109,12 +109,12 @@ export class AbortTimeoutController {
       }
       
       if (error.name === 'AbortError') {
-        console.warn(`[AbortTimeoutController] ${stage} 被用户取消`);
+        console.debug(`[AbortTimeoutController] ${stage} 被用户取消`);
         throw new AbortError(`${stage} 被取消`, stage);
       }
       
       // 其他错误直接抛出
-      console.error(`[AbortTimeoutController] ${stage} 执行失败:`, error);
+      console.debug(`[AbortTimeoutController] ${stage} 执行失败:`, error);
       throw error;
     }
   }
@@ -284,7 +284,7 @@ export class AbortTimeoutController {
           return await operation(combinedSignal);
         } catch (error: any) {
           if (error.name === 'AbortError' || error.name === 'TimeoutError') {
-            console.warn(`[AbortTimeoutController] ${stage} 被取消或超时`);
+            console.debug(`[AbortTimeoutController] ${stage} 被取消或超时`);
             throw error;
           }
           throw error;

@@ -107,7 +107,7 @@ export class TwoPhaseTranslator {
       });
       console.debug(`[debug][TwoPhaseTranslator] 紧急翻译完成: ${urgentResult.value.size}条`);
     } else if (urgentResult.status === 'rejected') {
-      console.warn('[TwoPhaseTranslator] 紧急翻译失败:', urgentResult.reason);
+      console.debug('[TwoPhaseTranslator] 紧急翻译失败:', urgentResult.reason);
     }
     
     // 批量翻译覆盖（如果有的话）
@@ -117,7 +117,7 @@ export class TwoPhaseTranslator {
       });
       console.debug(`[debug][TwoPhaseTranslator] 批量翻译完成: ${batchResult.value.size}条，覆盖显示`);
     } else if (batchResult.status === 'rejected') {
-      console.warn('[TwoPhaseTranslator] 批量翻译失败:', batchResult.reason);
+      console.debug('[TwoPhaseTranslator] 批量翻译失败:', batchResult.reason);
     }
     
     // ========== 翻译完成 ==========
@@ -274,7 +274,7 @@ export class TwoPhaseTranslator {
         // 检查分割是否成功
         if (splitResults.length !== batch.subtitles.length) {
           // 翻译结果数量不匹配
-          console.error(`[TwoPhaseTranslator] 批次${i+1}翻译结果分割失败(期望${batch.subtitles.length}条,得到${splitResults.length}条)`);
+          console.debug(`[TwoPhaseTranslator] 批次${i+1}翻译结果分割失败(期望${batch.subtitles.length}条,得到${splitResults.length}条)`);
           
           // 降级策略：返回原文
           batch.subtitles.forEach((sub, idx) => {
@@ -300,7 +300,7 @@ export class TwoPhaseTranslator {
         
       } catch (error) {
         // 批次失败，返回原文
-        console.warn(`[TwoPhaseTranslator] 批次${i+1}翻译失败，使用原文:`, error);
+        console.debug(`[TwoPhaseTranslator] 批次${i+1}翻译失败，使用原文:`, error);
         
         batch.subtitles.forEach((sub, idx) => {
           const globalIdx = batch.startIdx + idx;

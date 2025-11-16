@@ -34,7 +34,7 @@ export class AbortTimeoutManager {
   createSession(sessionId: string): TranslationSession {
     // 如果已存在同ID会话，先清理
     if (this.sessions.has(sessionId)) {
-      console.warn(`[AbortTimeoutManager] 会话 ${sessionId} 已存在，将先清理旧会话`);
+      console.debug(`[AbortTimeoutManager] 会话 ${sessionId} 已存在，将先清理旧会话`);
       this.abortSession(sessionId, '新会话创建，清理旧会话');
     }
     
@@ -176,7 +176,7 @@ export class AbortTimeoutManager {
     }
     
     for (const sessionId of toDelete) {
-      console.warn(`[AbortTimeoutManager] 清理超时会话: ${sessionId}`);
+      console.debug(`[AbortTimeoutManager] 清理超时会话: ${sessionId}`);
       this.abortSession(sessionId, `会话超时 (超过${maxAge}ms)`);
     }
   }

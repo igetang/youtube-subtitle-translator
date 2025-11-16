@@ -158,7 +158,7 @@ export class StateManager {
         timestamp: Date.now()
       });
     } else {
-      console.warn('[StateManager] 协调器未设置，无法通知状态变化');
+      console.debug('[debug][StateManager] 协调器未设置，无法通知状态变化');
     }
   }
 

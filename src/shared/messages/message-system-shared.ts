@@ -77,7 +77,7 @@ export class SharedMessageSystem {
    */
   private static ensureInitialized(): void {
     if (!this.initialized) {
-      console.warn('[SharedMessageSystem] 系统未初始化，使用默认配置自动初始化...');
+      console.debug('[debug][SharedMessageSystem] 系统未初始化，使用默认配置自动初始化...');
       this.initialize(MessageSender.CONTENT_SCRIPT);
     }
   }
@@ -128,7 +128,7 @@ export class SharedMessageSystem {
    * ⚠️ 警告：此方法仅应在测试环境中使用
    */
   public static reset(): void {
-    console.warn('[SharedMessageSystem] 🔄 重置消息系统（仅应在测试中使用）');
+    console.debug('[debug][SharedMessageSystem] 🔄 重置消息系统（仅应在测试中使用）');
     this.messageBus = null;
     this.messageHandlers = null;
     this.initialized = false;

@@ -273,7 +273,7 @@ export async function handleToggleTranslateV4(
       );
     } catch (error: any) {
       // 广告检测调用失败（网络、超时等），不应阻塞流程
-      console.warn('[service-worker-v4] ⚠️ 广告检测调用失败，继续流程:', error?.message || error);
+      console.debug('[debug][service-worker-v4] ⚠️ 广告检测调用失败，继续流程:', error?.message || error);
     }
 
     // 检查广告检测结果（移到try-catch外面）
@@ -380,16 +380,16 @@ export async function handleToggleTranslateV4(
         }
 
         if (setResult?.reason === 'player_not_ready') {
-          console.warn('[service-worker-v4] setSubtitleTrackAPI 返回播放器未就绪，终止自动恢复', setResult);
+          console.debug('[debug][service-worker-v4] setSubtitleTrackAPI 返回播放器未就绪，终止自动恢复', setResult);
           handlePlayerNotReady();
         }
 
         if (setResult?.reason === 'ad_playing') {
-          console.warn('[service-worker-v4] setSubtitleTrackAPI 返回广告播放状态，终止自动恢复', setResult);
+          console.debug('[debug][service-worker-v4] setSubtitleTrackAPI 返回广告播放状态，终止自动恢复', setResult);
           handleAdPlaying();
         }
 
-        console.warn('[service-worker-v4] setSubtitleTrackAPI 返回失败，将依赖字幕按钮触发', setResult);
+        console.debug('[debug][service-worker-v4] setSubtitleTrackAPI 返回失败，将依赖字幕按钮触发', setResult);
         return {
           success: false,
           reason: setResult?.reason,
@@ -397,14 +397,14 @@ export async function handleToggleTranslateV4(
         };
       } catch (apiError) {
         if ((apiError as any)?.category === 'player_not_ready') {
-          console.warn('[service-worker-v4] setSubtitleTrackAPI 抛出播放器未就绪错误', apiError);
+          console.debug('[debug][service-worker-v4] setSubtitleTrackAPI 抛出播放器未就绪错误', apiError);
           handlePlayerNotReady();
         }
         if ((apiError as any)?.category === 'ad_playing') {
-          console.warn('[service-worker-v4] setSubtitleTrackAPI 抛出广告播放状态错误', apiError);
+          console.debug('[debug][service-worker-v4] setSubtitleTrackAPI 抛出广告播放状态错误', apiError);
           handleAdPlaying();
         }
-        console.warn('[service-worker-v4] setSubtitleTrackAPI 调用异常，将依赖字幕按钮触发', apiError);
+        console.debug('[debug][service-worker-v4] setSubtitleTrackAPI 调用异常，将依赖字幕按钮触发', apiError);
         return {
           success: false,
           reason: 'exception',
@@ -461,7 +461,7 @@ export async function handleToggleTranslateV4(
             }
           }
         } catch (error) {
-          console.warn(`[service-worker-v4] 复用缓存字幕失败（${options.stageLabel}），继续抓取:`, error);
+          console.debug(`[debug][service-worker-v4] 复用缓存字幕失败（${options.stageLabel}），继续抓取:`, error);
         }
       }
 
@@ -594,7 +594,7 @@ export async function handleToggleTranslateV4(
         });
         console.log('[service-worker-v4] ✓ 已发送缓存字幕数据');
       } catch (err) {
-        console.error('[service-worker-v4] 发送缓存字幕数据失败:', err);
+        console.debug('[debug][service-worker-v4] 发送缓存字幕数据失败:', err);
       }
 
       console.debug('[service-worker-v4] → 设置状态为 ACTIVE（缓存命中）');
@@ -648,7 +648,7 @@ export async function handleToggleTranslateV4(
                 }
 
                 if (response?.success) {
-                  console.warn(`[service-worker-v4] ${source} 返回空轨道 | requestId: ${trackRequestId}`);
+                  console.debug(`[debug][service-worker-v4] ${source} 返回空轨道 | requestId: ${trackRequestId}`);
                   return {
                     success: false,
                     tracks: [],
@@ -657,7 +657,7 @@ export async function handleToggleTranslateV4(
                   };
                 }
 
-                console.warn(`[service-worker-v4] ${source} 返回失败 | requestId: ${trackRequestId}`, response);
+                console.debug(`[debug][service-worker-v4] ${source} 返回失败 | requestId: ${trackRequestId}`, response);
                 return {
                   success: false,
                   tracks: [],
@@ -667,7 +667,7 @@ export async function handleToggleTranslateV4(
                 };
               } catch (error) {
                 const { category, message } = classifyError(error);
-                console.warn(`[service-worker-v4] ${source} 获取轨道异常 (${category}) | requestId: ${trackRequestId}`, error);
+                console.debug(`[debug][service-worker-v4] ${source} 获取轨道异常 (${category}) | requestId: ${trackRequestId}`, error);
                 return {
                   success: false,
                   tracks: [],
@@ -727,7 +727,7 @@ export async function handleToggleTranslateV4(
             }));
             console.debug('[debug][service-worker-v4] 轨道快照(前6条)', trackSnapshot);
           } catch (snapshotError) {
-            console.warn('[service-worker-v4] 轨道快照记录失败:', snapshotError);
+            console.debug('[debug][service-worker-v4] 轨道快照记录失败:', snapshotError);
           }
 
           // ✅ 保持YouTube API原始字段：languageCode 和 name
@@ -786,12 +786,12 @@ export async function handleToggleTranslateV4(
                 }
               });
             } catch (err) {
-              console.error('[service-worker-v4] 轨道缓存失败:', err);
+              console.debug('[debug][service-worker-v4] 轨道缓存失败:', err);
             }
           });
         } else {
           const failureReason = trackResponse?.reason || 'no_tracks';
-          console.warn(`[service-worker-v4] ✗ 未获取到字幕轨道，reason=${failureReason} | requestId: ${trackResponse?.requestId ?? 'n/a'}`);
+          console.debug(`[debug][service-worker-v4] ✗ 未获取到字幕轨道，reason=${failureReason} | requestId: ${trackResponse?.requestId ?? 'n/a'}`);
 
           // 特殊情况处理（提前返回）
           if (failureReason === 'player_not_ready') {
@@ -818,12 +818,12 @@ export async function handleToggleTranslateV4(
           }
 
           // 其他未知错误：降级使用auto继续
-          console.warn('[service-worker-v4] 未知轨道错误，降级使用auto');
+          console.debug('[debug][service-worker-v4] 未知轨道错误，降级使用auto');
           sourceLanguageCode = 'auto';
           sourceLanguageName = 'auto';
         }
       } catch (error: any) {
-        console.warn('[service-worker-v4] 获取轨道信息失败，继续使用auto:', error);
+        console.debug('[debug][service-worker-v4] 获取轨道信息失败，继续使用auto:', error);
         if (error?.category === 'player_not_ready') {
           handlePlayerNotReady();
         }
@@ -901,7 +901,7 @@ export async function handleToggleTranslateV4(
             });
             console.log(`[service-worker-v4] ✓ 已发送YouTube原生字幕 ${mergedSubtitles.length} 条`);
           } catch (err) {
-            console.error('[service-worker-v4] 发送原生字幕失败:', err);
+            console.debug('[debug][service-worker-v4] 发送原生字幕失败:', err);
           }
 
           await runtimeStateManager.setTranslateState(TranslateActiveState.ACTIVE);
@@ -914,7 +914,7 @@ export async function handleToggleTranslateV4(
             message: chrome.i18n.getMessage('status_translation_streamed') || 'Translation delivered via live updates'
           };
         } catch (nativeError) {
-          console.warn('[service-worker-v4] ⚠️ YouTube字幕复用失败，继续走翻译流程', nativeError);
+          console.debug('[debug][service-worker-v4] ⚠️ YouTube字幕复用失败，继续走翻译流程', nativeError);
           await sendSetSubtitleTrack(resolvedSourceTrack.languageCode, resolvedSourceTrack.kind);
         }
       }
@@ -946,7 +946,7 @@ export async function handleToggleTranslateV4(
       }
         }
       } catch (error) {
-        console.warn('[service-worker-v4] 查找缓存原始字幕失败，继续正常抓取:', error);
+        console.debug('[debug][service-worker-v4] 查找缓存原始字幕失败，继续正常抓取:', error);
       }
     }
 
@@ -1128,7 +1128,7 @@ export async function handleToggleTranslateV4(
       const errorObj = error as any;
 
       // 简化日志：只打印摘要，详细信息由最外层catch打印
-      console.warn('[service-worker-v4] ⚠️ 紧急翻译失败:', errorObj?.message || error);
+      console.debug('[debug][service-worker-v4] ⚠️ 紧急翻译失败:', errorObj?.message || error);
 
       // 判断是否为致命错误（API密钥问题）
       const category = errorObj?.category;
@@ -1192,7 +1192,7 @@ export async function handleToggleTranslateV4(
         });
         console.log(`[service-worker-v4] ✓ 已发送 ${urgentSubtitles.length} 条紧急翻译`);
       } catch (err) {
-        console.error('[service-worker-v4] 发送紧急翻译失败:', err);
+        console.debug('[debug][service-worker-v4] 发送紧急翻译失败:', err);
       }
     }
 
@@ -1353,7 +1353,7 @@ export async function handleToggleTranslateV4(
       });
       console.log(`[service-worker-v4] ✓ 已发送批量翻译 ${finalSubtitles.length} 条（完全覆盖紧急翻译）`);
     } catch (err) {
-      console.error('[service-worker-v4] 发送批量翻译失败:', err);
+      console.debug('[debug][service-worker-v4] 发送批量翻译失败:', err);
     }
 
     // 异步保存缓存（使用VTT格式）
@@ -1457,7 +1457,7 @@ export async function handleToggleTranslateV4(
         });
         console.log('[service-worker-v4] → 已清除字幕显示');
       } catch (err) {
-        console.error('[service-worker-v4] 清除字幕失败:', err);
+        console.debug('[debug][service-worker-v4] 清除字幕失败:', err);
       }
     }
 
@@ -1474,7 +1474,7 @@ export async function handleToggleTranslateV4(
         });
         console.log('[service-worker-v4] → 已发送错误消息到前端');
       } catch (err) {
-        console.error('[service-worker-v4] 发送错误消息失败:', err);
+        console.debug('[debug][service-worker-v4] 发送错误消息失败:', err);
       }
     }
 
@@ -1523,7 +1523,7 @@ function saveTranslationCacheAsync(
         dataHash: ''
       });
     } catch (err) {
-      console.error('[service-worker-v4] 缓存保存失败:', err);
+      console.debug('[debug][service-worker-v4] 缓存保存失败:', err);
     }
   });
 }

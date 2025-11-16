@@ -180,7 +180,7 @@ class MainWorldMessenger {
         }, requestId);
 
       } else {
-        console.warn('[Main World] 未找到movie_player或getPlayerResponse函数');
+        console.debug('[Main World] 未找到movie_player或getPlayerResponse函数');
         this.sendResponse('CAPTION_TRACKS_RESPONSE', null, requestId);
       }
     } catch (error) {
@@ -203,7 +203,7 @@ class MainWorldMessenger {
 
     // 先检测广告状态
     if (subtitleAPIController.isAdPlaying()) {
-      console.warn('[Main World] 当前处于广告阶段，返回 ad_playing');
+      console.debug('[Main World] 当前处于广告阶段，返回 ad_playing');
       this.sendResponse('SUBTITLE_TRACKS_API_RESPONSE', {
         success: false,
         tracks: [],
@@ -415,14 +415,14 @@ class SubtitleAPIController {
 
     // 如果正在播放广告，立即返回
     if (this.isAdPlaying()) {
-      console.warn('[SubtitleAPIController] 当前处于广告阶段，跳过字幕轨道设置');
+      console.debug('[SubtitleAPIController] 当前处于广告阶段，跳过字幕轨道设置');
       return { ready: false, reason: 'ad_playing' };
     }
 
     while (Date.now() - startTime < timeoutMs) {
       this.refreshPlayerReference();
       if (this.isAdPlaying()) {
-        console.warn('[SubtitleAPIController] 等待播放器就绪时检测到广告播放');
+        console.debug('[SubtitleAPIController] 等待播放器就绪时检测到广告播放');
         return { ready: false, reason: 'ad_playing' };
       }
       if (this.isPlayerReady()) {
@@ -434,14 +434,14 @@ class SubtitleAPIController {
     // 最后再尝试一次
     this.refreshPlayerReference();
     if (this.isAdPlaying()) {
-      console.warn('[SubtitleAPIController] 等待播放器就绪超时并检测到广告播放');
+      console.debug('[SubtitleAPIController] 等待播放器就绪超时并检测到广告播放');
       return { ready: false, reason: 'ad_playing' };
     }
     if (this.isPlayerReady()) {
       return { ready: true };
     }
 
-    console.warn(`[SubtitleAPIController] ⏱️ 等待播放器就绪超时 (videoId: ${currentVideoId}, timeout: ${timeoutMs}ms)`);
+    console.debug(`[SubtitleAPIController] ⏱️ 等待播放器就绪超时 (videoId: ${currentVideoId}, timeout: ${timeoutMs}ms)`);
     return { ready: false, reason: 'timeout' };
   }
 
@@ -477,7 +477,7 @@ class SubtitleAPIController {
         }
       }
     } catch (error) {
-      console.warn('[SubtitleAPIController] 检测广告状态失败:', error);
+      console.debug('[SubtitleAPIController] 检测广告状态失败:', error);
     }
 
     return false;
@@ -489,7 +489,7 @@ class SubtitleAPIController {
   async getAvailableTracks(): Promise<{ success: boolean; tracks: any[]; reason?: string; error?: string }> {
     const readyResult = await this.waitForPlayerReady(3000);
     if (!readyResult.ready) {
-      console.warn(`[SubtitleAPIController] 播放器未就绪，无法获取轨道列表 (reason: ${readyResult.reason})`);
+      console.debug(`[SubtitleAPIController] 播放器未就绪，无法获取轨道列表 (reason: ${readyResult.reason})`);
       return {
         success: false,
         tracks: [],
@@ -515,7 +515,7 @@ class SubtitleAPIController {
       }
 
       if (!tracks || !Array.isArray(tracks) || tracks.length === 0) {
-        console.warn(`[SubtitleAPIController] ⚠️ tracklist加载超时或为空，已等待${retries * 500}ms (videoId: ${currentVideoId})`);
+        console.debug(`[SubtitleAPIController] ⚠️ tracklist加载超时或为空，已等待${retries * 500}ms (videoId: ${currentVideoId})`);
         return {
           success: false,
           tracks: [],
@@ -567,7 +567,7 @@ class SubtitleAPIController {
    */
   async setSubtitleTrack(langCode: string, kind?: string): Promise<{ success: boolean; reason?: string; error?: string }> {
     if (this.isAdPlaying()) {
-      console.warn('[SubtitleAPIController] 当前正在播放广告，跳过字幕切换');
+      console.debug('[SubtitleAPIController] 当前正在播放广告，跳过字幕切换');
       return {
         success: false,
         reason: 'ad_playing'
@@ -618,7 +618,7 @@ class SubtitleAPIController {
         const currentTrack = this.player.getOption(this.captionsModule, 'track');
         console.debug('[debug][SubtitleAPIController] setOption之后当前轨道', currentTrack);
       } catch (inspectError) {
-        console.warn('[SubtitleAPIController] 获取当前轨道失败:', inspectError);
+        console.debug('[SubtitleAPIController] 获取当前轨道失败:', inspectError);
       }
 
       // 确保字幕按钮开启
@@ -733,7 +733,7 @@ class SubtitleAPIController {
       }
       settingsBtn.click();
 
-      console.warn('[SubtitleAPIController] 未找到ASR轨道，尝试API回退');
+      console.debug('[SubtitleAPIController] 未找到ASR轨道，尝试API回退');
       // 如果UI方法失败，回退到API方法尝试普通轨道
       return await this.fallbackToNormalTrack(langCode);
 
@@ -875,7 +875,7 @@ class SubtitleInterceptor {
       try {
         subtitleAPIController = new SubtitleAPIController();
       } catch (controllerError) {
-        console.warn('[SubtitleInterceptor] SubtitleAPIController 初始化失败:', controllerError);
+        console.debug('[SubtitleInterceptor] SubtitleAPIController 初始化失败:', controllerError);
       }
     }
 
@@ -1136,7 +1136,7 @@ class SubtitleInterceptor {
           setTimeout(() => clickOnce(), 500);
         }
       } else {
-        console.warn('[SubtitleInterceptor] 未找到字幕按钮');
+        console.debug('[SubtitleInterceptor] 未找到字幕按钮');
       }
     }, 1000);
   }

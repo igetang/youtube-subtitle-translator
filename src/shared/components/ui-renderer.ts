@@ -452,7 +452,7 @@ export class UIRenderer {
         currentState
       });
     } else {
-      console.warn('[UIRenderer] 协调器未设置，无法上报按钮点击事件');
+      console.debug('[debug][UIRenderer] 协调器未设置，无法上报按钮点击事件');
     }
   }
 

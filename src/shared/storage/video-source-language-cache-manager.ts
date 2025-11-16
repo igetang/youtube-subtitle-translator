@@ -233,7 +233,7 @@ export class VideoSourceLanguageCacheManager {
       console.log(`[video-source-cache] 更新源语言选择: ${videoId} -> ${sourceLang}`);
       await this.saveCache();
     } else {
-      console.warn(`[video-source-cache] 无法更新，视频不存在: ${videoId}`);
+      console.debug(`[debug][video-source-cache] 无法更新，视频不存在: ${videoId}`);
     }
   }
 
@@ -380,7 +380,7 @@ export class VideoSourceLanguageCacheManager {
         'local'
       );
     } catch (error) {
-      console.error('[video-source-cache] 保存缓存失败:', error);
+      console.debug('[debug][video-source-cache] 保存缓存失败:', error);
     }
   }
 }

@@ -81,7 +81,7 @@ export class TranslationCacheManager {
     const isValid = expectedHash === data.dataHash;
 
     if (!isValid) {
-      console.warn('[translation-cache-manager] Cache data integrity check failed.', {
+      console.debug('[debug][translation-cache-manager] Cache data integrity check failed.', {
         expectedHash,
         actualHash: data.dataHash,
         videoId: data.videoId,
@@ -154,7 +154,7 @@ export class TranslationCacheManager {
       return null;
     } catch (error) {
       // logger.error('[translation-cache-manager] Error getting cache item:', error);
-      console.error('[translation-cache-manager] ✗ get:', error);
+      console.debug('[debug][translation-cache-manager] ✗ get:', error);
       return null;
     }
   }
@@ -173,7 +173,7 @@ export class TranslationCacheManager {
       await chrome.storage.local.set({ [key]: updatedData });
     } catch (error) {
       // logger.error(`[translation-cache-manager] Failed to update lastUsed for key ${key}:`, error);
-      console.error(`[translation-cache-manager] ✗ _updateLastUsed:`, error);
+      console.debug(`[debug][translation-cache-manager] ✗ _updateLastUsed:`, error);
     }
   }
 
@@ -221,7 +221,7 @@ export class TranslationCacheManager {
       
       return matchedItems;
     } catch (error) {
-      console.error('[translation-cache-manager] ✗ findByVideoAndSourceLang:', error);
+      console.debug('[debug][translation-cache-manager] ✗ findByVideoAndSourceLang:', error);
       return [];
     }
   }
@@ -288,7 +288,7 @@ export class TranslationCacheManager {
       }
     } catch (error) {
       // logger.error('[translation-cache-manager] Error enforcing LRU policy:', error);
-      console.error('[translation-cache-manager] ✗ _enforceLruPolicy:', error);
+      console.debug('[debug][translation-cache-manager] ✗ _enforceLruPolicy:', error);
     }
   }
 
@@ -311,7 +311,7 @@ export class TranslationCacheManager {
       }
     } catch (error) {
       // logger.error('[translation-cache-manager] Error clearing cache:', error);
-      console.error('[translation-cache-manager] ✗ clear:', error);
+      console.debug('[debug][translation-cache-manager] ✗ clear:', error);
     }
   }
 } 

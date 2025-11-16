@@ -87,7 +87,7 @@ export class UIManager {
     this.messageHandlers = SharedMessageSystem.getMessageHandlers();
     
     if (!this.messageBus || !this.messageHandlers) {
-      console.warn('[ui-manager] ⚠️ 共享消息系统尚未初始化，UI管理器可能无法正常工作');
+      console.debug('[debug][ui-manager] ⚠️ 共享消息系统尚未初始化，UI管理器可能无法正常工作');
     }
     
     // 🎯 初始化基本状态
@@ -319,7 +319,7 @@ export class UIManager {
         this.state.popupOpen = isEnabled;
         this.updateSettingsButtonState(isEnabled);
       } else {
-        console.warn('[ui-manager] SidePanel状态检测失败:', response?.error);
+        console.debug('[debug][ui-manager] SidePanel状态检测失败:', response?.error);
         // 检测失败时假设未启用
         this.state.popupOpen = false;
         this.updateSettingsButtonState(false);
@@ -1065,7 +1065,7 @@ export class UIManager {
     try {
       // 检查注入尝试次数
       if (this.state.injectionAttempts >= this.MAX_INJECTION_ATTEMPTS) {
-        console.warn('[ui-manager] 达到最大注入尝试次数，放弃注入');
+        console.debug('[debug][ui-manager] 达到最大注入尝试次数，放弃注入');
         this.state.lastError = '达到最大注入尝试次数';
         
         // ✅ 触发注入失败事件
@@ -1251,7 +1251,7 @@ export class UIManager {
       if (result.success) {
         console.log(`[ui-manager] 已保存翻译状态(RuntimeState): ${targetState}`);
       } else {
-        console.warn('[ui-manager] 通过RuntimeStateManager设置翻译状态失败，使用兼容性方案:', result.error);
+        console.debug('[debug][ui-manager] 通过RuntimeStateManager设置翻译状态失败，使用兼容性方案:', result.error);
         // 兼容性回退：保存到旧的存储键（转换为boolean）
         const boolValue = this.isActiveState(targetState);
         this.setStorageWithErrorHandling('translateActive', boolValue).then(success => {
@@ -1416,7 +1416,7 @@ export class UIManager {
           
           return; // 成功，退出
         } catch (popupError) {
-          console.warn('[ui-manager] chrome.action.openPopup 失败:', popupError);
+          console.debug('[debug][ui-manager] chrome.action.openPopup 失败:', popupError);
         }
       }
       
@@ -1479,7 +1479,7 @@ export class UIManager {
     try {
       // 1. 检查扩展上下文有效性
       if (!chrome.runtime?.id) {
-        console.warn('[ui-manager] Extension context invalid, skipping message');
+        console.debug('[debug][ui-manager] Extension context invalid, skipping message');
         return { success: false, error: 'Extension context invalid' };
       }
       

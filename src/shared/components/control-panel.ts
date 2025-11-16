@@ -36,7 +36,7 @@ export class ControlPanel {
     this.messageHandlers = SharedMessageSystem.getMessageHandlers();
     
     if (!this.messageBus || !this.messageHandlers) {
-      console.warn('[control-panel] ⚠️ 共享消息系统尚未初始化，控制面板可能无法正常工作');
+      console.debug('[debug][control-panel] ⚠️ 共享消息系统尚未初始化，控制面板可能无法正常工作');
     }
     this.userPreferencesManager = UserPreferencesManager.getInstance();
     this.runtimeStateManager = RuntimeStateManager.getInstance();
@@ -147,7 +147,7 @@ export class ControlPanel {
           sender: MessageSender.CONTENT_SCRIPT
         });
       } else {
-        console.warn('[control-panel] MessageBus未初始化，无法发送消息:', messageType);
+        console.debug('[debug][control-panel] MessageBus未初始化，无法发送消息:', messageType);
       }
     } catch (error) {
       console.error('[control-panel] ✗ 发送消息失败:', error);
@@ -348,7 +348,7 @@ export class ControlPanel {
    */
   public async setCurrentVideo(videoId: string): Promise<void> {
     if (!this.state.isInitialized) {
-      console.warn('[control-panel] 控制面板未初始化，自动初始化...');
+      console.debug('[debug][control-panel] 控制面板未初始化，自动初始化...');
       await this.initialize();
     }
     
@@ -391,7 +391,7 @@ export class ControlPanel {
     priority: number = 0
   ): () => void {
     // 🔧 占位符方法 - 不执行任何操作
-    console.warn('[control-panel] addEventListener方法已废弃，请使用MessageBus通信');
+    console.debug('[debug][control-panel] addEventListener方法已废弃，请使用MessageBus通信');
     
     // 返回空的清理函数
     return () => {

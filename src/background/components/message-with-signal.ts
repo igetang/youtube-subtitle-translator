@@ -229,7 +229,7 @@ export async function fetchSubtitlesWithSignal(
     if (error.name === 'AbortError') {
       console.log('[message-with-signal] 字幕获取被取消');
     } else {
-      console.error('[message-with-signal] 字幕获取失败:', error);
+      console.debug('[message-with-signal] 字幕获取失败:', error);
     }
     throw error;
   }
@@ -256,7 +256,7 @@ export async function triggerSubtitleLoadWithSignal(
     if (error.name === 'AbortError') {
       console.log('[message-with-signal] 字幕加载触发被取消');
     } else {
-      console.error('[message-with-signal] 字幕加载触发失败:', error);
+      console.debug('[message-with-signal] 字幕加载触发失败:', error);
     }
     throw error;
   }

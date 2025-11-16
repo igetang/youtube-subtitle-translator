@@ -1710,7 +1710,7 @@ export class TwoPhaseTranslatorV4 {
   ): Promise<string[]> {
     // 检查是否配置了翻译服务
     if (!service || !service.type) {
-      console.warn('[TwoPhaseTranslatorV4] 未配置翻译服务，使用原文');
+      console.debug('[debug][TwoPhaseTranslatorV4] 未配置翻译服务，使用原文');
       return texts;
     }
     
@@ -1974,7 +1974,7 @@ export class TwoPhaseTranslatorV4 {
 
         } else {
           // 未知服务类型，返回原文
-          console.warn(`[TwoPhaseTranslatorV4] 未知的翻译服务类型: ${service.type}`);
+          console.debug(`[debug][TwoPhaseTranslatorV4] 未知的翻译服务类型: ${service.type}`);
           translatedTexts = texts;
         }
         

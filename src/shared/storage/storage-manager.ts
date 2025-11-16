@@ -251,7 +251,7 @@ export class StorageManager {
       case 'session':
         return chrome.storage.session;
       default:
-        console.warn(`[storage-manager] 不支持的存储区域: ${area}，降级到local存储`);
+        console.debug(`[debug][storage-manager] 不支持的存储区域: ${area}，降级到local存储`);
         return chrome.storage.local;
     }
   }
@@ -322,7 +322,7 @@ export class StorageManager {
     // 🔧 修正：项目架构统一使用chrome.storage.local，移除sync相关建议
     // 保留area参数向后兼容，但统一使用local区域
     if (area === 'sync') {
-      console.warn(`[storage-manager] 键 ${key} 请求sync存储，但项目架构统一使用local存储，自动转换为local`);
+      console.debug(`[debug][storage-manager] 键 ${key} 请求sync存储，但项目架构统一使用local存储，自动转换为local`);
       area = 'local';
     }
 
@@ -472,7 +472,7 @@ export class StorageManager {
       // 如果接近限制，打印警告（重点关注local区域）
       if (result[area]!.isNearLimit) {
         const priority = area === 'local' ? 'CRITICAL' : 'INFO';
-        console.warn(`[storage-manager] [${priority}] 存储区域 ${area} 使用量接近限制: ${(result[area]!.usedBytes / 1024).toFixed(2)}KB / ${(result[area]!.totalBytes / 1024).toFixed(2)}KB (${result[area]!.percentUsed.toFixed(1)}%)`);
+        console.debug(`[debug][storage-manager] [${priority}] 存储区域 ${area} 使用量接近限制: ${(result[area]!.usedBytes / 1024).toFixed(2)}KB / ${(result[area]!.totalBytes / 1024).toFixed(2)}KB (${result[area]!.percentUsed.toFixed(1)}%)`);
       }
     }
     

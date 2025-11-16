@@ -68,7 +68,7 @@ export class RuntimeStateManager {
             
             // 🔧 数据迁移：如果是translateActive且值是布尔值，转换为枚举值
             if (stateKey === 'translateActive' && typeof newValue === 'boolean') {
-              console.warn('[runtime-state-manager] 存储监听器检测到布尔值，进行转换:', newValue);
+              console.debug('[debug][runtime-state-manager] 存储监听器检测到布尔值，进行转换:', newValue);
               newValue = newValue ? TranslateActiveState.ACTIVE : TranslateActiveState.INACTIVE;
             }
 
@@ -201,7 +201,7 @@ export class RuntimeStateManager {
       const currentValue = await this.storageManager.get(storageKey, RUNTIME_STATE_CONFIG.STORAGE_AREA);
       
       if (typeof currentValue === 'boolean') {
-        console.warn('[runtime-state-manager] 发现存储中的布尔值，进行数据迁移:', currentValue);
+        console.debug('[debug][runtime-state-manager] 发现存储中的布尔值，进行数据迁移:', currentValue);
         const enumValue = currentValue ? TranslateActiveState.ACTIVE : TranslateActiveState.INACTIVE;
         await this.storageManager.set(storageKey, enumValue, RUNTIME_STATE_CONFIG.STORAGE_AREA);
         console.log('[runtime-state-manager] ✓ 数据迁移完成:', enumValue);
@@ -225,7 +225,7 @@ export class RuntimeStateManager {
       this.syncCache.popupOpen = defaultState.popupOpen;
       await this.saveToStorage(defaultState);
     } catch (error) {
-      console.warn('[runtime-state-manager] ✗ 设置默认状态失败:', error);
+      console.debug('[debug][runtime-state-manager] ✗ 设置默认状态失败:', error);
       this.runtimeCache = { ...DEFAULT_RUNTIME_STATE };
       // 🔧 同步更新 syncCache
       this.syncCache.popupOpen = DEFAULT_RUNTIME_STATE.popupOpen;
@@ -260,7 +260,7 @@ export class RuntimeStateManager {
       // 🔧 数据迁移：将布尔值转换为枚举值
       let translateActiveValue = storageData[RUNTIME_STATE_STORAGE_KEYS.TRANSLATE_ACTIVE];
       if (typeof translateActiveValue === 'boolean') {
-        console.warn('[runtime-state-manager] 检测到旧版布尔值，进行数据迁移:', translateActiveValue);
+        console.debug('[debug][runtime-state-manager] 检测到旧版布尔值，进行数据迁移:', translateActiveValue);
         translateActiveValue = translateActiveValue ? TranslateActiveState.ACTIVE : TranslateActiveState.INACTIVE;
       }
 
@@ -277,7 +277,7 @@ export class RuntimeStateManager {
             translateActiveValue = TranslateActiveState.ACTIVE;
             break;
           default:
-            console.warn(`[runtime-state-manager] 未知的状态字符串: ${translateActiveValue}，使用默认值`);
+            console.debug(`[debug][runtime-state-manager] 未知的状态字符串: ${translateActiveValue}，使用默认值`);
             translateActiveValue = DEFAULT_RUNTIME_STATE.translateActive;
         }
       }
@@ -331,7 +331,7 @@ export class RuntimeStateManager {
     // 🔧 数据清理：确保translateActive始终是枚举值
     const state = { ...DEFAULT_RUNTIME_STATE, ...this.runtimeCache } as RuntimeState;
     if (typeof state.translateActive === 'boolean') {
-      console.warn('[runtime-state-manager] getAllState检测到布尔值，进行转换:', state.translateActive);
+      console.debug('[debug][runtime-state-manager] getAllState检测到布尔值，进行转换:', state.translateActive);
       state.translateActive = (state.translateActive as any) ? TranslateActiveState.ACTIVE : TranslateActiveState.INACTIVE;
     }
     
@@ -350,7 +350,7 @@ export class RuntimeStateManager {
 
     // 🔧 数据清理：确保返回的始终是枚举值
     if (typeof translateState === 'boolean') {
-      console.warn('[runtime-state-manager] getTranslateState检测到布尔值，进行转换:', translateState);
+      console.debug('[debug][runtime-state-manager] getTranslateState检测到布尔值，进行转换:', translateState);
       translateState = (translateState as any) ? TranslateActiveState.ACTIVE : TranslateActiveState.INACTIVE;
     }
 
@@ -364,7 +364,7 @@ export class RuntimeStateManager {
         case 'active':
           return TranslateActiveState.ACTIVE;
         default:
-          console.warn(`[runtime-state-manager] getTranslateState: 未知的状态字符串 "${translateState}"，使用默认值`);
+          console.debug(`[debug][runtime-state-manager] getTranslateState: 未知的状态字符串 "${translateState}"，使用默认值`);
           return DEFAULT_RUNTIME_STATE.translateActive;
       }
     }
@@ -390,7 +390,7 @@ export class RuntimeStateManager {
 
     // 检查状态转换是否合法
     if (!TranslateStateHelper.canTransition(currentState, state)) {
-      console.warn(`[RSM] 非法的状态转换: ${currentState} -> ${state}`);
+      console.debug(`[debug][RSM] 非法的状态转换: ${currentState} -> ${state}`);
       return;
     }
 

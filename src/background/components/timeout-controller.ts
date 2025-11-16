@@ -73,10 +73,10 @@ export class TimeoutController {
     } catch (error) {
       if (error instanceof TimeoutError) {
         if (fallback !== undefined) {
-          console.warn(`[TimeoutController] ${stage} 超时（${timeoutMs}ms），使用降级方案`);
+          console.debug(`[TimeoutController] ${stage} 超时（${timeoutMs}ms），使用降级方案`);
           return fallback;
         }
-        console.error(`[TimeoutController] ${stage} 超时（${timeoutMs}ms），无降级方案`);
+        console.debug(`[TimeoutController] ${stage} 超时（${timeoutMs}ms），无降级方案`);
       }
       throw error;
     }

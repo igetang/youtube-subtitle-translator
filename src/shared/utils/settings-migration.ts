@@ -136,14 +136,14 @@ export function convertUserSettingsToUserPreferences(userSettings: LegacyUserSet
     // 1. 获取对应的服务类型
     const serviceType = API_TYPE_TO_SERVICE_TYPE[userSettings.translationApi];
     if (!serviceType) {
-      console.warn(`[settings-migration] 未知的翻译API类型: ${userSettings.translationApi}`);
+      console.debug(`[debug][settings-migration] 未知的翻译API类型: ${userSettings.translationApi}`);
       throw new Error(`未知的翻译API类型: ${userSettings.translationApi}`);
     }
 
     // 2. 获取基础服务模板
     const baseService = TRANSLATION_SERVICE_TEMPLATES[serviceType];
     if (!baseService) {
-      console.warn(`[settings-migration] 未找到服务模板: ${serviceType}`);
+      console.debug(`[debug][settings-migration] 未找到服务模板: ${serviceType}`);
       throw new Error(`未找到服务模板: ${serviceType}`);
     }
 
@@ -239,7 +239,7 @@ export function convertUserPreferencesToUserSettings(userPreferences: UserPrefer
     // 1. 反向映射服务类型
     const apiType = SERVICE_TYPE_TO_API_TYPE[service.type];
     if (!apiType) {
-      console.warn(`[settings-migration] 未知的服务类型: ${service.type}`);
+      console.debug(`[debug][settings-migration] 未知的服务类型: ${service.type}`);
       throw new Error(`未知的服务类型: ${service.type}`);
     }
 

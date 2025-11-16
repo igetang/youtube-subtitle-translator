@@ -64,7 +64,7 @@ export function parseVttString(
 ): SubtitleEntry[] {
   // 类型保护：确保输入是字符串
   if (!vttString || typeof vttString !== 'string') {
-    console.warn('[vtt-utils] parseVttString: 输入不是有效的字符串', vttString);
+    console.debug('[debug][vtt-utils] parseVttString: 输入不是有效的字符串', vttString);
     return [];
   }
 
@@ -259,13 +259,13 @@ export function extractTranslatedSubtitles(
   // 处理旧缓存格式兼容性问题
   // 如果输入已经是数组，说明是旧格式，直接返回
   if (Array.isArray(translatedVtt)) {
-    console.warn('[vtt-utils] 检测到旧缓存格式（数组），直接返回');
+    console.debug('[debug][vtt-utils] 检测到旧缓存格式（数组），直接返回');
     return translatedVtt as SubtitleEntry[];
   }
 
   // 如果任一参数不是字符串，返回空数组
   if (typeof originalVtt !== 'string' || typeof translatedVtt !== 'string') {
-    console.warn('[vtt-utils] extractTranslatedSubtitles: 输入格式无效', {
+    console.debug('[debug][vtt-utils] extractTranslatedSubtitles: 输入格式无效', {
       originalVtt: typeof originalVtt,
       translatedVtt: typeof translatedVtt
     });

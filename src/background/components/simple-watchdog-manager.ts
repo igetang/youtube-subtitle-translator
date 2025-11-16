@@ -21,7 +21,7 @@ export class SimpleWatchdogManager {
     this.clearWatchdog(stage);
     
     const timeout = setTimeout(() => {
-      console.warn(`[SimpleWatchdog] ${stage} 超时（5秒），执行超时处理`);
+      console.debug(`[SimpleWatchdog] ${stage} 超时（5秒），执行超时处理`);
       onTimeout();
       this.watchers.delete(stage);
     }, SimpleWatchdogManager.TIMEOUT);

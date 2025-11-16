@@ -242,7 +242,7 @@ export class SubtitleOverlay {
         console.debug('[debug][SubtitleOverlay] 输入格式: VTT字符串格式');
 
         if (!translationData.originalSubtitles) {
-          console.warn('[SubtitleOverlay] 缺少原始字幕');
+          console.debug('[SubtitleOverlay] 缺少原始字幕');
           return;
         }
 
@@ -254,7 +254,7 @@ export class SubtitleOverlay {
         if (this.ENABLE_DETAILED_SUBTITLE_LOG) {
           console.log(`[SubtitleOverlay] 🔍 原字幕数量: ${originalSubtitles.length}, 翻译字幕数量: ${translatedSubtitles.length}`);
           if (originalSubtitles.length !== translatedSubtitles.length) {
-            console.warn(`[SubtitleOverlay] ⚠️ 数量不匹配！原字幕${originalSubtitles.length}条，翻译${translatedSubtitles.length}条`);
+            console.debug(`[SubtitleOverlay] ⚠️ 数量不匹配！原字幕${originalSubtitles.length}条，翻译${translatedSubtitles.length}条`);
           }
         }
 
@@ -505,6 +505,12 @@ export class SubtitleOverlay {
     // 确保覆盖层可见（修复视频切换后的显示问题）
     if (this.overlayElement) {
       this.overlayElement.style.display = '';
+    }
+
+    // 🆕 完全替换模式时重置品牌提示（新的翻译会话）
+    if (replaceAll) {
+      this.hasShownBrandNotice = false;
+      this.shouldShowBrandNotice = false;
     }
 
     // 使用已缓存的字幕模式（由监听器实时更新，无需重复读取）
@@ -829,7 +835,7 @@ export class SubtitleOverlay {
 
     this.subtitleWrapperContainer.insertBefore(this.brandNoticeElement, this.subtitleWrapperContainer.firstChild);
 
-    // 5秒后淡出，1秒后移除
+    // 3秒后淡出，1秒后移除
     setTimeout(() => {
       if (this.brandNoticeElement) {
         this.brandNoticeElement.style.opacity = '0';
@@ -840,7 +846,17 @@ export class SubtitleOverlay {
           }
         }, 1000);
       }
-    }, 5000);
+    }, 3000);
+  }
+
+  /**
+   * 重置品牌提示标志
+   * 用于在切换语言、服务、模型或新翻译时重新显示品牌提示
+   */
+  public resetBrandNotice(): void {
+    console.debug('[debug][subtitle-overlay] 🔄 重置品牌提示标志');
+    this.hasShownBrandNotice = false;
+    this.shouldShowBrandNotice = false;
   }
 
   /**

@@ -33,7 +33,7 @@ export class LanguageCodeMapper {
    */
   static toEnglishName(code: string, silent: boolean = false): string {
     if (!code) {
-      console.warn('[LanguageCodeMapper] 空语言代码，返回空字符串');
+      console.debug('[debug][LanguageCodeMapper] 空语言代码，返回空字符串');
       return '';
     }
 
@@ -46,7 +46,7 @@ export class LanguageCodeMapper {
       const name = this.displayNames.of(code);
 
       if (!name) {
-        console.warn(`[LanguageCodeMapper] 无法解析语言代码: ${code}，返回原始代码`);
+        console.debug(`[debug][LanguageCodeMapper] 无法解析语言代码: ${code}，返回原始代码`);
         return code;
       }
 
@@ -59,7 +59,7 @@ export class LanguageCodeMapper {
       return cleanName;
 
     } catch (error) {
-      console.error(`[LanguageCodeMapper] 转换失败: ${code}`, error);
+      console.debug(`[debug][LanguageCodeMapper] 转换失败: ${code}`, error);
       return code; // 降级处理：返回原始代码
     }
   }

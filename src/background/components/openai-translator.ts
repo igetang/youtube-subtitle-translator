@@ -236,8 +236,8 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
         numberedTranslations = JSON.parse(responseText);
         console.debug(`[debug][OpenAITranslator] ✓ JSON解析成功，收到${numberedTranslations.length}条带编号翻译`);
       } catch (parseError) {
-        console.warn(`[OpenAITranslator] ⚠️  JSON解析失败，尝试提取JSON部分`, parseError);
-        console.error(`[OpenAITranslator] 📄 OpenAI原始响应:`, responseText);
+        console.debug(`[debug][OpenAITranslator] ⚠️  JSON解析失败，尝试提取JSON部分`, parseError);
+        console.debug(`[debug][OpenAITranslator] 📄 OpenAI原始响应:`, responseText);
 
         const jsonMatch = responseText.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
@@ -273,15 +273,15 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
         const cleaned = item.replace(/^\[\d+\]\s*/, '');
         const expectedPrefix = `[${index}]`;
         if (!item.startsWith(expectedPrefix)) {
-          console.warn(`[OpenAITranslator] ⚠️ 编号不匹配: 期望 ${expectedPrefix}，实际 ${item.substring(0, 10)}`);
+          console.debug(`[debug][OpenAITranslator] ⚠️ 编号不匹配: 期望 ${expectedPrefix}，实际 ${item.substring(0, 10)}`);
         }
         return cleaned;
       });
 
       if (translations.length !== texts.length) {
-        console.error(`[OpenAITranslator] 原始输入(全部${texts.length}条):`, cleanedTexts);
-        console.error(`[OpenAITranslator] AI返回结果(全部${numberedTranslations.length}条):`, numberedTranslations);
-        console.error(`[OpenAITranslator] API原始响应:`, responseText);
+        console.debug(`[debug][OpenAITranslator] 原始输入(全部${texts.length}条):`, cleanedTexts);
+        console.debug(`[debug][OpenAITranslator] AI返回结果(全部${numberedTranslations.length}条):`, numberedTranslations);
+        console.debug(`[debug][OpenAITranslator] API原始响应:`, responseText);
 
         throw new TranslationError(
           `OpenAI 翻译数量不匹配：期望${texts.length}条，实际${translations.length}条`,
@@ -293,7 +293,7 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
       console.log(`[OpenAITranslator] ✓ 翻译完成: ${translations.length}条字幕（已去除编号）`);
       return translations;
     } catch (error) {
-      console.error('[OpenAITranslator] ✗ 翻译失败:', error);
+      console.debug('[debug][OpenAITranslator] ✗ 翻译失败:', error);
       throw error;
     }
   }
@@ -371,8 +371,8 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
           `[debug][OpenAITranslator] ✓ Structured Outputs解析成功，收到${structuredOutput?.translations?.length ?? 0}条翻译`
         );
       } catch (parseError) {
-        console.error('[OpenAITranslator][structured] ❌ JSON解析失败', parseError);
-        console.error('[OpenAITranslator][structured] 📄 OpenAI原始响应:', responseText);
+        console.debug('[debug][OpenAITranslator][structured] ❌ JSON解析失败', parseError);
+        console.debug('[debug][OpenAITranslator][structured] 📄 OpenAI原始响应:', responseText);
         throw new TranslationError(
           `OpenAI Structured Outputs 解析失败: ${parseError}`,
           'retryable',
@@ -391,9 +391,9 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
       const translations = structuredOutput.translations;
 
       if (translations.length !== texts.length) {
-        console.error('[OpenAITranslator][structured] 输入数据:', items);
-        console.error('[OpenAITranslator][structured] OpenAI返回:', translations);
-        console.error('[OpenAITranslator][structured] OpenAI原始响应(JSON字符串):', responseText);
+        console.debug('[debug][OpenAITranslator][structured] 输入数据:', items);
+        console.debug('[debug][OpenAITranslator][structured] OpenAI返回:', translations);
+        console.debug('[debug][OpenAITranslator][structured] OpenAI原始响应(JSON字符串):', responseText);
         throw new TranslationError(
           `OpenAI Structured Outputs 数量不匹配：期望${texts.length}条，实际${translations.length}条`,
           'retryable',
@@ -406,8 +406,8 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
       const idsMatch = expectedIds.every((id, index) => id === actualIds[index]);
 
       if (!idsMatch) {
-        console.error('[OpenAITranslator][structured] id顺序不匹配', { expectedIds, actualIds });
-        console.error('[OpenAITranslator][structured] OpenAI原始响应(JSON字符串):', responseText);
+        console.debug('[debug][OpenAITranslator][structured] id顺序不匹配', { expectedIds, actualIds });
+        console.debug('[debug][OpenAITranslator][structured] OpenAI原始响应(JSON字符串):', responseText);
         throw new TranslationError(
           'OpenAI Structured Outputs id顺序不匹配',
           'retryable',
@@ -421,7 +421,7 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
       if (logBase) {
         console.log(`${logBase} | 输出tokens=${completionTokensLog ?? '未知'} | 错误=${(error as Error)?.message ?? error}`);
       }
-      console.error('[OpenAITranslator] ✗ Structured Outputs翻译失败:', error);
+      console.debug('[debug][OpenAITranslator] ✗ Structured Outputs翻译失败:', error);
       throw error;
     }
   }
@@ -549,7 +549,7 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
 
     const content = data.choices?.[0]?.message?.content;
     if (!content) {
-      console.error('[OpenAITranslator] API返回结构异常:', {
+      console.debug('[debug][OpenAITranslator] API返回结构异常:', {
         hasChoices: !!data.choices,
         choicesLength: data.choices?.length,
         firstChoice: data.choices?.[0],
@@ -644,7 +644,7 @@ Output: ["[0] 你好", "[1] 你好", "[2] 世界"]`
 
     const content = data.choices?.[0]?.message?.content;
     if (!content) {
-      console.error('[OpenAITranslator][structured] API返回结构异常:', {
+      console.debug('[debug][OpenAITranslator][structured] API返回结构异常:', {
         hasChoices: !!data.choices,
         choicesLength: data.choices?.length,
         firstChoice: data.choices?.[0],

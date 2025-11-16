@@ -589,7 +589,7 @@ async function routeMessage(
     
     // 🔧 向后兼容：保留closeSidePanel处理器
     case 'closeSidePanel':
-      console.warn('[service-worker] ⚠️ closeSidePanel 已废弃');
+      console.debug('[debug][service-worker] ⚠️ closeSidePanel 已废弃');
       return await handleCloseSidePanel(sender);
     
     case 'openPopupFallback':
@@ -794,7 +794,7 @@ async function routeMessage(
       return { success: true };
 
     default:
-      console.warn(`[service-worker] 未知消息类型: ${type}`);
+      console.debug(`[debug][service-worker] 未知消息类型: ${type}`);
       return {
         success: false,
         error: `未知消息类型: ${type}`
@@ -810,7 +810,7 @@ async function routeMessage(
  */
 async function handleOpenPopup(sender: chrome.runtime.MessageSender, data?: any): Promise<any> {
   if (!sender.tab || !sender.tab.id) {
-    console.warn('[service-worker] ⚠️ openPopup: 缺少有效的标签页信息');
+    console.debug('[debug][service-worker] ⚠️ openPopup: 缺少有效的标签页信息');
     return {
       success: false,
       error: 'Invalid sender for opening popup'
@@ -819,10 +819,10 @@ async function handleOpenPopup(sender: chrome.runtime.MessageSender, data?: any)
 
   const tabId = sender.tab.id;
   const tabUrl = sender.tab.url;
-  
+
   // 检查是否为YouTube页面
   if (!tabUrl || !isYoutubeUrl(tabUrl)) {
-    console.warn(`[service-worker] ⚠️ 非YouTube页面: ${tabUrl}`);
+    console.debug(`[debug][service-worker] ⚠️ 非YouTube页面: ${tabUrl}`);
     return {
       success: false,
       error: '只有YouTube页面才能打开翻译设置面板'
@@ -864,7 +864,7 @@ async function handleOpenPopup(sender: chrome.runtime.MessageSender, data?: any)
  */
 async function handleTogglePopup(sender: chrome.runtime.MessageSender, data?: any): Promise<any> {
   if (!sender.tab || !sender.tab.id) {
-    console.warn('[service-worker] ⚠️ togglePopup: 缺少有效的标签页信息');
+    console.debug('[debug][service-worker] ⚠️ togglePopup: 缺少有效的标签页信息');
     return {
       success: false,
       error: 'Invalid sender for toggling popup'
@@ -877,7 +877,7 @@ async function handleTogglePopup(sender: chrome.runtime.MessageSender, data?: an
   
   // 检查是否为YouTube页面
   if (!tabUrl || !isYoutubeUrl(tabUrl)) {
-    console.warn(`[service-worker] ⚠️ 非YouTube页面: ${tabUrl}`);
+    console.debug(`[debug][service-worker] ⚠️ 非YouTube页面: ${tabUrl}`);
     return {
       success: false,
       error: '只有YouTube页面才能打开翻译设置面板',
@@ -959,7 +959,7 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
     // 1. 获取标签页信息
     const tab = await chrome.tabs.get(tabId);
     if (!tab || !tab.url) {
-      console.warn(`[service-worker] ⚠️ 无法获取标签页信息: ${tabId}`);
+      console.debug(`[debug][service-worker] ⚠️ 无法获取标签页信息: ${tabId}`);
       return {
         type: 'popupInitDataResponse',
         popupContext: null
@@ -979,7 +979,7 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
     // 3. 提取视频ID
     const videoId = extractVideoIdFromUrl(tab.url);
     if (!videoId) {
-      console.warn(`[service-worker] ⚠️ 无法提取视频ID: ${tab.url}`);
+      console.debug(`[debug][service-worker] ⚠️ 无法提取视频ID: ${tab.url}`);
       return {
         type: 'popupInitDataResponse',
         popupContext: null
@@ -999,7 +999,7 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
       }
       console.debug(`[debug][service-worker] Popup检测广告状态: ${isAdPlaying}`);
     } catch (error) {
-      console.warn('[service-worker] 检测广告状态失败:', error);
+      console.debug('[debug][service-worker] 检测广告状态失败:', error);
     }
 
     // 5. 获取用户偏好设置
@@ -1022,7 +1022,7 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
         });
       }
     } catch (error) {
-      console.warn(`[service-worker] Local Storage读取失败:`, error);
+      console.debug(`[debug][service-worker] Local Storage读取失败:`, error);
     }
     
     // 7. 智能选择源语言逻辑（新架构：清晰的三分支）
@@ -1071,11 +1071,11 @@ async function handleGetPopupInitData(message: any, sender: chrome.runtime.Messa
           }
         } else {
           detectedSourceLang = 'auto';
-          console.warn(`[service-worker] ⚠️ 获取字幕轨道数据失败，源语言设置为自动检测`, trackResponse);
+          console.debug(`[debug][service-worker] ⚠️ 获取字幕轨道数据失败，源语言设置为自动检测`, trackResponse);
         }
       } catch (error) {
         detectedSourceLang = 'auto';
-        console.error(`[service-worker] ✗ 请求字幕轨道数据失败: ${error instanceof Error ? error.message : String(error)}`);
+        console.debug(`[debug][service-worker] ✗ 请求字幕轨道数据失败: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     // 分支3：缓存命中 - 使用历史选择（必定存在）
@@ -1125,7 +1125,7 @@ async function handleUpdateVideoSourceLanguage(data: any): Promise<any> {
   const { videoId, availableSourceLanguages, selectedSourceTrack } = data || {};
 
   if (!videoId) {
-    console.error('[service-worker] updateVideoSourceLanguage 缺少 videoId');
+    console.debug('[debug][service-worker] updateVideoSourceLanguage 缺少 videoId');
     return { success: false, error: 'videoId is required' };
   }
 
@@ -1140,7 +1140,7 @@ async function handleUpdateVideoSourceLanguage(data: any): Promise<any> {
     console.log(`[service-worker] ✓ 视频源语言已保存: ${videoId}, 源语言: ${selectedSourceTrack?.languageCode || 'auto'}`);
     return { success: true };
   } catch (error) {
-    console.error('[service-worker] updateVideoSourceLanguage 失败:', error);
+    console.debug('[debug][service-worker] updateVideoSourceLanguage 失败:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : String(error)
@@ -1166,7 +1166,7 @@ async function handlePopupOpened(sender: chrome.runtime.MessageSender): Promise<
     };
     
   } catch (error) {
-    console.error(`[service-worker] ✗ popupOpened: ${error instanceof Error ? error.message : String(error)}`);
+    console.debug(`[debug][service-worker] ✗ popupOpened: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
       error: error instanceof Error ? error.message : '处理Popup打开事件失败'
@@ -1192,7 +1192,7 @@ async function handlePopupClosed(sender: chrome.runtime.MessageSender): Promise<
     };
     
   } catch (error) {
-    console.error(`[service-worker] ✗ popupClosed: ${error instanceof Error ? error.message : String(error)}`);
+    console.debug(`[debug][service-worker] ✗ popupClosed: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
       error: error instanceof Error ? error.message : '处理Popup关闭事件失败'
@@ -1217,7 +1217,7 @@ async function handlePopupBlurred(sender: chrome.runtime.MessageSender): Promise
     };
     
   } catch (error) {
-    console.error(`[service-worker] ✗ popupBlurred: ${error instanceof Error ? error.message : String(error)}`);
+    console.debug(`[debug][service-worker] ✗ popupBlurred: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
       error: error instanceof Error ? error.message : '处理Popup失去焦点事件失败'
@@ -1232,7 +1232,7 @@ async function handlePopupBlurred(sender: chrome.runtime.MessageSender): Promise
  */
 async function handleToggleSidePanel(sender: chrome.runtime.MessageSender, data?: any): Promise<any> {
   if (!sender.tab || !sender.tab.id) {
-    console.warn('[service-worker] ⚠️ toggleSidePanel: 缺少有效的标签页信息');
+    console.debug('[debug][service-worker] ⚠️ toggleSidePanel: 缺少有效的标签页信息');
     return {
       success: false,
       error: 'Invalid sender for toggling side panel'
@@ -1245,7 +1245,7 @@ async function handleToggleSidePanel(sender: chrome.runtime.MessageSender, data?
   
   // 检查是否为YouTube页面
   if (!tabUrl || !isYoutubeUrl(tabUrl)) {
-    console.warn(`[service-worker] ⚠️ toggleSidePanel: 非YouTube页面 ${tabUrl}`);
+    console.debug(`[debug][service-worker] ⚠️ toggleSidePanel: 非YouTube页面 ${tabUrl}`);
     return {
       success: false,
       error: '只有YouTube页面才能打开翻译设置面板',
@@ -1298,12 +1298,12 @@ async function handleToggleSidePanel(sender: chrome.runtime.MessageSender, data?
     }
     
   } catch (error) {
-    console.error(`[service-worker] ✗ toggleSidePanel (Tab:${tabId}): ${error instanceof Error ? error.message : String(error)}`);
-    
+    console.debug(`[debug][service-worker] ✗ toggleSidePanel (Tab:${tabId}): ${error instanceof Error ? error.message : String(error)}`);
+
     // 分析具体错误类型
     const errorMessage = error instanceof Error ? error.message : '未知错误';
-    console.warn(`[service-worker] ⚠️ 错误详情: ${errorMessage}`);
-    
+    console.debug(`[debug][service-worker] ⚠️ 错误详情: ${errorMessage}`);
+
     return {
       success: false,
       error: errorMessage,
@@ -1355,7 +1355,7 @@ async function getSidePanelState(): Promise<boolean> {
     });
     return contexts.length > 0;
   } catch (error) {
-    console.error('[getSidePanelState] 检测失败:', error);
+    console.debug('[debug][getSidePanelState] 检测失败:', error);
     return false;
   }
 }
@@ -1418,7 +1418,7 @@ async function testSidePanelStateWithGetContexts(tabId: number): Promise<void> {
     });
     
   } catch (error) {
-    console.error(`[service-worker] ✗ 测试getContexts: ${error instanceof Error ? error.message : String(error)}`);
+    console.debug(`[debug][service-worker] ✗ 测试getContexts: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -1433,7 +1433,7 @@ async function handleToggleSidePanelSync(sender: chrome.runtime.MessageSender, d
   const source = data?.source || 'translation-button';
   
   if (!tabId || !tabUrl || !isYoutubeUrl(tabUrl)) {
-    console.warn(`[service-worker] ⚠️ toggleSidePanelSync: 无效请求 (Tab:${tabId})`);
+    console.debug(`[debug][service-worker] ⚠️ toggleSidePanelSync: 无效请求 (Tab:${tabId})`);
     return { success: false, fallback: 'popup', error: '只有YouTube页面才能打开翻译设置面板' };
   }
 
@@ -1487,10 +1487,10 @@ async function handleToggleSidePanelSync(sender: chrome.runtime.MessageSender, d
     }
     
   } catch (error) {
-    console.error(`[service-worker] SidePanel操作失败:`, error);
-    return { 
-      success: false, 
-      error: error instanceof Error ? error.message : 'Unknown error', 
+    console.debug(`[debug][service-worker] SidePanel操作失败:`, error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
       status: 'error',
       details: `操作失败: ${error instanceof Error ? error.message : 'Unknown error'}`
     };
@@ -1543,7 +1543,7 @@ function handleOpenSidePanelSync(sender: chrome.runtime.MessageSender, message?:
  */
 async function handleOpenSidePanel(sender: chrome.runtime.MessageSender, message?: any): Promise<any> {
   if (!sender.tab || !sender.tab.id || !sender.tab.url) {
-    console.warn('[service-worker] ⚠️ openSidePanel: 缺少有效的标签页信息');
+    console.debug('[debug][service-worker] ⚠️ openSidePanel: 缺少有效的标签页信息');
     return {
       success: false,
       status: 'error',
@@ -1556,7 +1556,7 @@ async function handleOpenSidePanel(sender: chrome.runtime.MessageSender, message
   const source = message?.source || 'user-action';
   // 检查是否为YouTube页面
   if (!isYoutubeUrl(tabUrl)) {
-    console.warn(`[service-worker] ⚠️ 非YouTube页面: ${tabUrl}`);
+    console.debug(`[debug][service-worker] ⚠️ 非YouTube页面: ${tabUrl}`);
     return {
       success: false,
       status: 'error',
@@ -1583,7 +1583,7 @@ async function handleOpenSidePanel(sender: chrome.runtime.MessageSender, message
         await chrome.sidePanel.open({ tabId });
         console.debug(`[debug][service-worker] ✓ SidePanel打开成功 (Tab:${tabId})`);
       } catch (openError) {
-        console.error(`[service-worker] ✗ SidePanel打开: ${openError instanceof Error ? openError.message : String(openError)}`);
+        console.debug(`[debug][service-worker] ✗ SidePanel打开: ${openError instanceof Error ? openError.message : String(openError)}`);
         // 返回降级信息
         return {
           success: false,
@@ -1620,7 +1620,7 @@ async function handleOpenSidePanel(sender: chrome.runtime.MessageSender, message
       opened: source === 'user-action' ? 'side_panel' : 'enabled_only'
     };
   } catch (error) {
-    console.error(`[service-worker] ✗ openSidePanel: ${error instanceof Error ? error.message : String(error)}`);
+    console.debug(`[debug][service-worker] ✗ openSidePanel: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
       status: 'error',
@@ -1635,7 +1635,7 @@ async function handleOpenSidePanel(sender: chrome.runtime.MessageSender, message
  */
 async function handleCloseSidePanel(sender: chrome.runtime.MessageSender): Promise<any> {
   if (!sender.tab || !sender.tab.id) {
-    console.warn('[service-worker] ⚠️ closeSidePanel: 缺少有效的标签页ID');
+    console.debug('[debug][service-worker] ⚠️ closeSidePanel: 缺少有效的标签页ID');
     return {
       success: false,
       error: 'Invalid sender for closing side panel'
@@ -1662,7 +1662,7 @@ async function handleCloseSidePanel(sender: chrome.runtime.MessageSender): Promi
       message: 'SidePanel closed successfully'
     };
   } catch (error) {
-    console.error(`[service-worker] 关闭 SidePanel 失败:`, error);
+    console.debug(`[debug][service-worker] 关闭 SidePanel 失败:`, error);
     return {
       success: false,
       status: 'error',
@@ -1730,7 +1730,7 @@ async function handleSidePanelDataRequest(data: any): Promise<any> {
       }
     };
   } catch (error) {
-    console.error('[service-worker] SidePanel 数据请求失败:', error);
+    console.debug('[debug][service-worker] SidePanel 数据请求失败:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to get SidePanel data'
@@ -2044,7 +2044,7 @@ async function getVideoSpecificData(videoId: string): Promise<any> {
 // 这些将在后续版本中实现
 
 async function handleGetTranslationConfig(data: any): Promise<any> {
-  console.warn('[service-worker] ⚠️ handleGetTranslationConfig 尚未实现');
+  console.debug('[debug][service-worker] ⚠️ handleGetTranslationConfig 尚未实现');
   return { success: false, error: 'Function not implemented yet' };
 }
 
@@ -2089,22 +2089,22 @@ async function handleCheckTranslationCache(data: any): Promise<any> {
 }
 
 async function handleTranslateSubtitles(data: any): Promise<any> {
-  console.warn('[service-worker] ⚠️ handleTranslateSubtitles 尚未实现');
+  console.debug('[debug][service-worker] ⚠️ handleTranslateSubtitles 尚未实现');
   return { success: false, error: 'Function not implemented yet' };
 }
 
 async function handleSaveTranslationResult(data: any): Promise<any> {
-  console.warn('[service-worker] ⚠️ handleSaveTranslationResult 尚未实现');
+  console.debug('[debug][service-worker] ⚠️ handleSaveTranslationResult 尚未实现');
   return { success: false, error: 'Function not implemented yet' };
 }
 
 async function handleSaveTrackCache(data: any): Promise<any> {
-  console.warn('[service-worker] ⚠️ handleSaveTrackCache 尚未实现');
+  console.debug('[debug][service-worker] ⚠️ handleSaveTrackCache 尚未实现');
   return { success: false, error: 'Function not implemented yet' };
 }
 
 async function handleGetTrackCache(data: any): Promise<any> {
-  console.warn('[service-worker] ⚠️ handleGetTrackCache 尚未实现');
+  console.debug('[debug][service-worker] ⚠️ handleGetTrackCache 尚未实现');
   return { success: false, error: 'Function not implemented yet' };
 }
 
@@ -2407,7 +2407,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
       });
     } else {
       // 没有缓存数据，需要从Content Script获取
-      console.warn('[service-worker] ⚠️ 没有源语言缓存，需要获取字幕轨道信息');
+      console.debug('[debug][service-worker] ⚠️ 没有源语言缓存，需要获取字幕轨道信息');
       // 这里暂时使用auto，后续在获取字幕时会更新
       sourceLang = 'auto';
       sourceLanguageName = 'auto';
@@ -2501,7 +2501,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
           });
           console.debug('[debug][service-worker] ✓ 翻译结果已异步缓存');
         } catch (err) {
-          console.error('[service-worker] 异步缓存保存失败:', err);
+          console.debug('[debug][service-worker] 异步缓存保存失败:', err);
         }
       });
       
@@ -2546,10 +2546,10 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
             if (trackResponse?.success) {
               console.debug(`[debug][service-worker] ✓ 通过playerResponse获取到${trackResponse.tracks?.length || 0}条轨道`);
             } else {
-              console.warn('[service-worker] ✗ playerResponse 获取轨道失败');
+              console.debug('[debug][service-worker] ✗ playerResponse 获取轨道失败');
             }
           } catch (responseError) {
-            console.warn('[service-worker] playerResponse 获取轨道异常', responseError);
+            console.debug('[debug][service-worker] playerResponse 获取轨道异常', responseError);
           }
 
           // 如果playerResponse失败或结果为空，兜底使用Player API tracklist
@@ -2562,10 +2562,10 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
                 console.debug(`[debug][service-worker] ✓ 通过Player API获取到${apiResponse.tracks.length}条轨道`);
                 trackResponse = apiResponse;
               } else {
-                console.warn('[service-worker] ✗ Player API 获取轨道失败');
+                console.debug('[debug][service-worker] ✗ Player API 获取轨道失败');
               }
             } catch (apiErr) {
-              console.warn('[service-worker] Player API获取轨道异常', apiErr);
+              console.debug('[debug][service-worker] Player API获取轨道异常', apiErr);
             }
           }
           
@@ -2604,10 +2604,10 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
                 if (setResult && setResult.success) {
                   console.debug(`[debug][service-worker] ✓ 成功通过API切换到语言: ${sourceLang}`);
                 } else {
-                  console.warn('[service-worker] API设置字幕语言失败，将依赖拦截器');
+                  console.debug('[debug][service-worker] API设置字幕语言失败，将依赖拦截器');
                 }
               } catch (apiError) {
-                console.warn('[service-worker] API调用失败，回退到拦截器方案:', apiError);
+                console.debug('[debug][service-worker] API调用失败，回退到拦截器方案:', apiError);
               }
             }
             
@@ -2635,13 +2635,13 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
                   
                   console.debug('[debug][service-worker] ✓ 轨道元数据已异步缓存');
                 } catch (err) {
-                  console.error('[service-worker] 轨道缓存失败:', err);
+                  console.debug('[debug][service-worker] 轨道缓存失败:', err);
                 }
               });
             }
           }
         } catch (error) {
-          console.warn('[service-worker] 获取轨道信息失败，继续使用拦截器:', error);
+          console.debug('[debug][service-worker] 获取轨道信息失败，继续使用拦截器:', error);
         }
       }
       
@@ -2716,7 +2716,7 @@ async function handleToggleTranslate(sender: chrome.runtime.MessageSender, data:
           sourceKind  // 传递字幕类型（手动/ASR）
         }
       }).catch(error => {
-        console.warn('[service-worker] 触发字幕拦截器失败:', error);
+        console.debug('[debug][service-worker] 触发字幕拦截器失败:', error);
       });
       
       // 返回 needFetch 状态
@@ -3111,7 +3111,7 @@ async function executeTranslation(subtitleData: SubtitleData, preferences: UserP
               videoId
             }
           }).catch(err => {
-            console.warn('[service-worker] 发送紧急翻译更新失败:', err);
+            console.debug('[debug][service-worker] 发送紧急翻译更新失败:', err);
           });
         }
       } else if (phase === 'batch' && data) {
@@ -3154,7 +3154,7 @@ async function executeTranslation(subtitleData: SubtitleData, preferences: UserP
           videoId
         }
       }).catch(err => {
-        console.warn('[service-worker] 发送渐进式更新失败:', err);
+        console.debug('[debug][service-worker] 发送渐进式更新失败:', err);
       });
     }
     
@@ -3198,7 +3198,7 @@ async function executeTranslation(subtitleData: SubtitleData, preferences: UserP
           totalSubtitles: translatedSubtitles.length
         }
       }).catch(err => {
-        console.warn('[service-worker] 发送完成通知失败:', err);
+        console.debug('[debug][service-worker] 发送完成通知失败:', err);
       });
     }
     
@@ -3288,12 +3288,12 @@ async function translateBatch(
         return texts.map(text => `[译] ${text}`);
         
       default:
-        console.warn('[service-worker] 不支持的翻译服务:', serviceType);
+        console.debug('[debug][service-worker] 不支持的翻译服务:', serviceType);
         // 返回原文
         return texts;
     }
   } catch (error) {
-    console.error('[service-worker] 批量翻译失败:', error);
+    console.debug('[debug][service-worker] 批量翻译失败:', error);
     // 失败时返回原文
     return texts;
   }
@@ -3443,8 +3443,8 @@ async function translateWithGoogle(
     let translatedTexts = combined.split('\n').map((segment) => segment.trim());
 
     if (!isPreMerged && translatedTexts.length !== texts.length) {
-      console.warn(
-        `[service-worker] 分割数量不匹配（${translatedTexts.length} vs ${texts.length}），使用比例分割法`
+      console.debug(
+        `[debug][service-worker] 分割数量不匹配（${translatedTexts.length} vs ${texts.length}），使用比例分割法`
       );
       translatedTexts = splitByRatio(combined, originalLengths);
     }
@@ -3502,11 +3502,11 @@ async function translateWithGoogle(
       return translatedTexts;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.warn(`[service-worker] Google endpoint=${endpoint.id} failed，尝试切换`, message);
+      console.debug(`[debug][service-worker] Google endpoint=${endpoint.id} failed，尝试切换`, message);
     }
   }
 
-  console.error('[service-worker] Google翻译失败：所有端点不可用');
+  console.debug('[debug][service-worker] Google翻译失败：所有端点不可用');
   return texts; // 失败返回原文
 }
 
@@ -3634,7 +3634,7 @@ async function handleSidePanelActuallyOpened(message: any): Promise<any> {
       message: 'SidePanel open notification received (state handled by Port)'
     };
   } catch (error) {
-    console.error(`[service-worker] ✗ sidePanelActuallyOpened: ${error instanceof Error ? error.message : String(error)}`);
+    console.debug(`[debug][service-worker] ✗ sidePanelActuallyOpened: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to handle SidePanel open notification'
@@ -3665,7 +3665,7 @@ async function handleSidePanelActuallyClosed(message: any): Promise<any> {
       message: 'SidePanel close state confirmed'
     };
   } catch (error) {
-    console.error(`[service-worker] ✗ sidePanelActuallyClosed: ${error instanceof Error ? error.message : String(error)}`);
+    console.debug(`[debug][service-worker] ✗ sidePanelActuallyClosed: ${error instanceof Error ? error.message : String(error)}`);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to handle SidePanel close notification'
@@ -3681,7 +3681,7 @@ async function handleCheckSidePanelStatus(sender: chrome.runtime.MessageSender):
   try {
     const tabId = sender.tab?.id;
     if (!tabId) {
-      console.warn('[service-worker] ⚠️ 无法获取标签页ID');
+      console.debug('[debug][service-worker] ⚠️ 无法获取标签页ID');
       return {
         success: false,
         error: '无法获取标签页ID'
@@ -3700,7 +3700,7 @@ async function handleCheckSidePanelStatus(sender: chrome.runtime.MessageSender):
       };
     } catch (error) {
       // 如果获取失败，假设未启用
-      console.warn(`[service-worker] ⚠️ 获取标签页${tabId}SidePanel状态: ${error instanceof Error ? error.message : String(error)}`);
+      console.debug(`[debug][service-worker] ⚠️ 获取标签页${tabId}SidePanel状态: ${error instanceof Error ? error.message : String(error)}`);
       return {
         success: true,
         isEnabled: false
@@ -4306,7 +4306,7 @@ async function testGeminiService(apiKey: string, model: string): Promise<{succes
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => null);
-      console.error('[service-worker] Gemini API错误响应:', errorData);
+      console.debug('[debug][service-worker] Gemini API错误响应:', errorData);
       const errorMsg = errorData?.error?.message || `HTTP ${response.status}: ${response.statusText}`;
       throw new Error(errorMsg);
     }
@@ -4316,22 +4316,22 @@ async function testGeminiService(apiKey: string, model: string): Promise<{succes
 
     // 检查响应结构
     if (!data.candidates) {
-      console.error('[service-worker] 缺少candidates字段');
+      console.debug('[debug][service-worker] 缺少candidates字段');
       throw new Error('Gemini返回格式异常: 缺少candidates字段');
     }
 
     if (data.candidates.length === 0) {
-      console.error('[service-worker] candidates数组为空');
+      console.debug('[debug][service-worker] candidates数组为空');
       throw new Error('Gemini返回格式异常: candidates数组为空');
     }
 
     if (!data.candidates[0].content) {
-      console.error('[service-worker] 缺少content字段');
+      console.debug('[debug][service-worker] 缺少content字段');
       throw new Error('Gemini返回格式异常: 缺少content字段');
     }
 
     if (!data.candidates[0].content.parts || data.candidates[0].content.parts.length === 0) {
-      console.error('[service-worker] parts字段为空');
+      console.debug('[debug][service-worker] parts字段为空');
       throw new Error('Gemini返回格式异常: parts字段为空');
     }
 
@@ -4378,7 +4378,7 @@ async function testDeepLService(apiKey: string, tier?: 'free' | 'pro'): Promise<
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => null);
-      console.error('[service-worker] DeepL API错误响应:', errorData);
+      console.debug('[debug][service-worker] DeepL API错误响应:', errorData);
 
       let errorMsg = '';
       switch (response.status) {
@@ -4459,7 +4459,7 @@ async function testQwenService(apiKey: string): Promise<{success: boolean, messa
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => null);
-      console.error('[service-worker] Qwen API错误响应:', errorData);
+      console.debug('[debug][service-worker] Qwen API错误响应:', errorData);
 
       let errorMsg = '';
       switch (response.status) {

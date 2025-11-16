@@ -182,15 +182,15 @@ export class DeepSeekTranslator {
 
       // 验证数量匹配
       if (translations.length !== batch.length) {
-        console.error(
+        console.debug(
           `[DeepSeekTranslator] ❌ 批次翻译数量不匹配: 期望${batch.length}, 实际${translations.length}`
         );
         // 🔧 详细错误信息
         if (DeepSeekTranslator.DEBUG_TRANSLATION) {
-          console.error(`[DeepSeekTranslator] 🔍 详细对比:`);
-          console.error(`  期望输入: ${batch.length}条`);
-          console.error(`  实际输出: ${translations.length}条`);
-          console.error(`  差异: ${translations.length - batch.length}条`);
+          console.debug(`[DeepSeekTranslator] 🔍 详细对比:`);
+          console.debug(`  期望输入: ${batch.length}条`);
+          console.debug(`  实际输出: ${translations.length}条`);
+          console.debug(`  差异: ${translations.length - batch.length}条`);
         }
         throw this.createFatalError('error_translation_switch_provider');
       }

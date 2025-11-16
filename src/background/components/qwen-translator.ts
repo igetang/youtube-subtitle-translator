@@ -409,7 +409,7 @@ export class QwenTranslator {
 
     // 验证数量匹配
     if (translations.length !== texts.length) {
-      console.error(
+      console.debug(
         `[QwenTranslator] ❌ 翻译数量不匹配: ` +
         `期望${texts.length}条，实际${translations.length}条`
       );

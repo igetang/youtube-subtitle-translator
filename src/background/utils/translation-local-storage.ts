@@ -45,7 +45,7 @@ private MAX_CACHE_ITEMS = 1000;
       // console.log(`[TranslationLocalStorage] 加载: ${Object.keys(localStorageData).length} 条`);
       return localStorageData;
     } catch (error) {
-      console.error('[TranslationLocalStorage] ✗ 读取失败:', error);
+      console.debug('[TranslationLocalStorage] ✗ 读取失败:', error);
       return {};
     }
   }
@@ -71,7 +71,7 @@ private MAX_CACHE_ITEMS = 1000;
       // 简化更新日志
       // console.log(`[TranslationLocalStorage] 更新: ${Object.keys(localStorageData).length} 条`);
     } catch (error) {
-      console.error('[TranslationLocalStorage] ✗ 更新失败:', error);
+      console.debug('[TranslationLocalStorage] ✗ 更新失败:', error);
     }
   }
   
@@ -115,7 +115,7 @@ private MAX_CACHE_ITEMS = 1000;
       // 注释掉清空日志
       // console.log(`[TranslationLocalStorage] 清空: ${cacheKey}`);
     } catch (error) {
-      console.error('[TranslationLocalStorage] ✗ 清空失败:', error);
+      console.debug('[TranslationLocalStorage] ✗ 清空失败:', error);
     }
   }
   
@@ -160,7 +160,7 @@ private MAX_CACHE_ITEMS = 1000;
 
       return stats;
     } catch (error) {
-      console.error('[TranslationLocalStorage] ✗ 统计失败:', error);
+      console.debug('[TranslationLocalStorage] ✗ 统计失败:', error);
       return {
         totalItems: 0,
         totalSize: 0,

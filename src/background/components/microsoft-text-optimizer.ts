@@ -158,7 +158,7 @@ export class MicrosoftTextOptimizer {
       if (newLength > MAX_CHARS) {
         // 特殊情况：单条字幕就超限
         if (texts.length === 0) {
-          console.warn(
+          console.debug(
             `[MicrosoftTextOptimizer] 警告: 字幕${subtitle.index}超长` +
             `(${subtitle.text.length}字符)，执行截断处理`
           );
@@ -242,7 +242,7 @@ export class MicrosoftTextOptimizer {
 
       // 检查分割是否匹配
       if (translatedParts.length !== subtitleIndices.length) {
-        console.warn(
+        console.debug(
           `[MicrosoftTextOptimizer] Text组${i + 1}分割不匹配: ` +
           `期望${subtitleIndices.length}条，实际${translatedParts.length}条，` +
           `使用降级策略`
@@ -268,7 +268,7 @@ export class MicrosoftTextOptimizer {
     // 验证映射完整性
     const unmappedCount = results.filter(r => r === '').length;
     if (unmappedCount > 0) {
-      console.warn(`[MicrosoftTextOptimizer] 警告: ${unmappedCount} 条字幕未能映射到翻译结果`);
+      console.debug(`[MicrosoftTextOptimizer] 警告: ${unmappedCount} 条字幕未能映射到翻译结果`);
     }
 
     return results;

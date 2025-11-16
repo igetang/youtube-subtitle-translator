@@ -67,7 +67,7 @@ export class TranslationSession {
       ]);
     } catch (error) {
       // 兼容性处理：如果浏览器不支持AbortSignal.timeout或AbortSignal.any
-      console.warn('[TranslationSession] AbortSignal.timeout/any不可用，使用降级方案');
+      console.debug('[TranslationSession] AbortSignal.timeout/any不可用，使用降级方案');
       
       // 降级方案：手动实现超时
       const stageController = new AbortController();
@@ -147,7 +147,7 @@ export class TranslationSession {
       if (error.name === 'TimeoutError' || 
           (error.name === 'AbortError' && error.message?.includes('timeout'))) {
         // 超时错误
-        console.error(`[TranslationSession] ✗ ${stage} 超时，耗时: ${elapsed}ms`);
+        console.debug(`[TranslationSession] ✗ ${stage} 超时，耗时: ${elapsed}ms`);
         
         if (fallback !== undefined && !critical) {
           console.log(`[TranslationSession] → 使用降级方案: ${stage}`);
