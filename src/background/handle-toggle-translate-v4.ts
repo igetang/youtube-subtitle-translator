@@ -1146,7 +1146,7 @@ export async function handleToggleTranslateV4(
         lowerErrorMsg.includes('无效');
 
       if (isFatalError) {
-        console.error('[service-worker-v4] ❌ 致命错误（API密钥问题），终止翻译流程');
+        console.debug('[debug][service-worker-v4] ❌ 致命错误（API密钥问题），终止翻译流程');
         throw error; // 直接抛出，进入外层catch
       }
 
@@ -1416,7 +1416,7 @@ export async function handleToggleTranslateV4(
         'Translation failed';
       errorLevel = category === 'fatal' ? ErrorLevel.ERROR : ErrorLevel.WARNING;
 
-      console.error('[service-worker-v4] 错误详情:', {
+      console.debug('[debug][service-worker-v4] 错误详情:', {
         name: error?.name,
         message: error?.message,
         category: error?.category,
@@ -1432,7 +1432,7 @@ export async function handleToggleTranslateV4(
         'Translation failed';
       errorLevel = getErrorLevel(error);
 
-      console.error('[service-worker-v4] 未知错误详情:', {
+      console.debug('[debug][service-worker-v4] 未知错误详情:', {
         name: error?.name,
         message: error?.message,
         stack: error?.stack?.split('\n').slice(0, 3).join('\n')

@@ -830,8 +830,14 @@ export class SubtitleOverlay {
       text-align: center;
     `;
 
-    const brandMessage = chrome.i18n.getMessage('brand_notice_translated_by');
-    this.brandNoticeElement.textContent = `[${brandMessage}]`;
+    try {
+      const brandMessage = chrome.i18n.getMessage('brand_notice_translated_by');
+      this.brandNoticeElement.textContent = `[${brandMessage}]`;
+    } catch (error) {
+      // 扩展上下文失效时（如扩展重新加载），使用默认文本
+      console.debug('[subtitle-overlay] chrome.i18n API不可用，使用默认品牌文本');
+      this.brandNoticeElement.textContent = '[Translated by YouTube Subtitle Translator]';
+    }
 
     this.subtitleWrapperContainer.insertBefore(this.brandNoticeElement, this.subtitleWrapperContainer.firstChild);
 

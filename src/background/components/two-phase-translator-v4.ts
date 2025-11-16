@@ -375,7 +375,7 @@ export class TwoPhaseTranslatorV4 {
       if (error.name === 'AbortError') {
         console.debug('[debug][TwoPhaseTranslatorV4] ✗ 紧急翻译被取消:', error.message || '未知原因');
       } else {
-        console.error('[TwoPhaseTranslatorV4] ✗ 紧急翻译失败:', error?.message || error);
+        console.debug('[debug][TwoPhaseTranslatorV4] ✗ 紧急翻译失败:', error?.message || error);
       }
       throw error;
     }
