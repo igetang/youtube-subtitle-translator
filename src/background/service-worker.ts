@@ -219,7 +219,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
       // 简化为静默执行，减少操作确认日志
       // console.debug(`[debug][service-worker] ✓ YouTube页面图标和Popup已设置 (Tab:${tabId}`);
     } else {
-      // 其他网站：设置图标但禁用popup
+      // 其他网站：设置图标，保持popup可用（由popup内部处理非YouTube页面的提示）
       await chrome.action.setIcon({
         tabId,
         path: {
@@ -227,15 +227,15 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
           48: 'icons/icon48.png'
         }
       });
-      
-      // 🔥 非YouTube页面：禁用popup
+
+      // ✅ 非YouTube页面：保持popup可用，由popup.ts内部显示警告提示
       await chrome.action.setPopup({
         tabId,
-        popup: ''  // 空字符串表示禁用popup
+        popup: 'src/popup/popup.html'  // 所有页面都可以打开popup
       });
-      
+
       // 静默处理非YouTube页面
-      // console.debug(`[debug][service-worker] ✓ 非YouTube页面图标已设置，Popup已禁用 (Tab:${tabId}`);
+      // console.debug(`[debug][service-worker] ✓ 非YouTube页面图标已设置，Popup保持可用 (Tab:${tabId}`);
     }
   } catch (error) {
     // 静默处理图标更新错误

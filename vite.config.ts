@@ -4,6 +4,9 @@ import { fileURLToPath } from 'url'; // 用于处理 ES Module 中的 __dirname
 import { viteStaticCopy } from 'vite-plugin-static-copy'; // 导入插件
 import removeConsole from 'vite-plugin-remove-console'; // 导入console删除插件
 
+// 默认保留 console，如需剥离可设置 STRIP_CONSOLE=true
+const shouldStripConsole = process.env.STRIP_CONSOLE === 'true';
+
 // 获取当前文件的目录路径，适用于 ES Module
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,10 +27,14 @@ const baseConfig = {
     __CAPTION_TRANSLATION_DEBUG__: true,
   },
   plugins: [
-    // 生产构建时删除console.log/debug/info，保留warn/error
-    removeConsole({
-      includes: ['log', 'debug', 'info'],
-    }),
+    ...(shouldStripConsole
+      ? [
+          // 删除 console.log/debug/info，保留 warn/error
+          removeConsole({
+            includes: ['log', 'debug', 'info'],
+          }),
+        ]
+      : []),
   ],
 };
 

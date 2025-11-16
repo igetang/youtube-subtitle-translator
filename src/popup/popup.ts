@@ -1438,9 +1438,11 @@ function addEventListeners(): void {
   }
 
   // 源语言下拉菜单
-  if (sourceLangTrigger) {
-    sourceLangTrigger.addEventListener('click', () => {
-      if (isAdPlayback || sourceLangTrigger.classList.contains('disabled')) {
+  const sourceLangTriggerEl = sourceLangTrigger;
+  if (sourceLangTriggerEl) {
+    sourceLangTriggerEl.addEventListener('click', () => {
+      // 广告态直接阻止交互
+      if (isAdPlayback || sourceLangTriggerEl.classList.contains('disabled')) {
         console.log('[popup] 广告播放中，源语言选择已禁用');
         return;
       }
